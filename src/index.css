@@ -66,6 +66,11 @@
   }
   .scrollbar-hide {
     -ms-overflow-style: none;
-    scrollbar-width: none;
+  }
+  /* Firefox and Chromium 121+: WebKit rule above covers Safari/Chrome <121 */
+  @supports (scrollbar-width: none) {
+    .scrollbar-hide {
+      scrollbar-width: none;
+    }
   }
 }
