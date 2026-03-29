@@ -1,0 +1,25 @@
+# Supabase CLI (https://supabase.com/docs/guides/cli)
+# Run: supabase link --project-ref <ref> && supabase db push && supabase functions deploy
+
+[functions.create-admin-user]
+verify_jwt = false
+
+# JWT is validated inside the function (gateway JWT check can false-negative; client uses anon fallback in edge cases).
+[functions.create-user]
+verify_jwt = false
+
+# JWT validated inside function (avoids gateway 401 Invalid JWT).
+[functions.update-user]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = true
+
+[functions.delete-all-other-users]
+verify_jwt = true
+
+[functions.record-repayment]
+verify_jwt = true
+
+[functions.log-audit]
+verify_jwt = true

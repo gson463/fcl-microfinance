@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://mukwanoloans.com/sitemap.xml

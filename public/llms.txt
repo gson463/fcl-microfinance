@@ -1,0 +1,3 @@
+## Pages
+- [Admin Signup - Mfumo wa Mikopo](/adminsignup): Sajili akaunti ya Admin
+- [Sign in —](/login): No description available

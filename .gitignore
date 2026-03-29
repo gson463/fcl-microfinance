@@ -1,0 +1,15 @@
+# Local env (never commit secrets)
+.env
+.env.local
+.env.*.local
+
+node_modules
+dist
+
+# Supabase CLI (after supabase link)
+.supabase
+supabase/.temp
+
+.DS_Store
+*.log
+.vercel
