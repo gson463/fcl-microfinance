@@ -4,6 +4,11 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { supabase } from '@/lib/customSupabaseClient';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
+import { useToast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -65,6 +70,7 @@ function buildRpcArgs(applied, page) {
 }
 
 const AuditLogs = () => {
+	const { toast } = useToast();
 	const [rows, setRows] = useState([]);
 	const [userMap, setUserMap] = useState({});
 	const [loading, setLoading] = useState(true);
@@ -153,6 +159,9 @@ const AuditLogs = () => {
 
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+	const rowIds = useMemo(() => rows.map((r) => r.id), [rows]);
+	const bulk = useBulkSelection(rowIds);
+
 	const fmtMeta = useMemo(
 		() => (m) => {
 			if (m == null) return '—';
@@ -165,6 +174,26 @@ const AuditLogs = () => {
 		},
 		[]
 	);
+
+	const exportAuditCsv = () => {
+		const selected = rows.filter((r) => bulk.isSelected(r.id));
+		if (selected.length === 0) {
+			toast({ title: 'Nothing selected', description: 'Select one or more rows first.', variant: 'destructive' });
+			return;
+		}
+		exportObjectsToCsv(`audit_log_${Date.now()}.csv`, [
+			{ header: 'Time', accessor: (r) => safeFormatDate(r.created_at) },
+			{ header: 'User ID', accessor: (r) => String(r.user_id ?? '') },
+			{ header: 'Action', accessor: (r) => String(r.action ?? '') },
+			{ header: 'Entity type', accessor: (r) => String(r.entity_type ?? '') },
+			{ header: 'Entity ID', accessor: (r) => String(r.entity_id ?? '') },
+			{ header: 'IP', accessor: (r) => String(r.ip_address ?? '') },
+			{ header: 'Location', accessor: (r) => String(r.location_label ?? '') },
+			{ header: 'Device', accessor: (r) => String(r.device_summary ?? (r.user_agent ? String(r.user_agent).slice(0, 120) : '') ?? '') },
+			{ header: 'Metadata', accessor: (r) => fmtMeta(r.metadata) },
+		], selected);
+		toast({ title: 'Exported', description: `${selected.length} row(s) to CSV.` });
+	};
 
 	const updateDraft = (key, value) => {
 		setDraftFilters((prev) => ({ ...prev, [key]: value }));
@@ -365,10 +394,18 @@ const AuditLogs = () => {
 							</div>
 						) : (
 							<>
+								<BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportAuditCsv} />
 								<div className="overflow-x-auto rounded-md border">
 									<Table>
 										<TableHeader>
 											<TableRow>
+												<TableHead className="w-10">
+													<Checkbox
+														checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+														onCheckedChange={() => bulk.toggleAll()}
+														aria-label="Select page"
+													/>
+												</TableHead>
 												<TableHead className="whitespace-nowrap">Time</TableHead>
 												<TableHead>User</TableHead>
 												<TableHead>Action</TableHead>
@@ -382,7 +419,7 @@ const AuditLogs = () => {
 										<TableBody>
 											{rows.length === 0 ? (
 												<TableRow>
-													<TableCell colSpan={8} className="text-center py-10 text-muted-foreground">
+													<TableCell colSpan={9} className="text-center py-10 text-muted-foreground">
 														No audit entries yet.
 													</TableCell>
 												</TableRow>
@@ -391,6 +428,13 @@ const AuditLogs = () => {
 													const u = row.user_id ? userMap[row.user_id] : null;
 													return (
 														<TableRow key={row.id}>
+															<TableCell>
+																<Checkbox
+																	checked={bulk.isSelected(row.id)}
+																	onCheckedChange={() => bulk.toggle(row.id)}
+																	aria-label="Select row"
+																/>
+															</TableCell>
 															<TableCell className="whitespace-nowrap text-sm">{safeFormatDate(row.created_at)}</TableCell>
 															<TableCell className="text-sm">
 																<div className="font-medium">{u?.full_name ?? '—'}</div>

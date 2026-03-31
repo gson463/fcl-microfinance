@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
@@ -192,6 +196,21 @@ const UserManagement = () => {
   };
 
 
+  const userIds = useMemo(() => users.map((u) => u.id), [users]);
+  const bulk = useBulkSelection(userIds);
+
+  const exportSelectedCsv = () => {
+    const rows = users.filter((u) => bulk.isSelected(u.id));
+    if (rows.length === 0) return;
+    exportObjectsToCsv(`users_${Date.now()}.csv`, [
+      { header: 'Name', accessor: 'full_name' },
+      { header: 'Email', accessor: 'email' },
+      { header: 'Role', accessor: 'role' },
+      { header: 'Branch', accessor: (r) => r.branches?.name || '' },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} user(s) to CSV.` });
+  };
+
   const getRoleBadgeVariant = (role) => {
     switch (role) {
       case 'admin': return 'destructive';
@@ -342,9 +361,22 @@ const UserManagement = () => {
                 <span className="ml-2">Loading Users...</span>
               </div>
             ) : (
+              <>
+              <BulkDataTableToolbar
+                selectedCount={bulk.count}
+                onClear={bulk.clear}
+                onExportCsv={exportSelectedCsv}
+              />
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                        onCheckedChange={() => bulk.toggleAll()}
+                        aria-label="Select all on this page"
+                      />
+                    </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Role</TableHead>
@@ -355,6 +387,13 @@ const UserManagement = () => {
                 <TableBody>
                   {users.map(user => (
                     <TableRow key={user.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={bulk.isSelected(user.id)}
+                          onCheckedChange={() => bulk.toggle(user.id)}
+                          aria-label={`Select ${user.full_name}`}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">{user.full_name}</TableCell>
                       <TableCell>{user.email}</TableCell>
                       <TableCell><Badge variant={getRoleBadgeVariant(user.role)}>{user.role}</Badge></TableCell>
@@ -383,6 +422,7 @@ const UserManagement = () => {
                   ))}
                 </TableBody>
               </Table>
+              </>
             )}
             {!isLoading && users.length === 0 && (
               <div className="text-center py-10 text-gray-500">

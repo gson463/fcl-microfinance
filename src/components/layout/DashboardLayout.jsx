@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   Home, Users, Briefcase, DollarSign, Settings, LogOut, Building, UserPlus, 
   BookOpen, GitBranch, ArrowLeftRight, Calendar, Users2, 
-  FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText
+  FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText, Archive
 } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
@@ -27,9 +27,9 @@ const adminMainLinks = [
   { to: '/admin/users', icon: Users, text: 'Users' },
   { to: '/admin/borrowers', icon: Users2, text: 'Borrowers' },
   { to: '/admin/loans', icon: Briefcase, text: 'Loans' },
-  { to: '/admin/reassignment', icon: ArrowLeftRight, text: 'Reassignment' },
+  { to: '/admin/reassignment', icon: ArrowLeftRight, text: 'Officer transfer' },
   { to: '/admin/loan-products', icon: Briefcase, text: 'Loan Products' },
-  { to: '/admin/loan-requests', icon: FileText, text: 'Loan Requests' },
+  { to: '/admin/data-history', icon: Archive, text: 'History & audit' },
   { to: '/admin/repayment-management', icon: DollarSign, text: 'Repayments' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },

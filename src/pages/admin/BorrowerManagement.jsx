@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
@@ -121,6 +125,27 @@ const AdminBorrowerManagement = () => {
 
     const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
+    const pagedBorrowerIds = useMemo(() => borrowers.map((b) => b.id), [borrowers]);
+    const bulk = useBulkSelection(pagedBorrowerIds);
+
+    const exportBorrowersCsv = () => {
+        const rows = borrowers.filter((b) => bulk.isSelected(b.id));
+        if (rows.length === 0) {
+            toast({ title: 'Nothing selected', description: 'Select one or more rows first.', variant: 'destructive' });
+            return;
+        }
+        exportObjectsToCsv(`borrowers_${Date.now()}.csv`, [
+            { header: 'Borrower ID', accessor: 'borrower_id' },
+            { header: 'First name', accessor: 'first_name' },
+            { header: 'Surname', accessor: 'surname' },
+            { header: 'Phone', accessor: (r) => r.phone_number ?? '' },
+            { header: 'Branch', accessor: (r) => r.branches?.name ?? '' },
+            { header: 'Loan officer', accessor: (r) => r.users?.full_name ?? '' },
+            { header: 'Status', accessor: 'status' },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} borrower(s) to CSV.` });
+    };
+
     if (loading && borrowers.length === 0) {
         return (
             <DashboardLayout title="All Borrowers">
@@ -164,9 +189,21 @@ const AdminBorrowerManagement = () => {
                             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                         </div>
                     )}
+                    <BulkDataTableToolbar
+                        selectedCount={bulk.count}
+                        onClear={bulk.clear}
+                        onExportCsv={exportBorrowersCsv}
+                    />
                     <Table>
                         <TableHeader>
                             <TableRow>
+                                <TableHead className="w-10">
+                                    <Checkbox
+                                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                                        onCheckedChange={() => bulk.toggleAll()}
+                                        aria-label="Select page"
+                                    />
+                                </TableHead>
                                 <TableHead>Borrower ID</TableHead>
                                 <TableHead>Name</TableHead>
                                 <TableHead>Branch</TableHead>
@@ -178,6 +215,13 @@ const AdminBorrowerManagement = () => {
                         <TableBody>
                             {borrowers.map(b => (
                                 <TableRow key={b.id}>
+                                    <TableCell>
+                                        <Checkbox
+                                            checked={bulk.isSelected(b.id)}
+                                            onCheckedChange={() => bulk.toggle(b.id)}
+                                            aria-label="Select row"
+                                        />
+                                    </TableCell>
                                     <TableCell>{b.borrower_id}</TableCell>
                                     <TableCell>{b.first_name} {b.surname}</TableCell>
                                     <TableCell>{b.branches?.name || 'N/A'}</TableCell>

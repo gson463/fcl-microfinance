@@ -9,13 +9,20 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, Scale, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, Scale, ChevronLeft, ChevronRight, CheckCircle, XCircle } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import * as XLSX from 'xlsx';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
+import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -49,6 +56,7 @@ const ManagerRepaymentManagement = () => {
 
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
     const [selectedLoanForSchedule, setSelectedLoanForSchedule] = useState(null);
+    const [pendingRepaymentDeletes, setPendingRepaymentDeletes] = useState([]);
 
     const resetFilters = () => {
         setOfficerFilter('all');
@@ -61,8 +69,9 @@ const ManagerRepaymentManagement = () => {
         if (!user || !user.user_metadata.branch_id) return;
         setLoading(true);
         try {
-            const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
-            if (config) setCurrency(config.value);
+            const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
+            const cfg = Object.fromEntries((cfgRows || []).map((r) => [r.key, r.value]));
+            if (cfg.currency) setCurrency(cfg.currency);
 
             const { data: officersData, error: officersError } = await supabase
                 .from('users')
@@ -73,6 +82,27 @@ const ManagerRepaymentManagement = () => {
             setBranchOfficers(officersData || []);
 
             const officerIds = officersData.map(o => o.id);
+
+            const { data: pendingReqRows } = await supabase
+                .from('repayment_delete_requests')
+                .select('id, repayment_id, loan_id, officer_id, requested_at, snapshot')
+                .eq('status', 'pending');
+
+            const repIds = (pendingReqRows || []).map((x) => x.repayment_id);
+            let mergedPending = [];
+            if (repIds.length > 0) {
+                const { data: repRows } = await supabase
+                    .from('repayments')
+                    .select('*, loans(loan_id, borrowers(first_name, surname))')
+                    .in('id', repIds);
+                mergedPending = (pendingReqRows || [])
+                    .map((req) => ({
+                        ...req,
+                        repayment: (repRows || []).find((r) => r.id === req.repayment_id),
+                    }))
+                    .filter((x) => x.repayment && officerIds.includes(x.repayment.officer_id));
+            }
+            setPendingRepaymentDeletes(mergedPending);
 
             let { data: repaymentsData, error: repaymentsError } = await supabase
                 .from('repayments')
@@ -120,6 +150,43 @@ const ManagerRepaymentManagement = () => {
 
     const totalPages = Math.max(1, Math.ceil(filteredRepayments.length / PAGE_SIZE));
 
+    const filteredRepaymentIds = useMemo(() => filteredRepayments.map((r) => r.id), [filteredRepayments]);
+    const bulk = useBulkSelection(filteredRepaymentIds);
+
+    const exportSelectedRepaymentsCsv = () => {
+        const rows = filteredRepayments.filter((r) => bulk.isSelected(r.id));
+        if (rows.length === 0) {
+            toast({
+                title: 'Nothing selected',
+                description: 'Select one or more repayments first.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        exportObjectsToCsv(`repayments_selected_${Date.now()}.csv`, [
+            {
+                header: 'Payment Date',
+                accessor: (r) =>
+                    formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
+            },
+            {
+                header: 'Borrower',
+                accessor: (r) =>
+                    `${r.loans?.borrowers?.first_name || ''} ${r.loans?.borrowers?.surname || ''}`.trim(),
+            },
+            { header: 'Loan ID', accessor: (r) => r.loans?.loan_id || '' },
+            { header: 'Group', accessor: (r) => r.loans?.borrowers?.groups?.name || 'N/A' },
+            {
+                header: 'Loan Officer',
+                accessor: (r) => branchOfficers.find((o) => o.id === r.officer_id)?.full_name || '',
+            },
+            { header: 'Principal Paid', accessor: (r) => String(r.principal_paid ?? '') },
+            { header: 'Interest Paid', accessor: (r) => String(r.interest_paid ?? '') },
+            { header: 'Total Paid', accessor: (r) => String(r.amount ?? '') },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} repayment(s) to CSV.` });
+    };
+
     const stats = useMemo(() => {
         const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
         const totalInterest = filteredRepayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0);
@@ -128,13 +195,95 @@ const ManagerRepaymentManagement = () => {
     }, [filteredRepayments]);
 
     const handleViewSchedule = async (loan) => {
-        const { data: latestLoanData, error } = await supabase.from('loans').select(`*, borrowers (id, first_name, surname)`).eq('id', loan.id).single();
+        const { data: latestLoanData, error } = await supabase
+            .from('loans')
+            .select(`*, loan_products(name), borrowers(*, groups(name), branches(name))`)
+            .eq('id', loan.id)
+            .single();
         if (error) {
              toast({ title: 'Error', description: 'Could not fetch latest schedule.', variant: 'destructive' });
              return;
         }
         setSelectedLoanForSchedule(latestLoanData);
         setScheduleDialogOpen(true);
+    };
+
+    const handleApproveRepaymentDelete = async (req) => {
+        const r = req.repayment;
+        if (!r) {
+            toast({ title: 'Error', description: 'Repayment data missing.', variant: 'destructive' });
+            return;
+        }
+        const loanPublicId = r.loans?.loan_id;
+        const borrowerName =
+            r.loans?.borrowers?.first_name != null || r.loans?.borrowers?.surname != null
+                ? `${r.loans.borrowers.first_name || ''} ${r.loans.borrowers.surname || ''}`.trim()
+                : '';
+        const officerName = branchOfficers.find((o) => o.id === r.officer_id)?.full_name || null;
+        try {
+            const { error: insErr } = await supabase.from('deleted_repayment_records').insert({
+                original_repayment_id: r.id,
+                loan_id: r.loan_id,
+                loan_public_id: loanPublicId,
+                borrower_name: borrowerName || null,
+                amount: r.amount,
+                principal_paid: r.principal_paid,
+                interest_paid: r.interest_paid,
+                payment_date: r.payment_date,
+                actual_payment_date: r.actual_payment_date,
+                officer_id: r.officer_id,
+                officer_name: officerName,
+                branch_id: user.user_metadata.branch_id,
+                requested_by_officer_id: req.officer_id,
+                approved_by_manager_id: user.id,
+                snapshot: { ...r, loan: r.loans },
+            });
+            if (insErr) throw insErr;
+
+            await supabase.rpc('log_audit_event', {
+                p_action: 'repayment.delete.finalized',
+                p_entity_type: 'repayment',
+                p_entity_id: String(r.id),
+                p_metadata: { loan_public_id: loanPublicId, borrower_name: borrowerName },
+            });
+
+            const { error: delErr } = await supabase.from('repayments').delete().eq('id', r.id);
+            if (delErr) throw delErr;
+
+            await supabase.rpc('recalculate_loan_schedule', { p_loan_id: r.loan_id });
+            await supabase.rpc('update_all_loan_statuses');
+
+            toast({ title: 'Deleted', description: 'Repayment removed and loan schedule updated.' });
+            fetchData();
+        } catch (e) {
+            toast({ title: 'Error', description: e?.message || 'Could not approve deletion.', variant: 'destructive' });
+        }
+    };
+
+    const handleRejectRepaymentDelete = async (req) => {
+        try {
+            const { error } = await supabase
+                .from('repayment_delete_requests')
+                .update({
+                    status: 'rejected',
+                    rejected_at: new Date().toISOString(),
+                    rejected_by_manager_id: user.id,
+                })
+                .eq('id', req.id);
+            if (error) throw error;
+
+            await supabase.rpc('log_audit_event', {
+                p_action: 'repayment.delete.rejected',
+                p_entity_type: 'repayment_delete_request',
+                p_entity_id: String(req.id),
+                p_metadata: { repayment_id: req.repayment_id },
+            });
+
+            toast({ title: 'Rejected', description: 'The officer can keep or adjust the repayment.' });
+            fetchData();
+        } catch (e) {
+            toast({ title: 'Error', description: e?.message || 'Could not reject.', variant: 'destructive' });
+        }
     };
 
     const handleExport = () => {
@@ -159,6 +308,102 @@ const ManagerRepaymentManagement = () => {
     return (
         <DashboardLayout title="Repayment Management">
             <div className="space-y-6">
+                {pendingRepaymentDeletes.length > 0 && (
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Repayment deletion requests</CardTitle>
+                            <CardDescription>
+                                Loan officers asked to remove these repayments. Approve to delete and recalculate the loan, or reject to keep the repayment.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Requested</TableHead>
+                                        <TableHead>Loan</TableHead>
+                                        <TableHead>Borrower</TableHead>
+                                        <TableHead>Amount</TableHead>
+                                        <TableHead>Officer</TableHead>
+                                        <TableHead>Actions</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {pendingRepaymentDeletes.map((req) => {
+                                        const r = req.repayment;
+                                        if (!r) return null;
+                                        return (
+                                            <TableRow key={req.id}>
+                                                <TableCell className="whitespace-nowrap text-sm">
+                                                    {format(req.requested_at ? new Date(req.requested_at) : new Date(), 'MMM dd, yyyy HH:mm')}
+                                                </TableCell>
+                                                <TableCell>{r.loans?.loan_id}</TableCell>
+                                                <TableCell>
+                                                    {r.loans?.borrowers?.first_name} {r.loans?.borrowers?.surname}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {currency}{' '}
+                                                    {r.amount.toLocaleString(undefined, {
+                                                        minimumFractionDigits: 2,
+                                                        maximumFractionDigits: 2,
+                                                    })}
+                                                </TableCell>
+                                                <TableCell>
+                                                    {branchOfficers.find((o) => o.id === r.officer_id)?.full_name || '—'}
+                                                </TableCell>
+                                                <TableCell className="space-x-2">
+                                                    <AlertDialog>
+                                                        <AlertDialogTrigger asChild>
+                                                            <Button size="sm" variant="outline">
+                                                                <CheckCircle className="mr-2 h-4 w-4" />
+                                                                Approve
+                                                            </Button>
+                                                        </AlertDialogTrigger>
+                                                        <AlertDialogContent>
+                                                            <AlertDialogHeader>
+                                                                <AlertDialogTitle>Delete this repayment?</AlertDialogTitle>
+                                                                <AlertDialogDescription>
+                                                                    This is final approval: the repayment will be removed and the loan schedule recalculated.
+                                                                </AlertDialogDescription>
+                                                            </AlertDialogHeader>
+                                                            <AlertDialogFooter>
+                                                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                                <AlertDialogAction onClick={() => handleApproveRepaymentDelete(req)}>
+                                                                    Yes, delete repayment
+                                                                </AlertDialogAction>
+                                                            </AlertDialogFooter>
+                                                        </AlertDialogContent>
+                                                    </AlertDialog>
+                                                    <AlertDialog>
+                                                        <AlertDialogTrigger asChild>
+                                                            <Button size="sm" variant="destructive">
+                                                                <XCircle className="mr-2 h-4 w-4" />
+                                                                Reject
+                                                            </Button>
+                                                        </AlertDialogTrigger>
+                                                        <AlertDialogContent>
+                                                            <AlertDialogHeader>
+                                                                <AlertDialogTitle>Reject deletion request?</AlertDialogTitle>
+                                                                <AlertDialogDescription>The repayment stays on the loan.</AlertDialogDescription>
+                                                            </AlertDialogHeader>
+                                                            <AlertDialogFooter>
+                                                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                                <AlertDialogAction onClick={() => handleRejectRepaymentDelete(req)}>
+                                                                    Reject request
+                                                                </AlertDialogAction>
+                                                            </AlertDialogFooter>
+                                                        </AlertDialogContent>
+                                                    </AlertDialog>
+                                                </TableCell>
+                                            </TableRow>
+                                        );
+                                    })}
+                                </TableBody>
+                            </Table>
+                        </CardContent>
+                    </Card>
+                )}
+
                 <Card>
                     <CardHeader>
                         <CardTitle>Repayment Overview</CardTitle>
@@ -217,9 +462,21 @@ const ManagerRepaymentManagement = () => {
                         <Button onClick={handleExport}><FileDown className="mr-2 h-4 w-4" /> Export</Button>
                     </CardHeader>
                     <CardContent>
+                        <BulkDataTableToolbar
+                            selectedCount={bulk.count}
+                            onClear={bulk.clear}
+                            onExportCsv={exportSelectedRepaymentsCsv}
+                        />
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-10">
+                                        <Checkbox
+                                            checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                                            onCheckedChange={() => bulk.toggleAll()}
+                                            aria-label="Select all filtered"
+                                        />
+                                    </TableHead>
                                     <TableHead>Payment Date</TableHead>
                                     <TableHead>Borrower</TableHead>
                                     <TableHead>Group</TableHead>
@@ -233,6 +490,13 @@ const ManagerRepaymentManagement = () => {
                             <TableBody>
                                 {pagedRepayments.map(r => (
                                     <TableRow key={r.id}>
+                                        <TableCell>
+                                            <Checkbox
+                                                checked={bulk.isSelected(r.id)}
+                                                onCheckedChange={() => bulk.toggle(r.id)}
+                                                aria-label="Select row"
+                                            />
+                                        </TableCell>
                                         <TableCell>{formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'MMM dd, yyyy')}</TableCell>
                                         <TableCell>{r.loans?.borrowers?.first_name} {r.loans?.borrowers?.surname}</TableCell>
                                         <TableCell>{r.loans?.borrowers?.groups?.name || 'N/A'}</TableCell>
@@ -247,17 +511,16 @@ const ManagerRepaymentManagement = () => {
                                 ))}
                                 {filteredRepayments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
+                                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
                             <TableFooter>
                                 <TableRow>
-                                    <TableCell colSpan={4} className="font-bold text-right">Totals</TableCell>
+                                    <TableCell colSpan={5} className="font-bold text-right">Totals</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                    <TableCell className="font-bold">{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                    <TableCell></TableCell>
+                                    <TableCell className="font-bold" colSpan={2}>{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                 </TableRow>
                             </TableFooter>
                         </Table>
@@ -282,7 +545,7 @@ const ManagerRepaymentManagement = () => {
             </div>
             
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-              <DialogContent className="max-w-4xl">
+              <DialogContent className="max-w-5xl">
                 <DialogHeader>
                     <DialogTitle>Repayment Schedule for {selectedLoanForSchedule?.loan_id}</DialogTitle>
                     <DialogDescription>
@@ -291,34 +554,16 @@ const ManagerRepaymentManagement = () => {
                     </DialogDescription>
                 </DialogHeader>
                 {selectedLoanForSchedule && (
-                    <div className="max-h-[60vh] overflow-y-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>#</TableHead>
-                                    <TableHead>Due Date</TableHead>
-                                    <TableHead>Amount Due</TableHead>
-                                    <TableHead>Principal Paid</TableHead>
-                                    <TableHead>Interest Paid</TableHead>
-                                    <TableHead>Total Paid</TableHead>
-                                    <TableHead>Status</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {selectedLoanForSchedule.schedule.map(inst => (
-                                    <TableRow key={inst.installmentNumber}>
-                                        <TableCell>{inst.installmentNumber}</TableCell>
-                                        <TableCell>{formatTZ(toZonedTime(new Date(inst.dueDate), EAT_TIMEZONE), 'MMM dd, yyyy')}</TableCell>
-                                        <TableCell>{currency} {inst.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(inst.principalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(inst.interestPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(inst.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell><Badge variant={inst.status === 'paid' ? 'success' : inst.status === 'arrears' ? 'warning' : 'secondary'}>{inst.status}</Badge></TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </div>
+                    <RepaymentScheduleGrid
+                      schedule={selectedLoanForSchedule.schedule}
+                      currency={currency}
+                      variant="full"
+                      exportMeta={scheduleExportMetaFromLoan(
+                        selectedLoanForSchedule,
+                        currency,
+                        'full'
+                      )}
+                    />
                 )}
               </DialogContent>
             </Dialog>

@@ -9,6 +9,10 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -16,6 +20,8 @@ import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, Trend
 import * as XLSX from 'xlsx';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
+import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -59,8 +65,9 @@ const AdminRepaymentManagement = () => {
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
-            const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
-            if (config) setCurrency(config.value);
+            const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
+            const cfg = Object.fromEntries((cfgRows || []).map((r) => [r.key, r.value]));
+            if (cfg.currency) setCurrency(cfg.currency);
 
             const { data: branchesData, error: branchesError } = await supabase.from('branches').select('id, name');
             if (branchesError) throw branchesError;
@@ -125,8 +132,50 @@ const AdminRepaymentManagement = () => {
         return { totalPaid, totalInterest, totalPrincipalPaid };
     }, [filteredRepayments]);
 
+    const filteredRepaymentIds = useMemo(() => filteredRepayments.map((r) => r.id), [filteredRepayments]);
+    const bulk = useBulkSelection(filteredRepaymentIds);
+
+    const exportSelectedRepaymentsCsv = () => {
+        const rows = filteredRepayments.filter((r) => bulk.isSelected(r.id));
+        if (rows.length === 0) {
+            toast({ title: 'Nothing selected', description: 'Select one or more repayments first.', variant: 'destructive' });
+            return;
+        }
+        exportObjectsToCsv(`repayments_${Date.now()}.csv`, [
+            {
+                header: 'Payment Date',
+                accessor: (r) =>
+                    formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
+            },
+            {
+                header: 'Borrower',
+                accessor: (r) =>
+                    `${r.loans?.borrowers?.first_name || ''} ${r.loans?.borrowers?.surname || ''}`.trim(),
+            },
+            {
+                header: 'Branch',
+                accessor: (r) => {
+                    const officer = users.find((u) => u.id === r.officer_id);
+                    return branches.find((b) => b.id === officer?.branch_id)?.name || '';
+                },
+            },
+            {
+                header: 'Loan Officer',
+                accessor: (r) => users.find((u) => u.id === r.officer_id)?.full_name || '',
+            },
+            { header: 'Principal Paid', accessor: (r) => String(r.principal_paid ?? '') },
+            { header: 'Interest Paid', accessor: (r) => String(r.interest_paid ?? '') },
+            { header: 'Total Paid', accessor: (r) => String(r.amount ?? '') },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} repayment(s) to CSV.` });
+    };
+
     const handleViewSchedule = async (loan) => {
-        const { data: latestLoanData, error } = await supabase.from('loans').select(`*, borrowers (id, first_name, surname)`).eq('id', loan.id).single();
+        const { data: latestLoanData, error } = await supabase
+            .from('loans')
+            .select(`*, loan_products(name), borrowers(*, groups(name), branches(name))`)
+            .eq('id', loan.id)
+            .single();
         if (error) {
              toast({ title: 'Error', description: 'Could not fetch latest schedule.', variant: 'destructive' });
              return;
@@ -219,9 +268,21 @@ const AdminRepaymentManagement = () => {
                         <Button onClick={handleExport}><FileDown className="mr-2 h-4 w-4" /> Export</Button>
                     </CardHeader>
                     <CardContent>
+                        <BulkDataTableToolbar
+                            selectedCount={bulk.count}
+                            onClear={bulk.clear}
+                            onExportCsv={exportSelectedRepaymentsCsv}
+                        />
                         <Table>
                             <TableHeader>
                                 <TableRow>
+                                    <TableHead className="w-10">
+                                        <Checkbox
+                                            checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                                            onCheckedChange={() => bulk.toggleAll()}
+                                            aria-label="Select all filtered"
+                                        />
+                                    </TableHead>
                                     <TableHead>Payment Date</TableHead>
                                     <TableHead>Borrower</TableHead>
                                     <TableHead>Branch</TableHead>
@@ -238,6 +299,13 @@ const AdminRepaymentManagement = () => {
                                     const branch = branches.find(b => b.id === officer?.branch_id);
                                     return (
                                     <TableRow key={r.id}>
+                                        <TableCell>
+                                            <Checkbox
+                                                checked={bulk.isSelected(r.id)}
+                                                onCheckedChange={() => bulk.toggle(r.id)}
+                                                aria-label="Select row"
+                                            />
+                                        </TableCell>
                                         <TableCell>{formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'MMM dd, yyyy')}</TableCell>
                                         <TableCell>{r.loans?.borrowers?.first_name} {r.loans?.borrowers?.surname}</TableCell>
                                         <TableCell>{branch?.name || 'N/A'}</TableCell>
@@ -252,13 +320,13 @@ const AdminRepaymentManagement = () => {
                                 )})}
                                 {filteredRepayments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
+                                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
                             <TableFooter>
                                 <TableRow>
-                                    <TableCell colSpan={4} className="font-bold text-right">Totals</TableCell>
+                                    <TableCell colSpan={5} className="font-bold text-right">Totals</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold" colSpan={2}>{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
@@ -286,7 +354,7 @@ const AdminRepaymentManagement = () => {
             </div>
             
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-              <DialogContent className="max-w-4xl">
+              <DialogContent className="max-w-5xl">
                 <DialogHeader>
                     <DialogTitle>Repayment Schedule for {selectedLoanForSchedule?.loan_id}</DialogTitle>
                     <DialogDescription>
@@ -295,34 +363,16 @@ const AdminRepaymentManagement = () => {
                     </DialogDescription>
                 </DialogHeader>
                 {selectedLoanForSchedule && (
-                    <div className="max-h-[60vh] overflow-y-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>#</TableHead>
-                                    <TableHead>Due Date</TableHead>
-                                    <TableHead>Amount Due</TableHead>
-                                    <TableHead>Principal Paid</TableHead>
-                                    <TableHead>Interest Paid</TableHead>
-                                    <TableHead>Total Paid</TableHead>
-                                    <TableHead>Status</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {selectedLoanForSchedule.schedule.map(inst => (
-                                    <TableRow key={inst.installmentNumber}>
-                                        <TableCell>{inst.installmentNumber}</TableCell>
-                                        <TableCell>{formatTZ(toZonedTime(new Date(inst.dueDate), EAT_TIMEZONE), 'MMM dd, yyyy')}</TableCell>
-                                        <TableCell>{currency} {inst.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(inst.principalPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(inst.interestPaid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(inst.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell><Badge variant={inst.status === 'paid' ? 'success' : inst.status === 'arrears' ? 'warning' : 'secondary'}>{inst.status}</Badge></TableCell>
-                                    </TableRow>
-                                ))}
-                            </TableBody>
-                        </Table>
-                    </div>
+                    <RepaymentScheduleGrid
+                      schedule={selectedLoanForSchedule.schedule}
+                      currency={currency}
+                      variant="full"
+                      exportMeta={scheduleExportMetaFromLoan(
+                        selectedLoanForSchedule,
+                        currency,
+                        'full'
+                      )}
+                    />
                 )}
               </DialogContent>
             </Dialog>

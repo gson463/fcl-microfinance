@@ -12,7 +12,7 @@ import UserManagement from '@/pages/admin/UserManagement';
 import LoanProductManagement from '@/pages/admin/LoanProductManagement';
 import SystemSettings from '@/pages/admin/SystemSettings';
 import HolidayManagement from '@/pages/admin/HolidayManagement';
-import AdminLoanRequests from '@/pages/admin/LoanRequests';
+import AdminDataHistory from '@/pages/admin/DataHistory';
 import AdminRepaymentManagement from '@/pages/admin/RepaymentManagement';
 import OfficerReassignment from '@/pages/admin/OfficerReassignment';
 import AuditLogs from '@/pages/admin/AuditLogs';
@@ -108,7 +108,8 @@ function App() {
       <Route path="/admin/loan-products" element={<ProtectedRoute allowedRoles={['admin']}><LoanProductManagement /></ProtectedRoute>} />
       <Route path="/admin/settings" element={<ProtectedRoute allowedRoles={['admin']}><SystemSettings /></ProtectedRoute>} />
       <Route path="/admin/holidays" element={<ProtectedRoute allowedRoles={['admin']}><HolidayManagement /></ProtectedRoute>} />
-      <Route path="/admin/loan-requests" element={<ProtectedRoute allowedRoles={['admin']}><AdminLoanRequests /></ProtectedRoute>} />
+      <Route path="/admin/loan-requests" element={<Navigate to="/admin/data-history" replace />} />
+      <Route path="/admin/data-history" element={<ProtectedRoute allowedRoles={['admin']}><AdminDataHistory /></ProtectedRoute>} />
       <Route path="/admin/repayment-management" element={<ProtectedRoute allowedRoles={['admin']}><AdminRepaymentManagement /></ProtectedRoute>} />
       <Route path="/admin/reassignment" element={<ProtectedRoute allowedRoles={['admin']}><OfficerReassignment /></ProtectedRoute>} />
       <Route path="/admin/audit-logs" element={<ProtectedRoute allowedRoles={['admin']}><AuditLogs /></ProtectedRoute>} />

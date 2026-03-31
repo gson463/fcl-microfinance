@@ -21,7 +21,10 @@ const GroupRepayment = () => {
     const { user, session } = useAuth();
     const { toast } = useToast();
     const [currency, setCurrency] = useState('TZS');
+    const [myCenters, setMyCenters] = useState([]);
     const [myGroups, setMyGroups] = useState([]);
+    const [selectedCenterId, setSelectedCenterId] = useState('');
+    const [centerSearchQuery, setCenterSearchQuery] = useState('');
     const [selectedGroupId, setSelectedGroupId] = useState('');
     const [groupMembers, setGroupMembers] = useState([]);
     const [repaymentAmounts, setRepaymentAmounts] = useState({});
@@ -49,6 +52,14 @@ const GroupRepayment = () => {
         const { data: holidaysData } = await supabase.from('holidays').select('date');
         setHolidays(holidaysData || []);
         
+        const { data: centersData, error: centersError } = await supabase.from('centers').select('*').eq('loan_officer_id', user.id).order('name');
+        if (centersError) {
+            toast({ title: 'Error fetching centers', description: centersError.message, variant: 'destructive' });
+            setMyCenters([]);
+        } else {
+            setMyCenters(centersData || []);
+        }
+
         const { data: groupsData, error } = await supabase.from('groups').select('*').eq('loan_officer_id', user.id);
         if (error) {
             toast({ title: 'Error fetching groups', description: error.message, variant: 'destructive' });
@@ -61,6 +72,13 @@ const GroupRepayment = () => {
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    useEffect(() => {
+        setSelectedGroupId('');
+        setGroupMembers([]);
+        setRepaymentAmounts({});
+        setMemberPage(1);
+    }, [selectedCenterId]);
 
     const handleGroupSelection = useCallback(async (groupId) => {
         setSelectedGroupId(groupId);
@@ -138,10 +156,17 @@ const GroupRepayment = () => {
         if(selectedGroupId) handleGroupSelection(selectedGroupId);
     }, [selectedDate, selectedGroupId, handleGroupSelection]);
 
+    const filteredCenters = useMemo(() => {
+        if (!centerSearchQuery) return myCenters;
+        return myCenters.filter((c) => c.name.toLowerCase().includes(centerSearchQuery.toLowerCase()));
+    }, [myCenters, centerSearchQuery]);
+
     const filteredGroups = useMemo(() => {
-        if (!searchQuery) return myGroups;
-        return myGroups.filter(g => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
-    }, [myGroups, searchQuery]);
+        if (!selectedCenterId) return [];
+        const inCenter = myGroups.filter((g) => g.center_id === selectedCenterId);
+        if (!searchQuery) return inCenter;
+        return inCenter.filter((g) => g.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    }, [myGroups, selectedCenterId, searchQuery]);
     
     useEffect(() => {
         setMemberPage(1);
@@ -250,28 +275,78 @@ const GroupRepayment = () => {
     };
     
     const selectedGroupName = useMemo(() => myGroups.find(g => g.id === selectedGroupId)?.name || '', [myGroups, selectedGroupId]);
+    const selectedCenterName = useMemo(() => myCenters.find((c) => c.id === selectedCenterId)?.name || '', [myCenters, selectedCenterId]);
 
     return (
         <DashboardLayout title="Group Repayments">
              <TooltipProvider>
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-1">
+                <div className="md:col-span-1 flex flex-col gap-4">
                     <Card>
                         <CardHeader>
-                            <CardTitle>My Groups</CardTitle>
-                             <div className="relative mt-2">
+                            <CardTitle>1. Center</CardTitle>
+                            <CardDescription className="text-xs">Choose a center first.</CardDescription>
+                            <div className="relative mt-2">
                                 <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                                <Input placeholder="Search groups..." className="pl-8" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+                                <Input placeholder="Search centers..." className="pl-8" value={centerSearchQuery} onChange={(e) => setCenterSearchQuery(e.target.value)} />
                             </div>
                         </CardHeader>
-                        <CardContent className="max-h-[60vh] overflow-y-auto">
+                        <CardContent className="max-h-[28vh] overflow-y-auto">
                             <div className="flex flex-col gap-2">
-                                {filteredGroups.map(group => (
-                                    <Button key={group.id} variant={selectedGroupId === group.id ? 'default' : 'outline'} onClick={() => handleGroupSelection(group.id)} className="w-full justify-start">
-                                        {group.name}
+                                {filteredCenters.map((center) => (
+                                    <Button
+                                        key={center.id}
+                                        type="button"
+                                        variant={selectedCenterId === center.id ? 'default' : 'outline'}
+                                        onClick={() => setSelectedCenterId(center.id)}
+                                        className="w-full justify-start"
+                                    >
+                                        {center.name}
                                     </Button>
                                 ))}
-                                {filteredGroups.length === 0 && <p className="text-center text-sm text-gray-500 py-4">No groups found.</p>}
+                                {filteredCenters.length === 0 && (
+                                    <p className="text-center text-sm text-muted-foreground py-4">No centers found. Add centers under Centers and groups.</p>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+                    <Card className={!selectedCenterId ? 'opacity-80' : ''}>
+                        <CardHeader>
+                            <CardTitle>2. Group</CardTitle>
+                            <CardDescription className="text-xs">
+                                {selectedCenterId ? `Groups in ${selectedCenterName || 'this center'}.` : 'Select a center to list groups.'}
+                            </CardDescription>
+                            <div className="relative mt-2">
+                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                <Input
+                                    placeholder="Search groups..."
+                                    className="pl-8"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    disabled={!selectedCenterId}
+                                />
+                            </div>
+                        </CardHeader>
+                        <CardContent className="max-h-[32vh] overflow-y-auto">
+                            <div className="flex flex-col gap-2">
+                                {selectedCenterId &&
+                                    filteredGroups.map((group) => (
+                                        <Button
+                                            key={group.id}
+                                            type="button"
+                                            variant={selectedGroupId === group.id ? 'default' : 'outline'}
+                                            onClick={() => handleGroupSelection(group.id)}
+                                            className="w-full justify-start"
+                                        >
+                                            {group.name}
+                                        </Button>
+                                    ))}
+                                {selectedCenterId && filteredGroups.length === 0 && (
+                                    <p className="text-center text-sm text-muted-foreground py-4">No groups in this center.</p>
+                                )}
+                                {!selectedCenterId && (
+                                    <p className="text-center text-sm text-muted-foreground py-4">Select a center first.</p>
+                                )}
                             </div>
                         </CardContent>
                     </Card>
@@ -279,7 +354,17 @@ const GroupRepayment = () => {
                 <div className="md:col-span-2">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Record Repayments for: {selectedGroupName}</CardTitle>
+                            <CardTitle>
+                                3. Record repayments
+                                {selectedGroupName ? (
+                                    <span className="block text-base font-normal text-muted-foreground mt-1">
+                                        {selectedCenterName && `${selectedCenterName} · `}
+                                        {selectedGroupName}
+                                    </span>
+                                ) : (
+                                    <span className="block text-base font-normal text-muted-foreground mt-1">Select a center, then a group</span>
+                                )}
+                            </CardTitle>
                             <div className="flex justify-between items-center mt-2">
                                 <CardDescription>Select a date to record repayments.</CardDescription>
                                 <Popover>
@@ -296,8 +381,10 @@ const GroupRepayment = () => {
                             </div>
                         </CardHeader>
                         <CardContent>
-                             {!selectedGroupId ? (
-                                <div className="text-center py-10 text-gray-500">Please select a group from the list to start.</div>
+                             {!selectedCenterId ? (
+                                <div className="text-center py-10 text-muted-foreground">Select a <strong>center</strong> on the left, then a <strong>group</strong> to record repayments.</div>
+                             ) : !selectedGroupId ? (
+                                <div className="text-center py-10 text-muted-foreground">Select a <strong>group</strong> under this center to continue.</div>
                              ) : isForbiddenDate ? (
                                 <div className="text-center py-10 text-red-500 flex flex-col items-center gap-2"><Ban className="h-10 w-10" /><p>Repayments are not allowed on Sundays or public holidays. Please select a working day.</p></div>
                              ) : loading ? (

@@ -7,6 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { PlusCircle, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -66,7 +70,25 @@ const ExpenseManagement = () => {
     }, [expenses, page]);
 
     const totalPages = Math.max(1, Math.ceil(expenses.length / PAGE_SIZE));
-    
+
+    const expenseIds = useMemo(() => expenses.map((e) => e.id), [expenses]);
+    const bulk = useBulkSelection(expenseIds);
+
+    const exportExpensesCsv = () => {
+        const rows = expenses.filter((e) => bulk.isSelected(e.id));
+        if (rows.length === 0) {
+            toast({ title: 'Nothing selected', description: 'Select one or more expenses first.', variant: 'destructive' });
+            return;
+        }
+        exportObjectsToCsv(`expenses_${Date.now()}.csv`, [
+            { header: 'Date', accessor: (r) => formatDate(new Date(r.expense_date), 'yyyy-MM-dd') },
+            { header: 'Type', accessor: 'expense_type' },
+            { header: 'Amount', accessor: (r) => String(r.amount ?? '') },
+            { header: 'Description', accessor: (r) => r.description ?? '' },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} expense(s) to CSV.` });
+    };
+
     const handleSubmitExpense = async (e) => {
         e.preventDefault();
         if (!formData.expense_type || !formData.amount || !formData.description || !formData.expense_date) {
@@ -129,14 +151,35 @@ const ExpenseManagement = () => {
             <Card>
                 <CardHeader><CardTitle>My Expenses</CardTitle></CardHeader>
                 <CardContent>
+                    {!loading && expenses.length > 0 && (
+                        <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportExpensesCsv} />
+                    )}
                     <Table>
-                        <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead></TableRow></TableHeader>
+                        <TableHeader><TableRow>
+                            <TableHead className="w-10">
+                                {!loading && expenses.length > 0 && (
+                                    <Checkbox
+                                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                                        onCheckedChange={() => bulk.toggleAll()}
+                                        aria-label="Select all"
+                                    />
+                                )}
+                            </TableHead>
+                            <TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Amount</TableHead><TableHead>Description</TableHead>
+                        </TableRow></TableHeader>
                         <TableBody>
                             {loading ? (
-                                <TableRow><TableCell colSpan="4" className="text-center">Loading...</TableCell></TableRow>
+                                <TableRow><TableCell colSpan="5" className="text-center">Loading...</TableCell></TableRow>
                             ) : expenses.length > 0 ? (
                                 pagedExpenses.map(e => (
                                     <TableRow key={e.id}>
+                                        <TableCell>
+                                            <Checkbox
+                                                checked={bulk.isSelected(e.id)}
+                                                onCheckedChange={() => bulk.toggle(e.id)}
+                                                aria-label="Select row"
+                                            />
+                                        </TableCell>
                                         <TableCell>{formatDate(new Date(e.expense_date), 'PPP')}</TableCell>
                                         <TableCell className="capitalize">{e.expense_type}</TableCell>
                                         <TableCell>{currency} {e.amount.toLocaleString()}</TableCell>
@@ -144,7 +187,7 @@ const ExpenseManagement = () => {
                                     </TableRow>
                                 ))
                             ) : (
-                                <TableRow><TableCell colSpan="4" className="text-center">No expenses found.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan="5" className="text-center">No expenses found.</TableCell></TableRow>
                             )}
                         </TableBody>
                     </Table>

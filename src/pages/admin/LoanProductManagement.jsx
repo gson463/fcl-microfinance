@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
@@ -133,6 +137,27 @@ const LoanProductManagement = () => {
     return p.status === filterStatus;
   });
 
+  const filteredProductIds = useMemo(() => filteredProducts.map((p) => p.id), [filteredProducts]);
+  const bulk = useBulkSelection(filteredProductIds);
+
+  const exportProductsCsv = () => {
+    const rows = filteredProducts.filter((p) => bulk.isSelected(p.id));
+    if (rows.length === 0) {
+      toast({ title: 'Nothing selected', description: 'Select one or more products first.', variant: 'destructive' });
+      return;
+    }
+    exportObjectsToCsv(`loan_products_${Date.now()}.csv`, [
+      { header: 'Name', accessor: 'name' },
+      { header: 'Interest %', accessor: (r) => String(r.interest_rate ?? '') },
+      { header: 'Repayment frequency', accessor: 'repayment_frequency' },
+      { header: 'Period', accessor: (r) => `${r.loan_period} ${r.loan_period_unit}` },
+      { header: 'Min amount', accessor: (r) => String(r.min_amount ?? '') },
+      { header: 'Max amount', accessor: (r) => String(r.max_amount ?? '') },
+      { header: 'Status', accessor: 'status' },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} product(s) to CSV.` });
+  };
+
   const resetForm = () => {
     setFormData({
       name: '',
@@ -231,9 +256,18 @@ const LoanProductManagement = () => {
                 <span className="ml-2">Loading Products...</span>
               </div>
             ) : (
+              <>
+              <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportProductsCsv} />
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                        onCheckedChange={() => bulk.toggleAll()}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Interest (%)</TableHead>
                     <TableHead>Period</TableHead>
@@ -245,6 +279,13 @@ const LoanProductManagement = () => {
                 <TableBody>
                   {filteredProducts.map(p => (
                     <TableRow key={p.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={bulk.isSelected(p.id)}
+                          onCheckedChange={() => bulk.toggle(p.id)}
+                          aria-label="Select row"
+                        />
+                      </TableCell>
                       <TableCell>{p.name}</TableCell>
                       <TableCell>{p.interest_rate}%</TableCell>
                       <TableCell className="capitalize">{p.loan_period} {p.loan_period_unit}</TableCell>
@@ -276,6 +317,7 @@ const LoanProductManagement = () => {
                   ))}
                 </TableBody>
               </Table>
+              </>
             )}
             {!isLoading && filteredProducts.length === 0 && (
               <div className="text-center py-10 text-gray-500">

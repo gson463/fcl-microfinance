@@ -8,7 +8,9 @@
     "build": "node tools/generate-llms.js || true && vite build",
     "preview": "vite preview --host :: --port 3000",
     "supabase:deploy": "bash scripts/supabase-deploy-all.sh",
-    "supabase:functions": "bash scripts/deploy-edge-functions.sh"
+    "supabase:functions": "bash scripts/deploy-edge-functions.sh",
+    "db:push": "supabase db push --yes",
+    "db:push:dry": "supabase db push --dry-run --yes"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.3.1",

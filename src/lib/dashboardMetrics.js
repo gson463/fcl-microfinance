@@ -17,6 +17,9 @@ export const DRILLDOWN_METRICS = {
 	default_disbursed: 'default_disbursed',
 	default_interest: 'default_interest',
 	default_total: 'default_total',
+	expected_today: 'expected_today',
+	/** Active loans whose last schedule installment falls within the next N days (default 14) */
+	nearing_completion: 'nearing_completion',
 };
 
 export const METRIC_TITLES = {
@@ -37,4 +40,6 @@ export const METRIC_TITLES = {
 	[DRILLDOWN_METRICS.default_disbursed]: 'Default — disbursed principal',
 	[DRILLDOWN_METRICS.default_interest]: 'Default — interest amount',
 	[DRILLDOWN_METRICS.default_total]: 'Default — total amount',
+	[DRILLDOWN_METRICS.expected_today]: 'Expected today (installments due)',
+	[DRILLDOWN_METRICS.nearing_completion]: 'Nearing loan completion (final payment within days)',
 };

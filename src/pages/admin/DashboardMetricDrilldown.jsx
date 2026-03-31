@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
 import { format, parseISO } from 'date-fns';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
 	Table,
@@ -15,14 +14,26 @@ import {
 	TableHeader,
 	TableRow,
 } from '@/components/ui/table';
-import { Loader2, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
-import { METRIC_TITLES } from '@/lib/dashboardMetrics';
+import { Loader2, ArrowLeft, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { DRILLDOWN_METRICS, METRIC_TITLES } from '@/lib/dashboardMetrics';
+import { Button } from '@/components/ui/button';
+import { Calendar } from '@/components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { defaultDashboardRange } from '@/components/dashboard/DashboardMetricShell';
+import {
+	orderDrilldownKeys,
+	PORTFOLIO_METRIC_KEYS,
+	PORTFOLIO_DRILLDOWN_COLUMNS,
+	enrichPortfolioDrilldownRow,
+} from '@/lib/drilldownColumnOrder';
 
 const PAGE_SIZE = 25;
 
 const DashboardMetricDrilldown = () => {
 	const { metricKey } = useParams();
-	const [searchParams] = useSearchParams();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { user } = useAuth();
@@ -34,9 +45,17 @@ const DashboardMetricDrilldown = () => {
 	const [rows, setRows] = useState([]);
 	const [managerBranchId, setManagerBranchId] = useState(null);
 	const [officerBranchId, setOfficerBranchId] = useState(null);
+	const [dateRange, setDateRange] = useState(defaultDashboardRange);
+	const [filterBranchId, setFilterBranchId] = useState('');
+	const [filterOfficerId, setFilterOfficerId] = useState('');
+	const [branches, setBranches] = useState([]);
+	const [officers, setOfficers] = useState([]);
+	const [managerBranchName, setManagerBranchName] = useState('');
+	const [nearingDays, setNearingDays] = useState(14);
 
 	const isManagerRoute = location.pathname.startsWith('/manager');
 	const isOfficerRoute = location.pathname.startsWith('/officer');
+	const isAdminRoute = location.pathname.startsWith('/admin');
 
 	useEffect(() => {
 		let cancelled = false;
@@ -72,24 +91,134 @@ const DashboardMetricDrilldown = () => {
 		};
 	}, [isOfficerRoute, user?.id]);
 
-	const startStr = searchParams.get('start') || format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd');
-	const endStr = searchParams.get('end') || format(new Date(), 'yyyy-MM-dd');
-	const branchFromUrl = searchParams.get('branch') || '';
-	const officerFromUrl = searchParams.get('officer') || '';
+	useEffect(() => {
+		const s = searchParams.get('start');
+		const e = searchParams.get('end');
+		if (s && e) {
+			const from = new Date(s);
+			const to = new Date(e);
+			if (!Number.isNaN(from.getTime()) && !Number.isNaN(to.getTime())) {
+				setDateRange({ from, to });
+			}
+		}
+		if (isAdminRoute) {
+			setFilterBranchId(searchParams.get('branch') || '');
+			setFilterOfficerId(searchParams.get('officer') || '');
+		} else 		if (isManagerRoute) {
+			setFilterOfficerId(searchParams.get('officer') || '');
+		}
+	}, [searchParams, isAdminRoute, isManagerRoute]);
 
-	/** Manager: branch from profile; admin: branch from URL; officer: branch from profile (never trust URL for scope). */
-	const branchId = isOfficerRoute
+	useEffect(() => {
+		if (metricKey !== DRILLDOWN_METRICS.nearing_completion) return;
+		const nd = parseInt(searchParams.get('days') || '14', 10);
+		if (!Number.isNaN(nd) && nd >= 1 && nd <= 365) setNearingDays(nd);
+	}, [searchParams, metricKey]);
+
+	useEffect(() => {
+		if (!isAdminRoute) return;
+		let cancelled = false;
+		(async () => {
+			const [{ data: br }, { data: of }] = await Promise.all([
+				supabase.from('branches').select('id, name').order('name'),
+				supabase.from('users').select('id, full_name, branch_id').eq('role', 'officer').order('full_name'),
+			]);
+			if (!cancelled) {
+				setBranches(br || []);
+				setOfficers(of || []);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [isAdminRoute]);
+
+	useEffect(() => {
+		if (!isManagerRoute || !managerBranchId) return;
+		let cancelled = false;
+		(async () => {
+			const [{ data: br }, { data: of }] = await Promise.all([
+				supabase.from('branches').select('name').eq('id', managerBranchId).maybeSingle(),
+				supabase
+					.from('users')
+					.select('id, full_name, branch_id')
+					.eq('role', 'officer')
+					.eq('branch_id', managerBranchId)
+					.order('full_name'),
+			]);
+			if (cancelled) return;
+			setManagerBranchName(br?.name || '');
+			setOfficers(of || []);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [isManagerRoute, managerBranchId]);
+
+	const persistQuery = useCallback(
+		(updates) => {
+			const next = new URLSearchParams(searchParams);
+			if (updates.range?.from && updates.range?.to) {
+				next.set('start', format(updates.range.from, 'yyyy-MM-dd'));
+				next.set('end', format(updates.range.to, 'yyyy-MM-dd'));
+			}
+			if (isAdminRoute) {
+				if ('branchId' in updates) {
+					if (updates.branchId) next.set('branch', updates.branchId);
+					else next.delete('branch');
+				}
+				if ('officerId' in updates) {
+					if (updates.officerId) next.set('officer', updates.officerId);
+					else next.delete('officer');
+				}
+			}
+			if (isManagerRoute && 'officerId' in updates) {
+				if (updates.officerId) next.set('officer', updates.officerId);
+				else next.delete('officer');
+			}
+			if ('days' in updates) {
+				if (updates.days != null && updates.days !== '') next.set('days', String(updates.days));
+				else next.delete('days');
+			}
+			setSearchParams(next, { replace: true });
+		},
+		[searchParams, setSearchParams, isAdminRoute, isManagerRoute]
+	);
+
+	const officersForBranch = useMemo(() => {
+		if (!filterBranchId) return officers;
+		return officers.filter((o) => o.branch_id === filterBranchId);
+	}, [officers, filterBranchId]);
+
+	useEffect(() => {
+		if (!isAdminRoute) return;
+		if (!filterOfficerId || !filterBranchId) return;
+		const o = officers.find((x) => x.id === filterOfficerId);
+		if (o && o.branch_id !== filterBranchId) setFilterOfficerId('');
+	}, [isAdminRoute, filterBranchId, filterOfficerId, officers]);
+
+	/** Manager: branch from profile; admin: filter; officer: branch from profile (never trust URL for scope). */
+	const branchIdForRpc = isOfficerRoute
 		? officerBranchId
 		: isManagerRoute && managerBranchId
 			? managerBranchId
-			: branchFromUrl;
+			: filterBranchId;
 	/** Officer drilldown is always scoped to the signed-in user (ignore query tampering). */
-	const officerId = isOfficerRoute ? user?.id || '' : officerFromUrl;
+	const officerIdForRpc = isOfficerRoute ? user?.id || '' : filterOfficerId;
+
+	const startStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd');
+	const endStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd');
 
 	const title = METRIC_TITLES[metricKey] || 'Dashboard details';
 
 	const fetchRows = useCallback(async () => {
 		if (!metricKey) return;
+		if (!dateRange?.from || !dateRange?.to) {
+			setRows([]);
+			setTotal(0);
+			setLoading(false);
+			return;
+		}
 		if (isManagerRoute && !managerBranchId) {
 			setRows([]);
 			setTotal(0);
@@ -108,14 +237,19 @@ const DashboardMetricDrilldown = () => {
 			if (configData?.value) setCurrency(configData.value);
 
 			const offset = (page - 1) * PAGE_SIZE;
+			const horizon =
+				metricKey === DRILLDOWN_METRICS.nearing_completion
+					? Math.min(365, Math.max(1, nearingDays))
+					: 14;
 			const { data, error } = await supabase.rpc('get_admin_dashboard_drilldown', {
 				p_metric: metricKey,
 				p_start_date: startStr,
 				p_end_date: endStr,
 				p_limit: PAGE_SIZE,
 				p_offset: offset,
-				p_branch_id: branchId || null,
-				p_officer_id: officerId || null,
+				p_branch_id: branchIdForRpc || null,
+				p_officer_id: officerIdForRpc || null,
+				p_nearing_days: horizon,
 			});
 
 			if (error) throw error;
@@ -149,11 +283,37 @@ const DashboardMetricDrilldown = () => {
 		} finally {
 			setLoading(false);
 		}
-	}, [metricKey, startStr, endStr, branchId, officerId, page, toast, isManagerRoute, managerBranchId, isOfficerRoute, user?.id]);
+	}, [
+		metricKey,
+		startStr,
+		endStr,
+		branchIdForRpc,
+		officerIdForRpc,
+		page,
+		toast,
+		isManagerRoute,
+		managerBranchId,
+		isOfficerRoute,
+		user?.id,
+		dateRange?.from,
+		dateRange?.to,
+		nearingDays,
+	]);
 
 	useEffect(() => {
 		setPage(1);
-	}, [metricKey, startStr, endStr, branchId, officerId, isManagerRoute, managerBranchId, isOfficerRoute, user?.id]);
+	}, [
+		metricKey,
+		startStr,
+		endStr,
+		branchIdForRpc,
+		officerIdForRpc,
+		isManagerRoute,
+		managerBranchId,
+		isOfficerRoute,
+		user?.id,
+		nearingDays,
+	]);
 
 	useEffect(() => {
 		fetchRows();
@@ -166,8 +326,20 @@ const DashboardMetricDrilldown = () => {
 
 	const formatCell = (key, val) => {
 		if (val === null || val === undefined) return '—';
-		if (typeof val === 'number' && (key.includes('principal') || key.includes('amount') || key.includes('interest') || key.includes('balance') || key.includes('payable') || key.includes('total'))) {
-			return formatMoney(val);
+		if (key === 'days_to_final_due' || key === 'remaining_installments') {
+			return typeof val === 'number' ? String(val) : String(val ?? '—');
+		}
+		if (key === 'product_interest_rate' && typeof val === 'number') {
+			return `${Number(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}%`;
+		}
+		if (typeof val === 'number') {
+			const k = key.toLowerCase();
+			const moneyLike =
+				/(principal|amount|interest|balance|payable|total|collected|disbursed|due_today|embedded|expected|outstanding|default|_paid|paid)/.test(
+					k
+				) && !k.includes('interest_rate');
+			if (moneyLike) return formatMoney(val);
+			return String(val);
 		}
 		if (typeof val === 'string' && /^\d{4}-\d{2}-\d{2}/.test(val)) {
 			try {
@@ -179,7 +351,17 @@ const DashboardMetricDrilldown = () => {
 		return String(val);
 	};
 
-	const keys = rows.length > 0 ? Object.keys(rows[0]) : [];
+	const displayRows = useMemo(() => {
+		if (!PORTFOLIO_METRIC_KEYS.has(metricKey)) return rows;
+		return rows.map(enrichPortfolioDrilldownRow);
+	}, [rows, metricKey]);
+
+	const keys = useMemo(() => {
+		if (rows.length === 0) return [];
+		if (PORTFOLIO_METRIC_KEYS.has(metricKey)) return PORTFOLIO_DRILLDOWN_COLUMNS;
+		return orderDrilldownKeys(Object.keys(rows[0]));
+	}, [rows, metricKey]);
+
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
 	return (
@@ -195,8 +377,11 @@ const DashboardMetricDrilldown = () => {
 						size="sm"
 						onClick={() => {
 							const q = new URLSearchParams({ start: startStr, end: endStr });
-							if (!isManagerRoute && !isOfficerRoute && branchFromUrl) q.set('branch', branchFromUrl);
-							if (!isOfficerRoute && officerFromUrl) q.set('officer', officerFromUrl);
+							if (isAdminRoute) {
+								if (filterBranchId) q.set('branch', filterBranchId);
+								if (filterOfficerId) q.set('officer', filterOfficerId);
+							}
+							if (isManagerRoute && filterOfficerId) q.set('officer', filterOfficerId);
 							if (isOfficerRoute) navigate(`/officer/dashboard?${q.toString()}`);
 							else if (isManagerRoute) navigate(`/manager/dashboard?${q.toString()}`);
 							else navigate(`/admin/dashboard?${q.toString()}`);
@@ -206,11 +391,207 @@ const DashboardMetricDrilldown = () => {
 					</Button>
 				</div>
 
+				<div className="flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-sm lg:flex-row lg:flex-wrap lg:items-end dark:bg-card">
+					<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+						<Popover>
+							<PopoverTrigger asChild>
+								<Button variant="outline" className={cn('w-full min-w-[240px] justify-start text-left font-normal sm:w-auto')}>
+									<CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+									{dateRange?.from && dateRange?.to ? (
+										<>
+											{format(dateRange.from, 'LLL dd, y')} – {format(dateRange.to, 'LLL dd, y')}
+										</>
+									) : (
+										<span>Pick range</span>
+									)}
+								</Button>
+							</PopoverTrigger>
+							<PopoverContent className="w-auto p-0" align="start">
+								<Calendar
+									initialFocus
+									mode="range"
+									defaultMonth={dateRange?.from}
+									selected={dateRange}
+									onSelect={(r) => {
+										setDateRange(r);
+										if (r?.from && r?.to) persistQuery({ range: r });
+									}}
+									numberOfMonths={2}
+								/>
+							</PopoverContent>
+						</Popover>
+
+						{metricKey === DRILLDOWN_METRICS.nearing_completion && (
+							<div className="w-full min-w-[200px] sm:w-[220px]">
+								<p className="mb-1.5 text-xs font-medium text-neutral-500">Final payment within</p>
+								<Select
+									value={String(nearingDays)}
+									onValueChange={(v) => {
+										const n = Math.min(365, Math.max(1, parseInt(v, 10) || 14));
+										setNearingDays(n);
+										persistQuery({ days: n });
+									}}
+								>
+									<SelectTrigger>
+										<SelectValue placeholder="Days" />
+									</SelectTrigger>
+									<SelectContent>
+										{[3, 7, 10, 14, 21, 30, 45, 60, 90].map((d) => (
+											<SelectItem key={d} value={String(d)}>
+												{d} days
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+						)}
+
+						{isAdminRoute && (
+							<>
+								<div className="w-full min-w-[200px] sm:w-[220px]">
+									<p className="mb-1.5 text-xs font-medium text-neutral-500">Branch</p>
+									<Select
+										value={filterBranchId || 'all'}
+										onValueChange={(v) => {
+											const next = v === 'all' ? '' : v;
+											setFilterBranchId(next);
+											setFilterOfficerId('');
+											persistQuery({ branchId: next, officerId: '' });
+										}}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="All branches" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All branches</SelectItem>
+											{branches.map((br) => (
+												<SelectItem key={br.id} value={br.id}>
+													{br.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+								<div className="w-full min-w-[200px] sm:w-[220px]">
+									<p className="mb-1.5 text-xs font-medium text-neutral-500">Loan officer</p>
+									<Select
+										value={filterOfficerId || 'all'}
+										onValueChange={(v) => {
+											const next = v === 'all' ? '' : v;
+											setFilterOfficerId(next);
+											persistQuery({ officerId: next });
+										}}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="All officers" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All officers</SelectItem>
+											{officersForBranch.map((o) => (
+												<SelectItem key={o.id} value={o.id}>
+													{o.full_name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+								{(filterBranchId || filterOfficerId) && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="text-neutral-600"
+										onClick={() => {
+											setFilterBranchId('');
+											setFilterOfficerId('');
+											persistQuery({ branchId: '', officerId: '' });
+										}}
+									>
+										Clear filters
+									</Button>
+								)}
+							</>
+						)}
+
+						{isManagerRoute && managerBranchId && (
+							<>
+								<div className="w-full min-w-[200px] sm:w-[220px]">
+									<p className="mb-1.5 text-xs font-medium text-neutral-500">Branch</p>
+									<p className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-800 dark:border-neutral-600 dark:bg-neutral-900/40 dark:text-neutral-100">
+										{managerBranchName || 'Your branch'}
+									</p>
+								</div>
+								<div className="w-full min-w-[200px] sm:w-[220px]">
+									<p className="mb-1.5 text-xs font-medium text-neutral-500">Loan officer</p>
+									<Select
+										value={filterOfficerId || 'all'}
+										onValueChange={(v) => {
+											const next = v === 'all' ? '' : v;
+											setFilterOfficerId(next);
+											persistQuery({ officerId: next });
+										}}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="All officers" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All officers</SelectItem>
+											{officers.map((o) => (
+												<SelectItem key={o.id} value={o.id}>
+													{o.full_name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+								{filterOfficerId && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="text-neutral-600"
+										onClick={() => {
+											setFilterOfficerId('');
+											persistQuery({ officerId: '' });
+										}}
+									>
+										Clear officer
+									</Button>
+								)}
+							</>
+						)}
+					</div>
+				</div>
+
 				<Card>
 					<CardHeader>
 						<CardTitle className="text-lg">{title}</CardTitle>
 						<CardDescription>
 							{startStr} → {endStr}
+							{metricKey === DRILLDOWN_METRICS.nearing_completion && (
+								<span className="mt-1 block text-neutral-600 dark:text-neutral-400">
+									Active loans whose <strong>last scheduled installment</strong> is due between today and the next{' '}
+									<strong>{nearingDays}</strong> days.
+								</span>
+							)}
+							{isAdminRoute && (filterBranchId || filterOfficerId) && (
+								<span className="block text-neutral-600 dark:text-neutral-400">
+									{filterBranchId && (
+										<>
+											Branch: {branches.find((b) => b.id === filterBranchId)?.name || filterBranchId}
+										</>
+									)}
+									{filterBranchId && filterOfficerId && ' · '}
+									{filterOfficerId && (
+										<>Officer: {officers.find((o) => o.id === filterOfficerId)?.full_name || filterOfficerId}</>
+									)}
+								</span>
+							)}
+							{isManagerRoute && filterOfficerId && (
+								<span className="block text-neutral-600 dark:text-neutral-400">
+									Officer: {officers.find((o) => o.id === filterOfficerId)?.full_name || filterOfficerId}
+								</span>
+							)}
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -221,22 +602,32 @@ const DashboardMetricDrilldown = () => {
 						) : rows.length === 0 ? (
 							<p className="text-sm text-neutral-500 py-8 text-center">No rows for this metric.</p>
 						) : (
-							<div className="overflow-x-auto rounded-md border">
-								<Table>
-									<TableHeader>
-										<TableRow>
+							<div className="overflow-x-auto rounded-md border border-neutral-300 bg-white shadow-sm dark:border-neutral-600 dark:bg-card">
+								<Table className="border-collapse text-sm [&_td]:align-middle [&_th]:align-middle">
+									<TableHeader className="[&_tr]:border-0">
+										<TableRow className="border-0 hover:bg-transparent">
 											{keys.map((k) => (
-												<TableHead key={k} className="whitespace-nowrap capitalize">
+												<TableHead
+													key={k}
+													className="whitespace-nowrap border border-neutral-300 bg-neutral-100 px-3 py-2 text-left text-xs font-semibold tracking-wide text-neutral-800 capitalize dark:border-neutral-600 dark:bg-neutral-800/70 dark:text-neutral-100"
+												>
 													{k.replace(/_/g, ' ')}
 												</TableHead>
 											))}
 										</TableRow>
 									</TableHeader>
-									<TableBody>
-										{rows.map((row, i) => (
-											<TableRow key={row.id || i}>
+									<TableBody className="[&_tr]:border-0">
+										{displayRows.map((row, i) => (
+											<TableRow
+												key={row.id ?? row.loan_id ?? i}
+												className="border-0 odd:bg-white even:bg-neutral-50/80 hover:bg-amber-50/50 dark:odd:bg-card dark:even:bg-neutral-900/40 dark:hover:bg-neutral-800/50"
+											>
 												{keys.map((k) => (
-													<TableCell key={k} className="whitespace-nowrap max-w-[220px] truncate" title={String(row[k])}>
+													<TableCell
+														key={k}
+														className="whitespace-nowrap border border-neutral-300 px-3 py-2 text-neutral-900 max-w-[220px] truncate dark:border-neutral-600 dark:text-neutral-100"
+														title={row[k] != null ? String(row[k]) : ''}
+													>
 														{formatCell(k, row[k])}
 													</TableCell>
 												))}

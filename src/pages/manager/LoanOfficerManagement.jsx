@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -117,6 +121,23 @@ const LoanOfficerManagement = () => {
   }, [officers, page]);
 
   const totalPages = Math.max(1, Math.ceil(officers.length / PAGE_SIZE));
+
+  const officerIds = useMemo(() => officers.map((o) => o.id), [officers]);
+  const bulk = useBulkSelection(officerIds);
+
+  const exportOfficersCsv = () => {
+    const rows = officers.filter((o) => bulk.isSelected(o.id));
+    if (rows.length === 0) {
+      toast({ title: 'Nothing selected', description: 'Select one or more officers first.', variant: 'destructive' });
+      return;
+    }
+    exportObjectsToCsv(`loan_officers_${Date.now()}.csv`, [
+      { header: 'Name', accessor: 'full_name' },
+      { header: 'Email', accessor: 'email' },
+      { header: 'Active', accessor: (r) => (r.is_active ? 'yes' : 'no') },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} officer(s) to CSV.` });
+  };
 
   const handleOpenDialog = (officer = null) => {
     if (officer) {
@@ -258,9 +279,18 @@ const LoanOfficerManagement = () => {
         <CardHeader><CardTitle>Your Loan Officers</CardTitle></CardHeader>
         <CardContent>
             {loading ? <div className="text-center p-8">Loading officers...</div> :
+            <>
+            <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportOfficersCsv} />
             <Table>
                 <TableHeader>
                 <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                        onCheckedChange={() => bulk.toggleAll()}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Status</TableHead>
@@ -270,6 +300,13 @@ const LoanOfficerManagement = () => {
                 <TableBody>
                 {officers.length > 0 ? pagedOfficers.map(officer => (
                     <TableRow key={officer.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={bulk.isSelected(officer.id)}
+                          onCheckedChange={() => bulk.toggle(officer.id)}
+                          aria-label="Select row"
+                        />
+                      </TableCell>
                       <TableCell>{officer.full_name}</TableCell>
                       <TableCell>{officer.email}</TableCell>
                       <TableCell><Badge variant={getBadgeVariant(officer.is_active)}>{officer.is_active ? 'Active' : 'Inactive'}</Badge></TableCell>
@@ -302,13 +339,12 @@ const LoanOfficerManagement = () => {
                     </TableRow>
                 )) : (
                     <TableRow>
-                        <TableCell colSpan={4} className="text-center">No loan officers found for this branch.</TableCell>
+                        <TableCell colSpan={5} className="text-center">No loan officers found for this branch.</TableCell>
                     </TableRow>
                 )}
                 </TableBody>
             </Table>
-            }
-            {!loading && officers.length > 0 && (
+            {officers.length > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-4 border-t px-6 py-4">
                 <p className="text-sm text-muted-foreground">
                   Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, officers.length)} of {officers.length}
@@ -324,6 +360,8 @@ const LoanOfficerManagement = () => {
                 </div>
               </div>
             )}
+            </>
+            }
         </CardContent>
       </Card>
     </DashboardLayout>

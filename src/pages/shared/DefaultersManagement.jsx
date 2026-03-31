@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, TrendingDown, Scale, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, TrendingDown, Scale, Trash2, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { format, differenceInDays } from 'date-fns';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
@@ -161,6 +162,21 @@ const DefaultersManagement = () => {
         }
     };
 
+    const exportSelectedDefaultedCsv = () => {
+        const rows = filteredLoans.filter((l) => selectedLoans.includes(l.id));
+        if (rows.length === 0) {
+            toast({ title: 'Nothing selected', description: 'Select one or more loans first.', variant: 'destructive' });
+            return;
+        }
+        exportObjectsToCsv(`defaulted_loans_${Date.now()}.csv`, [
+            { header: 'Loan ID', accessor: 'loan_id' },
+            { header: 'Borrower', accessor: (r) => `${r.borrowers?.first_name || ''} ${r.borrowers?.surname || ''}`.trim() },
+            { header: 'Balance', accessor: (r) => String(r.balance ?? '') },
+            { header: 'Days overdue', accessor: (r) => String(r.daysOverdue ?? '') },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} loan(s) to CSV.` });
+    };
+
     const stats = useMemo(() => {
         const totalDefaultedAmount = defaultedLoans.reduce((sum, loan) => sum + loan.balance, 0);
         return {
@@ -193,6 +209,11 @@ const DefaultersManagement = () => {
                                 className="max-w-sm"
                             />
                             {selectedLoans.length > 0 && (
+                                <div className="flex flex-wrap items-center gap-2">
+                                <Button type="button" variant="outline" onClick={exportSelectedDefaultedCsv}>
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Export CSV
+                                </Button>
                                 <AlertDialog>
                                     <AlertDialogTrigger asChild>
                                         <Button variant="destructive" disabled={processing}>
@@ -213,6 +234,7 @@ const DefaultersManagement = () => {
                                         </AlertDialogFooter>
                                     </AlertDialogContent>
                                 </AlertDialog>
+                                </div>
                             )}
                         </div>
                         <Table>

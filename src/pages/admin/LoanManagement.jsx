@@ -7,6 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
+import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
+import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -60,9 +66,9 @@ const AdminLoanManagement = () => {
         if (!user) return;
         setLoading(true);
 
-        // Fetch Config
-        const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
-        if (config) setCurrency(config.value);
+        const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
+        const cfg = Object.fromEntries((cfgRows || []).map((r) => [r.key, r.value]));
+        if (cfg.currency) setCurrency(cfg.currency);
 
         // Fetch Branches
         const { data: branchesData, error: branchesError } = await supabase.from('branches').select('*');
@@ -88,7 +94,9 @@ const AdminLoanManagement = () => {
         // Include officer branch_id for filtering
         const { data: loansData, error: loansError } = await supabase
             .from('loans')
-            .select(`*, borrowers ( id, first_name, surname ), officer:users!officer_id ( id, full_name, branch_id )`);
+            .select(
+                `*, borrowers(*, groups(name), branches(name)), loan_products(name), officer:users!officer_id ( id, full_name, branch_id )`
+            );
 
         // Fetch Products
         const { data: productsData, error: productsError } = await supabase.from('loan_products').select('*');
@@ -162,6 +170,24 @@ const AdminLoanManagement = () => {
         return { totalLoans, totalPrincipal, totalBalance, atRiskLoans };
     }, [filteredLoans]);
 
+    const pagedLoanIds = useMemo(() => pagedLoans.map((l) => l.id), [pagedLoans]);
+    const bulk = useBulkSelection(pagedLoanIds);
+
+    const exportLoansCsv = () => {
+        const rows = pagedLoans.filter((l) => bulk.isSelected(l.id));
+        if (rows.length === 0) return;
+        exportObjectsToCsv(`loans_${Date.now()}.csv`, [
+            { header: 'Loan ID', accessor: 'loan_id' },
+            { header: 'Borrower', accessor: (r) => `${r.borrowers?.first_name || ''} ${r.borrowers?.surname || ''}`.trim() },
+            { header: 'Officer', accessor: (r) => r.officer?.full_name || '' },
+            { header: 'Principal', accessor: (r) => String(r.principal ?? '') },
+            { header: 'Balance', accessor: (r) => String(r.balance ?? '') },
+            { header: 'Disbursement', accessor: (r) => (r.disbursement_date ? formatTZ(toZonedTime(new Date(r.disbursement_date), EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }) : '') },
+            { header: 'Status', accessor: 'status' },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} loan(s) to CSV.` });
+    };
+
     const viewSchedule = async (loan) => {
         setIsRefreshingSchedule(true);
         try {
@@ -171,7 +197,7 @@ const AdminLoanManagement = () => {
             
             const { data: latestLoanData, error } = await supabase
                 .from('loans')
-                .select(`*, borrowers (id, first_name, surname)`)
+                .select(`*, borrowers(*, groups(name), branches(name)), loan_products(name)`)
                 .eq('id', loan.id)
                 .single();
                 
@@ -294,11 +320,13 @@ const AdminLoanManagement = () => {
                         </div>
                     </CardHeader>
                     <CardContent>
+                        <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportLoansCsv} />
                         <Table>
-                            <TableHeader><TableRow><TableHead>Loan ID</TableHead><TableHead>Borrower</TableHead><TableHead>Officer</TableHead><TableHead>Principal</TableHead><TableHead>Balance</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
+                            <TableHeader><TableRow><TableHead className="w-10"><Checkbox checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false} onCheckedChange={() => bulk.toggleAll()} aria-label="Select page" /></TableHead><TableHead>Loan ID</TableHead><TableHead>Borrower</TableHead><TableHead>Officer</TableHead><TableHead>Principal</TableHead><TableHead>Balance</TableHead><TableHead>Disbursement</TableHead><TableHead>Status</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
                             <TableBody>
                                 {pagedLoans.map(l => (
                                     <TableRow key={l.id}>
+                                        <TableCell><Checkbox checked={bulk.isSelected(l.id)} onCheckedChange={() => bulk.toggle(l.id)} aria-label={`Select ${l.loan_id}`} /></TableCell>
                                         <TableCell>{l.loan_id}</TableCell>
                                         <TableCell>{l.borrowers?.first_name} {l.borrowers?.surname}</TableCell>
                                         <TableCell>{l.officer?.full_name}</TableCell>
@@ -323,7 +351,7 @@ const AdminLoanManagement = () => {
                                         </TableCell>
                                     </TableRow>
                                 ))}
-                                {filteredLoans.length === 0 && <TableRow><TableCell colSpan={8} className="text-center py-4">No loans found matching filters.</TableCell></TableRow>}
+                                {filteredLoans.length === 0 && <TableRow><TableCell colSpan={9} className="text-center py-4">No loans found matching filters.</TableCell></TableRow>}
                             </TableBody>
                         </Table>
                         {filteredLoans.length > 0 && (
@@ -348,7 +376,7 @@ const AdminLoanManagement = () => {
 
             {/* Schedule Dialog */}
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-                <DialogContent className="max-w-4xl">
+                <DialogContent className="max-w-5xl">
                     <DialogHeader>
                         <DialogTitle>Repayment Schedule for {selectedLoan?.loan_id}</DialogTitle>
                         <DialogDescription>
@@ -356,10 +384,16 @@ const AdminLoanManagement = () => {
                             Total Payable: {currency} {(selectedLoan?.total_payable || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="max-h-[60vh] overflow-y-auto"><Table>
-                        <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Due Date</TableHead><TableHead>Amount Due</TableHead><TableHead>Paid</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-                        <TableBody>{selectedLoan?.schedule?.map(inst => (<TableRow key={inst.installmentNumber}><TableCell>{inst.installmentNumber}</TableCell><TableCell>{formatTZ(toZonedTime(new Date(inst.dueDate), EAT_TIMEZONE), 'MMM dd, yyyy', { timeZone: EAT_TIMEZONE })}</TableCell><TableCell>{currency} {inst.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell><TableCell>{currency} {(inst.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell><TableCell><Badge variant={inst.status === 'paid' ? 'success' : inst.status === 'arrears' ? 'warning' : 'default'}>{inst.status}</Badge></TableCell></TableRow>))}</TableBody>
-                    </Table></div>
+                    <RepaymentScheduleGrid
+                      schedule={selectedLoan?.schedule}
+                      currency={currency}
+                      variant="simple"
+                      exportMeta={
+                        selectedLoan
+                          ? scheduleExportMetaFromLoan(selectedLoan, currency, 'simple')
+                          : undefined
+                      }
+                    />
                 </DialogContent>
             </Dialog>
 

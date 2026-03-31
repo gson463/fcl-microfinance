@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/components/ui/use-toast';
@@ -158,6 +162,23 @@ const BranchManagement = () => {
   // Filter managers: only show managers not assigned to any branch, or the one currently assigned to the editing branch
   const availableManagers = managers.filter(m => !m.branch_id || (editingBranch && m.branch_id === editingBranch.id) );
 
+  const branchIds = useMemo(() => (branches || []).map((b) => b.id), [branches]);
+  const bulk = useBulkSelection(branchIds);
+
+  const exportBranchesCsv = () => {
+    const rows = (branches || []).filter((b) => bulk.isSelected(b.id));
+    if (rows.length === 0) {
+      toast({ title: 'Nothing selected', description: 'Select one or more branches first.', variant: 'destructive' });
+      return;
+    }
+    exportObjectsToCsv(`branches_${Date.now()}.csv`, [
+      { header: 'Name', accessor: 'name' },
+      { header: 'Location', accessor: (r) => r.location ?? '' },
+      { header: 'Manager', accessor: (r) => getManagerName(r) },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} branch(es) to CSV.` });
+  };
+
   return (
     <DashboardLayout title="Branch Management">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
@@ -215,9 +236,18 @@ const BranchManagement = () => {
                 <span className="ml-2">Loading Branches...</span>
               </div>
             ) : (
+              <>
+              <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportBranchesCsv} />
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                        onCheckedChange={() => bulk.toggleAll()}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Manager</TableHead>
@@ -227,6 +257,13 @@ const BranchManagement = () => {
                 <TableBody>
                   {branches.map(branch => (
                     <TableRow key={branch.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={bulk.isSelected(branch.id)}
+                          onCheckedChange={() => bulk.toggle(branch.id)}
+                          aria-label="Select row"
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">{branch.name}</TableCell>
                       <TableCell>{branch.location}</TableCell>
                       <TableCell>{getManagerName(branch)}</TableCell>
@@ -254,6 +291,7 @@ const BranchManagement = () => {
                   ))}
                 </TableBody>
               </Table>
+              </>
             )}
             {!isLoading && branches.length === 0 && (
               <div className="text-center py-10 text-gray-500">

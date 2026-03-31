@@ -7,17 +7,21 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { Card, CardContent, CardTitle, CardDescription } from '@/components/ui/card';
 import {
-	Users,
 	FileQuestion,
 	Loader2,
-	PieChart,
 	Banknote,
-	Percent,
-	Wallet,
 	AlertTriangle,
 	TrendingUp,
 	UserPlus,
 	Briefcase,
+	User,
+	PiggyBank,
+	CircleDollarSign,
+	Landmark,
+	Wallet,
+	CalendarClock,
+	CalendarDays,
+	Target,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -28,13 +32,28 @@ import { useToast } from '@/components/ui/use-toast';
 import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-	ClickMetricCard,
-	DashboardStatCard,
-	MetricSection,
 	defaultDashboardRange,
 	quickActionCardClass,
 	quickActionIconWrapClass,
 } from '@/components/dashboard/DashboardMetricShell';
+import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
+
+const MANAGER_CARD_SHELLS = [
+	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
+	'bg-gradient-to-br from-violet-600 via-purple-700 to-indigo-950 shadow-violet-900/30',
+	'bg-gradient-to-br from-sky-500 via-blue-600 to-indigo-950 shadow-blue-900/30',
+	'bg-gradient-to-br from-emerald-500 via-green-600 to-teal-900 shadow-emerald-900/30',
+	'bg-gradient-to-br from-teal-500 via-cyan-600 to-sky-900 shadow-teal-900/30',
+	'bg-gradient-to-br from-blue-500 via-indigo-600 to-violet-950 shadow-blue-900/30',
+	'bg-gradient-to-br from-indigo-600 via-blue-800 to-slate-950 shadow-indigo-900/30',
+	'bg-gradient-to-br from-violet-400 via-fuchsia-600 to-purple-900 shadow-purple-900/30',
+	'bg-gradient-to-br from-red-500 via-rose-700 to-red-950 shadow-red-900/30',
+	'bg-gradient-to-br from-rose-600 via-pink-700 to-rose-950 shadow-rose-900/30',
+	'bg-gradient-to-br from-orange-500 via-amber-600 to-orange-900 shadow-orange-900/30',
+	'bg-gradient-to-br from-cyan-400 via-sky-500 to-blue-900 shadow-sky-900/30',
+	'bg-gradient-to-br from-fuchsia-600 via-pink-700 to-purple-950 shadow-fuchsia-900/30',
+	'bg-gradient-to-br from-lime-500 via-emerald-600 to-green-950 shadow-emerald-900/25',
+];
 
 const BranchManagerDashboard = () => {
 	const navigate = useNavigate();
@@ -50,6 +69,7 @@ const BranchManagerDashboard = () => {
 	const [branchName, setBranchName] = useState('');
 	const [officers, setOfficers] = useState([]);
 	const [officerId, setOfficerId] = useState('');
+	const [expandedCardId, setExpandedCardId] = useState(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -131,6 +151,7 @@ const BranchManagerDashboard = () => {
 				p_end_date: format(dateRange.to, 'yyyy-MM-dd'),
 				p_branch_id: managerBranchId,
 				p_officer_id: officerId || null,
+				p_nearing_days: 14,
 			});
 
 			if (error) throw error;
@@ -161,12 +182,34 @@ const BranchManagerDashboard = () => {
 		return `${currency} ${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 	};
 
-	const openMetric = (metricKey) => {
+	const openMetric = (metricKey, drillParams = {}) => {
 		const start = format(dateRange.from, 'yyyy-MM-dd');
 		const end = format(dateRange.to, 'yyyy-MM-dd');
 		const q = new URLSearchParams({ start, end });
 		if (officerId) q.set('officer', officerId);
+		if (drillParams.days != null) q.set('days', String(drillParams.days));
 		navigate(`/manager/dashboard/metrics/${metricKey}?${q.toString()}`);
+	};
+
+	const withFilterQuery = useCallback(
+		(path) => {
+			const q = new URLSearchParams();
+			if (officerId) q.set('officer', officerId);
+			const qs = q.toString();
+			return qs ? `${path}?${qs}` : path;
+		},
+		[officerId]
+	);
+
+	const navigatePath = useCallback(
+		(path) => {
+			navigate(withFilterQuery(path));
+		},
+		[navigate, withFilterQuery]
+	);
+
+	const toggleCard = (id) => {
+		setExpandedCardId((prev) => (prev === id ? null : id));
 	};
 
 	const quickActions = useMemo(
@@ -201,6 +244,369 @@ const BranchManagerDashboard = () => {
 
 	const s = stats || {};
 
+	const pct = (part, total) => {
+		const p = Number(part) || 0;
+		const t = Number(total) || 0;
+		if (t <= 0) return 0;
+		return Math.min(100, Math.round((p / t) * 100));
+	};
+
+	const portfolioTotal = Number(s.portfolio_general) || 0;
+
+	const metricCards = [
+		{
+			id: 'borrowers',
+			title: 'Branch Borrowers',
+			value: String(s.total_borrowers ?? 0),
+			icon: User,
+			shell: MANAGER_CARD_SHELLS[0],
+			progressPct: pct(s.total_borrowers, 5000),
+			subItems: [
+				{ label: 'Branch loans', path: '/manager/loans', key: 'b-lo' },
+				{ label: 'Loan requests', path: '/manager/loan-requests', key: 'b-lr' },
+			],
+		},
+		{
+			id: 'active_loans',
+			title: 'Branch Active Loans',
+			value: String(s.active_loans_count ?? 0),
+			icon: Briefcase,
+			shell: MANAGER_CARD_SHELLS[1],
+			progressPct: pct(s.active_loans_count, portfolioTotal > 0 ? 500 : 100),
+			subItems: [
+				{
+					label: 'Active loans (list)',
+					value: formatCurrency(s.portfolio_active),
+					metricKey: DRILLDOWN_METRICS.portfolio_active,
+					key: 'al-active',
+				},
+				{
+					label: 'Defaulted portfolio',
+					value: formatCurrency(s.portfolio_defaulted),
+					metricKey: DRILLDOWN_METRICS.portfolio_defaulted,
+					key: 'al-def',
+				},
+			],
+		},
+		{
+			id: 'total_portfolio',
+			title: 'Branch Portfolio',
+			value: formatCurrency(s.portfolio_general),
+			icon: PiggyBank,
+			shell: MANAGER_CARD_SHELLS[2],
+			progressPct: portfolioTotal > 0 ? pct(s.portfolio_active, portfolioTotal) : 0,
+			subItems: [
+				{
+					label: 'Active',
+					value: formatCurrency(s.portfolio_active),
+					metricKey: DRILLDOWN_METRICS.portfolio_active,
+					key: 'tp-act',
+				},
+				{
+					label: 'Defaulted',
+					value: formatCurrency(s.portfolio_defaulted),
+					metricKey: DRILLDOWN_METRICS.portfolio_defaulted,
+					key: 'tp-def',
+				},
+				{
+					label: 'General',
+					value: formatCurrency(s.portfolio_general),
+					metricKey: DRILLDOWN_METRICS.portfolio_general,
+					key: 'tp-gen',
+				},
+			],
+		},
+		{
+			id: 'principal_disbursed',
+			title: 'Principal Disbursed',
+			value: formatCurrency(s.disbursed_overall),
+			icon: TrendingUp,
+			shell: MANAGER_CARD_SHELLS[3],
+			progressPct: pct(s.disbursed_monthly, s.disbursed_overall),
+			subItems: [
+				{
+					label: 'Monthly',
+					value: formatCurrency(s.disbursed_monthly),
+					metricKey: DRILLDOWN_METRICS.disbursed_monthly,
+					key: 'pd-m',
+				},
+				{
+					label: 'Yearly',
+					value: formatCurrency(s.disbursed_yearly),
+					metricKey: DRILLDOWN_METRICS.disbursed_yearly,
+					key: 'pd-y',
+				},
+				{
+					label: 'Overall',
+					value: formatCurrency(s.disbursed_overall),
+					metricKey: DRILLDOWN_METRICS.disbursed_overall,
+					key: 'pd-o',
+				},
+			],
+		},
+		{
+			id: 'principal_collected',
+			title: 'Principal Collected',
+			value: formatCurrency(s.collected_month_principal),
+			icon: Banknote,
+			shell: MANAGER_CARD_SHELLS[4],
+			progressPct: pct(s.collected_month_principal, s.collected_month_total),
+			subItems: [
+				{
+					label: 'Principal',
+					value: formatCurrency(s.collected_month_principal),
+					metricKey: DRILLDOWN_METRICS.collected_month_principal,
+					key: 'pc-p',
+				},
+				{
+					label: 'Interest',
+					value: formatCurrency(s.collected_month_interest),
+					metricKey: DRILLDOWN_METRICS.collected_month_interest,
+					key: 'pc-i',
+				},
+				{
+					label: 'Total (P+I)',
+					value: formatCurrency(s.collected_month_total),
+					metricKey: DRILLDOWN_METRICS.collected_month_total,
+					key: 'pc-t',
+				},
+			],
+		},
+		{
+			id: 'interest_collected',
+			title: 'Interest Collected',
+			value: formatCurrency(s.collected_month_interest),
+			icon: CircleDollarSign,
+			shell: MANAGER_CARD_SHELLS[5],
+			progressPct: pct(s.collected_month_interest, s.collected_month_total),
+			subItems: [
+				{
+					label: 'Principal',
+					value: formatCurrency(s.collected_month_principal),
+					metricKey: DRILLDOWN_METRICS.collected_month_principal,
+					key: 'ic-p',
+				},
+				{
+					label: 'Interest',
+					value: formatCurrency(s.collected_month_interest),
+					metricKey: DRILLDOWN_METRICS.collected_month_interest,
+					key: 'ic-i',
+				},
+				{
+					label: 'Total (P+I)',
+					value: formatCurrency(s.collected_month_total),
+					metricKey: DRILLDOWN_METRICS.collected_month_total,
+					key: 'ic-t',
+				},
+			],
+		},
+		{
+			id: 'outstanding_principal',
+			title: 'Outstanding Principal',
+			value: formatCurrency(s.outstanding_principal),
+			icon: Landmark,
+			shell: MANAGER_CARD_SHELLS[6],
+			progressPct: pct(s.outstanding_principal, s.outstanding_total),
+			subItems: [
+				{
+					label: 'Principal',
+					value: formatCurrency(s.outstanding_principal),
+					metricKey: DRILLDOWN_METRICS.outstanding_principal,
+					key: 'op-p',
+				},
+				{
+					label: 'Interest',
+					value: formatCurrency(s.outstanding_interest),
+					metricKey: DRILLDOWN_METRICS.outstanding_interest,
+					key: 'op-i',
+				},
+				{
+					label: 'Total (P+I)',
+					value: formatCurrency(s.outstanding_total),
+					metricKey: DRILLDOWN_METRICS.outstanding_total,
+					key: 'op-t',
+				},
+			],
+		},
+		{
+			id: 'outstanding_interest',
+			title: 'Outstanding Interest',
+			value: formatCurrency(s.outstanding_interest),
+			icon: Wallet,
+			shell: MANAGER_CARD_SHELLS[7],
+			progressPct: pct(s.outstanding_interest, s.outstanding_total),
+			subItems: [
+				{
+					label: 'Principal',
+					value: formatCurrency(s.outstanding_principal),
+					metricKey: DRILLDOWN_METRICS.outstanding_principal,
+					key: 'oi-p',
+				},
+				{
+					label: 'Interest',
+					value: formatCurrency(s.outstanding_interest),
+					metricKey: DRILLDOWN_METRICS.outstanding_interest,
+					key: 'oi-i',
+				},
+				{
+					label: 'Total (P+I)',
+					value: formatCurrency(s.outstanding_total),
+					metricKey: DRILLDOWN_METRICS.outstanding_total,
+					key: 'oi-t',
+				},
+			],
+		},
+		{
+			id: 'defaulted_principal',
+			title: 'Defaulted Principal',
+			value: formatCurrency(s.default_disbursed_principal),
+			icon: AlertTriangle,
+			shell: MANAGER_CARD_SHELLS[8],
+			progressPct: pct(s.default_disbursed_principal, s.default_total_amount),
+			subItems: [
+				{
+					label: 'Disbursed principal',
+					value: formatCurrency(s.default_disbursed_principal),
+					metricKey: DRILLDOWN_METRICS.default_disbursed,
+					key: 'df-p',
+				},
+				{
+					label: 'Interest amount',
+					value: formatCurrency(s.default_interest_amount),
+					metricKey: DRILLDOWN_METRICS.default_interest,
+					key: 'df-i',
+				},
+				{
+					label: 'Total amount',
+					value: formatCurrency(s.default_total_amount),
+					metricKey: DRILLDOWN_METRICS.default_total,
+					key: 'df-t',
+				},
+			],
+		},
+		{
+			id: 'defaulted_interest',
+			title: 'Defaulted Interest',
+			value: formatCurrency(s.default_interest_amount),
+			icon: AlertTriangle,
+			shell: MANAGER_CARD_SHELLS[9],
+			progressPct: pct(s.default_interest_amount, s.default_total_amount),
+			subItems: [
+				{
+					label: 'Disbursed principal',
+					value: formatCurrency(s.default_disbursed_principal),
+					metricKey: DRILLDOWN_METRICS.default_disbursed,
+					key: 'di-p',
+				},
+				{
+					label: 'Interest amount',
+					value: formatCurrency(s.default_interest_amount),
+					metricKey: DRILLDOWN_METRICS.default_interest,
+					key: 'di-i',
+				},
+				{
+					label: 'Total amount',
+					value: formatCurrency(s.default_total_amount),
+					metricKey: DRILLDOWN_METRICS.default_total,
+					key: 'di-t',
+				},
+			],
+		},
+		{
+			id: 'expected_today',
+			title: 'Expected Today',
+			value: formatCurrency(s.expected_today ?? 0),
+			icon: CalendarClock,
+			shell: MANAGER_CARD_SHELLS[10],
+			progressPct: pct(s.expected_today, s.collected_month_total),
+			subItems: [
+				{
+					label: 'Due today (installments)',
+					value: formatCurrency(s.expected_today ?? 0),
+					metricKey: DRILLDOWN_METRICS.expected_today,
+					key: 'ex-t',
+				},
+				{
+					label: 'Repayments this month',
+					value: formatCurrency(s.collected_month_total),
+					metricKey: DRILLDOWN_METRICS.collected_month_total,
+					key: 'ex-r',
+				},
+			],
+		},
+		{
+			id: 'nearing_completion',
+			title: 'Nearing loan completion',
+			value: String(s.nearing_completion ?? 0),
+			icon: Target,
+			shell: MANAGER_CARD_SHELLS[11],
+			progressPct: pct(s.nearing_completion, s.active_loans_count),
+			subItems: [
+				{
+					label: 'Loans (final payment within 14 days)',
+					value: String(s.nearing_completion ?? 0),
+					metricKey: DRILLDOWN_METRICS.nearing_completion,
+					drillParams: { days: 14 },
+					key: 'near-14',
+				},
+				{
+					label: 'Loans (final payment within 7 days)',
+					value: '—',
+					metricKey: DRILLDOWN_METRICS.nearing_completion,
+					drillParams: { days: 7 },
+					key: 'near-7',
+				},
+				{
+					label: 'Loans (final payment within 30 days)',
+					value: '—',
+					metricKey: DRILLDOWN_METRICS.nearing_completion,
+					drillParams: { days: 30 },
+					key: 'near-30',
+				},
+			],
+		},
+		{
+			id: 'disbursed_month',
+			title: 'Disbursed This Month',
+			value: formatCurrency(s.disbursed_monthly),
+			icon: CalendarDays,
+			shell: MANAGER_CARD_SHELLS[12],
+			progressPct: pct(s.disbursed_monthly, s.disbursed_overall),
+			subItems: [
+				{
+					label: 'Monthly',
+					value: formatCurrency(s.disbursed_monthly),
+					metricKey: DRILLDOWN_METRICS.disbursed_monthly,
+					key: 'dm-m',
+				},
+				{
+					label: 'Yearly',
+					value: formatCurrency(s.disbursed_yearly),
+					metricKey: DRILLDOWN_METRICS.disbursed_yearly,
+					key: 'dm-y',
+				},
+				{
+					label: 'Overall',
+					value: formatCurrency(s.disbursed_overall),
+					metricKey: DRILLDOWN_METRICS.disbursed_overall,
+					key: 'dm-o',
+				},
+			],
+		},
+		{
+			id: 'loan_officers',
+			title: 'Loan Officers',
+			value: String(officers.length),
+			icon: UserPlus,
+			shell: MANAGER_CARD_SHELLS[13],
+			progressPct: pct(officers.length, 20),
+			subItems: [
+				{ label: 'Manage loan officers', path: '/manager/loan-officers', key: 'lo-m' },
+				{ label: 'Branch loans', path: '/manager/loans', key: 'lo-l' },
+			],
+		},
+	];
+
 	if (!profileLoading && !managerBranchId) {
 		return (
 			<DashboardLayout title="Branch dashboard">
@@ -214,7 +620,7 @@ const BranchManagerDashboard = () => {
 	return (
 		<DashboardLayout title="Branch dashboard">
 			<div className="space-y-8">
-				<div className="flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-sm lg:flex-row lg:flex-wrap lg:items-end lg:justify-between">
+				<div className="flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-sm lg:flex-row lg:flex-wrap lg:items-end lg:justify-between dark:bg-card">
 					<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
 						<Popover>
 							<PopoverTrigger asChild>
@@ -297,148 +703,26 @@ const BranchManagerDashboard = () => {
 				) : (
 					<>
 						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-							<DashboardStatCard title="Branches (scope)" index={0}>
-								{s.total_branches ?? 0}
-							</DashboardStatCard>
-							<DashboardStatCard title="Users (branch)" index={1}>
-								{s.total_users ?? 0}
-							</DashboardStatCard>
-							<DashboardStatCard title="Borrowers (branch)" index={2}>
-								{s.total_borrowers ?? 0}
-							</DashboardStatCard>
-							<DashboardStatCard title="Active loans (count)" index={3}>
-								{s.active_loans_count ?? 0}
-							</DashboardStatCard>
+							{metricCards.map((c) => (
+								<AdminExpandableMetricCard
+									key={c.id}
+									cardId={c.id}
+									expandedId={expandedCardId}
+									onToggle={toggleCard}
+									title={c.title}
+									value={c.value}
+									icon={c.icon}
+									shellClass={c.shell}
+									progressPct={c.progressPct}
+									subItems={c.subItems}
+									onDrillMetric={openMetric}
+									onNavigatePath={navigatePath}
+								/>
+							))}
 						</div>
 
-						<MetricSection icon={PieChart} title="Portfolio (balance)">
-							<ClickMetricCard
-								title="Active"
-								value={formatCurrency(s.portfolio_active)}
-								metricKey={DRILLDOWN_METRICS.portfolio_active}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Defaulted"
-								value={formatCurrency(s.portfolio_defaulted)}
-								metricKey={DRILLDOWN_METRICS.portfolio_defaulted}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="General"
-								value={formatCurrency(s.portfolio_general)}
-								metricKey={DRILLDOWN_METRICS.portfolio_general}
-								onOpen={openMetric}
-								accent
-							/>
-						</MetricSection>
-
-						<MetricSection icon={Banknote} title="Disbursed loans (principal)">
-							<ClickMetricCard
-								title="Monthly"
-								value={formatCurrency(s.disbursed_monthly)}
-								metricKey={DRILLDOWN_METRICS.disbursed_monthly}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Yearly"
-								value={formatCurrency(s.disbursed_yearly)}
-								metricKey={DRILLDOWN_METRICS.disbursed_yearly}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Overall"
-								value={formatCurrency(s.disbursed_overall)}
-								metricKey={DRILLDOWN_METRICS.disbursed_overall}
-								onOpen={openMetric}
-								accent
-							/>
-						</MetricSection>
-
-						<MetricSection icon={Percent} title="Interest (from loan terms)">
-							<ClickMetricCard
-								title="Monthly"
-								value={formatCurrency(s.interest_from_disbursed_month)}
-								metricKey={DRILLDOWN_METRICS.interest_disbursed_month}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Date range"
-								value={formatCurrency(s.interest_from_disbursed_range)}
-								metricKey={DRILLDOWN_METRICS.interest_disbursed_range}
-								onOpen={openMetric}
-								accent
-							/>
-						</MetricSection>
-
-						<MetricSection icon={TrendingUp} title="Collected loans">
-							<ClickMetricCard
-								title="Principal"
-								value={formatCurrency(s.collected_month_principal)}
-								metricKey={DRILLDOWN_METRICS.collected_month_principal}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Interest"
-								value={formatCurrency(s.collected_month_interest)}
-								metricKey={DRILLDOWN_METRICS.collected_month_interest}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Total (P+I)"
-								value={formatCurrency(s.collected_month_total)}
-								metricKey={DRILLDOWN_METRICS.collected_month_total}
-								onOpen={openMetric}
-								accent
-							/>
-						</MetricSection>
-
-						<MetricSection icon={Wallet} title="Outstanding loans">
-							<ClickMetricCard
-								title="Principal"
-								value={formatCurrency(s.outstanding_principal)}
-								metricKey={DRILLDOWN_METRICS.outstanding_principal}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Interest"
-								value={formatCurrency(s.outstanding_interest)}
-								metricKey={DRILLDOWN_METRICS.outstanding_interest}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Total (P+I)"
-								value={formatCurrency(s.outstanding_total)}
-								metricKey={DRILLDOWN_METRICS.outstanding_total}
-								onOpen={openMetric}
-								accent
-							/>
-						</MetricSection>
-
-						<MetricSection icon={AlertTriangle} title="Default (from defaulted loans)">
-							<ClickMetricCard
-								title="Disbursed principal"
-								value={formatCurrency(s.default_disbursed_principal)}
-								metricKey={DRILLDOWN_METRICS.default_disbursed}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Interest amount"
-								value={formatCurrency(s.default_interest_amount)}
-								metricKey={DRILLDOWN_METRICS.default_interest}
-								onOpen={openMetric}
-							/>
-							<ClickMetricCard
-								title="Total amount"
-								value={formatCurrency(s.default_total_amount)}
-								metricKey={DRILLDOWN_METRICS.default_total}
-								onOpen={openMetric}
-								accent
-							/>
-						</MetricSection>
-
 						<div>
-							<h3 className="mb-4 font-display text-lg font-bold text-neutral-900">Quick actions</h3>
+							<h3 className="mb-4 font-display text-lg font-bold text-neutral-900 dark:text-neutral-100">Quick actions</h3>
 							<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
 								{quickActions.map((action, index) => {
 									const Icon = action.icon;

@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, UserCircle, Calendar, Eye, FileDown, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
+import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useDate } from '@/contexts/DateContext';
@@ -47,7 +49,10 @@ const BorrowerDetails = () => {
 
     try {
         const { data: borrowerData, error: borrowerError } = await supabase
-            .from('borrowers').select('*').eq('id', borrowerId).single();
+            .from('borrowers')
+            .select('*, branches(name)')
+            .eq('id', borrowerId)
+            .single();
         if (borrowerError || !borrowerData) throw new Error(borrowerError?.message || 'Borrower not found.');
         setBorrower(borrowerData);
 
@@ -339,7 +344,7 @@ const BorrowerDetails = () => {
       </div>
 
       <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-          <DialogContent className="max-w-2xl">
+          <DialogContent className="max-w-5xl">
               <DialogHeader>
                   <DialogTitle>Repayment Schedule for {selectedLoan?.loan_id}</DialogTitle>
                   <DialogDescription>
@@ -347,22 +352,39 @@ const BorrowerDetails = () => {
                       Total Payable: {currency} {Number(selectedLoan?.total_payable).toLocaleString()}
                   </DialogDescription>
               </DialogHeader>
-              <div className="max-h-[60vh] overflow-y-auto">
-                  <Table>
-                      <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Due Date</TableHead><TableHead>Amount Due</TableHead><TableHead>Paid</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-                      <TableBody>
-                          {selectedLoan?.schedule?.map(inst => (
-                              <TableRow key={inst.installmentNumber}>
-                                  <TableCell>{inst.installmentNumber}</TableCell>
-                                  <TableCell>{new Date(inst.dueDate).toLocaleDateString()}</TableCell>
-                                  <TableCell>{currency} {Number(inst.amount).toFixed(2)}</TableCell>
-                                  <TableCell>{currency} {Number(inst.paidAmount || 0).toFixed(2)}</TableCell>
-                                  <TableCell><Badge variant={inst.status === 'paid' ? 'success' : inst.status === 'pending' && new Date(inst.dueDate) < new Date(serverDate) ? 'warning' : 'default'}>{inst.status}</Badge></TableCell>
-                              </TableRow>
-                          ))}
-                      </TableBody>
-                  </Table>
-              </div>
+              <RepaymentScheduleGrid
+                schedule={selectedLoan?.schedule}
+                currency={currency}
+                variant="simple"
+                statusBadgeFn={(inst) => (
+                  <Badge
+                    variant={
+                      inst.status === 'paid'
+                        ? 'success'
+                        : inst.status === 'pending' && new Date(inst.dueDate) < new Date(serverDate)
+                          ? 'warning'
+                          : 'default'
+                    }
+                  >
+                    {inst.status}
+                  </Badge>
+                )}
+                exportMeta={
+                  selectedLoan && borrower
+                    ? scheduleExportMetaFromLoan(
+                        {
+                          ...selectedLoan,
+                          borrowers: {
+                            ...borrower,
+                            groups: group ? { name: group.name } : undefined,
+                          },
+                        },
+                        currency,
+                        'simple'
+                      )
+                    : undefined
+                }
+              />
           </DialogContent>
       </Dialog>
     </DashboardLayout>

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -16,8 +16,22 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
 import { Checkbox } from '@/components/ui/checkbox';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 
 const PAGE_SIZE = 25;
+
+/** Match DB normalize_borrower_phone / normalize_borrower_id_number for client-side checks */
+function normalizePhoneKey(p) {
+    return String(p ?? '')
+        .replace(/\s/g, '')
+        .toLowerCase()
+        .trim();
+}
+function normalizeIdKey(p) {
+    return String(p ?? '')
+        .trim()
+        .toLowerCase();
+}
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -56,7 +70,22 @@ const BorrowerManagement = () => {
     };
 
     const [formData, setFormData] = useState(defaultFormState);
-    
+
+    const fetchDuplicateBorrower = useCallback(async (phone, idNumber, excludeBorrowerId) => {
+        const { data, error } = await supabase.rpc('find_duplicate_borrower', {
+            p_phone: phone ?? '',
+            p_identification_number: idNumber ?? '',
+            p_exclude_borrower_id: excludeBorrowerId ?? null,
+        });
+        if (error) {
+            console.error(error);
+            return null;
+        }
+        if (data == null) return null;
+        const row = Array.isArray(data) ? data[0] : data;
+        return row && row.id ? row : null;
+    }, []);
+
     const fetchData = useCallback(async () => {
         if (!user) return;
         setLoading(true);
@@ -171,6 +200,23 @@ const BorrowerManagement = () => {
     };
 
 
+    const handleExportBorrowersCsv = () => {
+        if (selectedBorrowers.size === 0) {
+            toast({ title: 'No borrowers selected', description: 'Select at least one row.', variant: 'destructive' });
+            return;
+        }
+        const rows = borrowers.filter((b) => selectedBorrowers.has(b.id));
+        exportObjectsToCsv(`borrowers_selected_${Date.now()}.csv`, [
+            { header: 'Borrower ID', accessor: 'borrower_id' },
+            { header: 'First name', accessor: 'first_name' },
+            { header: 'Surname', accessor: 'surname' },
+            { header: 'Phone', accessor: (r) => r.phone_number ?? '' },
+            { header: 'ID number', accessor: (r) => r.identification_number ?? '' },
+            { header: 'Status', accessor: 'status' },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} borrower(s) to CSV.` });
+    };
+
     const handleGenerateLoanTemplate = () => {
         if (selectedBorrowers.size === 0) {
             toast({ title: 'No Borrowers Selected', description: 'Please select at least one borrower to prepare loans.', variant: 'warning' });
@@ -232,6 +278,28 @@ const BorrowerManagement = () => {
             return;
         }
 
+        const dup = await fetchDuplicateBorrower(
+            phone_number,
+            identification_number,
+            editingBorrower ? editingBorrower.id : null
+        );
+        if (dup) {
+            const { data: off } = await supabase
+                .from('users')
+                .select('full_name')
+                .eq('id', dup.loan_officer_id)
+                .maybeSingle();
+            setIsSaving(false);
+            toast({
+                title: 'Tayari yupo kwenye mfumo',
+                description: `Nambari ya simu au kitambulisho kinatumika tayari na ${dup.first_name} ${dup.surname} (${dup.borrower_id}).${
+                    off?.full_name ? ` Mteja yuko kwa officer: ${off.full_name}.` : ''
+                } Hakuna kusajili tena mtu mmoja mara mbili.`,
+                variant: 'destructive',
+            });
+            return;
+        }
+
         const payload = {
             ...formData,
             group_id: borrower_type === 'individual' ? null : group_id,
@@ -239,18 +307,28 @@ const BorrowerManagement = () => {
             branch_id: user.user_metadata.branch_id,
             status: editingBorrower ? editingBorrower.status : 'eligible',
         };
-        
+
         let result;
         if (editingBorrower) {
             result = await supabase.from('borrowers').update(payload).eq('id', editingBorrower.id);
         } else {
-             const borrower_id = `B-${Date.now().toString().slice(-6)}`;
-             result = await supabase.from('borrowers').insert({ ...payload, borrower_id });
+            const borrower_id = `B-${Date.now().toString().slice(-6)}`;
+            result = await supabase.from('borrowers').insert({ ...payload, borrower_id });
         }
-        
+
         setIsSaving(false);
         if (result.error) {
-             toast({ title: 'Error saving borrower', description: result.error.message, variant: 'destructive' });
+            const msg = result.error.message || '';
+            if (msg.includes('idx_borrowers_phone_norm_unique') || msg.includes('idx_borrowers_ident_norm_unique')) {
+                toast({
+                    title: 'Duplicate',
+                    description:
+                        'Nambari ya simu au kitambulisho kimesajiliwa tayari (hata na officer mwingine). Rekebisha au tumia rekodi iliyopo.',
+                    variant: 'destructive',
+                });
+            } else {
+                toast({ title: 'Error saving borrower', description: msg, variant: 'destructive' });
+            }
         } else {
             fetchData();
             setDialogOpen(false);
@@ -311,7 +389,21 @@ const BorrowerManagement = () => {
 
                 const groupsMap = new Map(groups.map(g => [g.name.toLowerCase(), g.id]));
 
-                const newBorrowers = json.map(row => {
+                const seenInFile = new Set();
+                for (const row of json) {
+                    const pk = normalizePhoneKey(row.phone_number);
+                    const ik = normalizeIdKey(row.identification_number);
+                    if (pk && seenInFile.has(`p:${pk}`)) {
+                        throw new Error(`Faili lina nambari ya simu inayorudiwa (duplicate): ${row.phone_number}`);
+                    }
+                    if (ik && seenInFile.has(`i:${ik}`)) {
+                        throw new Error(`Faili lina nambari ya kitambulisho inayorudiwa: ${row.identification_number}`);
+                    }
+                    if (pk) seenInFile.add(`p:${pk}`);
+                    if (ik) seenInFile.add(`i:${ik}`);
+                }
+
+                const newBorrowers = json.map((row, idx) => {
                     const borrower_type = row.borrower_type?.toLowerCase() || 'individual';
                     let group_id = null;
                     if (borrower_type === 'group') {
@@ -321,7 +413,7 @@ const BorrowerManagement = () => {
                         }
                         group_id = groupsMap.get(groupName);
                     }
-                    
+
                     return {
                         first_name: row.first_name,
                         surname: row.surname,
@@ -337,21 +429,53 @@ const BorrowerManagement = () => {
                         loan_officer_id: user.id,
                         branch_id: user.user_metadata.branch_id,
                         status: 'eligible',
-                        borrower_id: `B-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substr(2, 4)}`,
+                        borrower_id: `B-${Date.now().toString().slice(-6)}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
                     };
                 });
                 
                 if (newBorrowers.length === 0) {
-                     toast({ title: 'Warning', description: 'No borrowers found in the file.', variant: 'default' });
-                     return;
+                    toast({ title: 'Warning', description: 'No borrowers found in the file.', variant: 'default' });
+                    return;
                 }
 
-                const { error } = await supabase.from('borrowers').insert(newBorrowers);
-                if (error) {
-                    throw error;
+                let imported = 0;
+                const skipped = [];
+                for (const row of newBorrowers) {
+                    const dup = await fetchDuplicateBorrower(row.phone_number, row.identification_number, null);
+                    if (dup) {
+                        skipped.push(`${row.first_name} ${row.surname} (duplicate: ${dup.borrower_id})`);
+                        continue;
+                    }
+                    const { error: insErr } = await supabase.from('borrowers').insert([row]);
+                    if (insErr) {
+                        if (
+                            insErr.message?.includes('idx_borrowers_phone_norm_unique') ||
+                            insErr.message?.includes('idx_borrowers_ident_norm_unique')
+                        ) {
+                            skipped.push(`${row.first_name} ${row.surname} (duplicate phone/ID)`);
+                        } else {
+                            throw insErr;
+                        }
+                    } else {
+                        imported += 1;
+                    }
                 }
-                
-                toast({ title: 'Success', description: `${newBorrowers.length} borrowers imported successfully.` });
+
+                if (imported > 0) {
+                    toast({
+                        title: 'Import completed',
+                        description: `${imported} wameingizwa.${skipped.length ? ` ${skipped.length} wamerukwa: ${skipped.slice(0, 5).join('; ')}${skipped.length > 5 ? '…' : ''}` : ''}`,
+                    });
+                } else {
+                    toast({
+                        title: 'Hakuna aliyeingizwa',
+                        description:
+                            skipped.length > 0
+                                ? `Wote walikuwa duplicates: ${skipped.slice(0, 3).join('; ')}`
+                                : 'Hakuna rekodi.',
+                        variant: 'destructive',
+                    });
+                }
                 fetchData();
 
             } catch (err) {
@@ -403,7 +527,13 @@ const BorrowerManagement = () => {
                                 <Button onClick={() => { setFormData(defaultFormState); setEditingBorrower(null); }}><PlusCircle className="mr-2 h-4 w-4" /> Register</Button>
                             </DialogTrigger>
                             <DialogContent className="max-w-3xl">
-                                <DialogHeader><DialogTitle>{editingBorrower ? 'Edit' : 'Register'} Borrower</DialogTitle></DialogHeader>
+                                <DialogHeader>
+                                    <DialogTitle>{editingBorrower ? 'Edit' : 'Register'} Borrower</DialogTitle>
+                                    <DialogDescription>
+                                        Nambari ya simu na kitambulisho lazima ziwe za kipekee kote mfumo — huzuia mtu mmoja kusajiliwa mara mbili hata kwa
+                                        maofisa tofauti.
+                                    </DialogDescription>
+                                </DialogHeader>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4 max-h-[80vh] overflow-y-auto px-1">
                                     <div className="space-y-2"><Label>First Name</Label><Input value={formData.first_name} onChange={e => setFormData({ ...formData, first_name: e.target.value })} /></div>
                                     <div className="space-y-2"><Label>Surname</Label><Input value={formData.surname} onChange={e => setFormData({ ...formData, surname: e.target.value })} /></div>
@@ -461,7 +591,11 @@ const BorrowerManagement = () => {
                        {selectedBorrowers.size > 0 && (
                             <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded-r-lg flex justify-between items-center">
                                 <p className="font-medium text-blue-800">{selectedBorrowers.size} borrower(s) selected.</p>
-                                <div className="flex gap-2">
+                                <div className="flex flex-wrap gap-2">
+                                    <Button type="button" variant="outline" onClick={handleExportBorrowersCsv}>
+                                        <Download className="mr-2 h-4 w-4"/>
+                                        Export CSV
+                                    </Button>
                                     <Button onClick={handleMarkAsEligible} variant="secondary">
                                         <CheckCircle className="mr-2 h-4 w-4"/>
                                         Mark as Eligible

@@ -9,7 +9,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Loader2, Coins, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, Coins, ChevronLeft, ChevronRight, Download } from 'lucide-react';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useDate } from '@/contexts/DateContext';
@@ -224,6 +225,23 @@ const ArrearsManagement = () => {
         }
     };
 
+    const exportSelectedArrearsCsv = () => {
+        const rows = loans.filter((l) => selectedLoans.includes(l.id));
+        if (rows.length === 0) {
+            toast({ title: 'Nothing selected', description: 'Select one or more loans first.', variant: 'destructive' });
+            return;
+        }
+        exportObjectsToCsv(`arrears_${Date.now()}.csv`, [
+            { header: 'Loan ID', accessor: 'loan_id' },
+            { header: 'Borrower', accessor: (r) => `${r.borrowers?.first_name || ''} ${r.borrowers?.surname || ''}`.trim() },
+            { header: 'Principal', accessor: (r) => String(r.principal ?? '') },
+            { header: 'Arrears amount', accessor: (r) => String(r.arrearsAmount ?? '') },
+            { header: 'Days in arrears', accessor: (r) => String(r.daysInArrears ?? '') },
+            { header: 'Status', accessor: 'status' },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} loan(s) to CSV.` });
+    };
+
     const totalArrears = useMemo(() => loans.reduce((sum, loan) => sum + loan.arrearsAmount, 0), [loans]);
     const selectedArrearsTotal = useMemo(() => loans.filter(l => selectedLoans.includes(l.id)).reduce((sum, l) => sum + l.arrearsAmount, 0), [loans, selectedLoans]);
 
@@ -254,6 +272,11 @@ const ArrearsManagement = () => {
                                     <p className="font-bold">{selectedLoans.length} loan(s) selected</p>
                                     <p className="text-sm">Total selected arrears: {currency} {selectedArrearsTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                                 </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                <Button type="button" variant="outline" onClick={exportSelectedArrearsCsv}>
+                                    <Download className="mr-2 h-4 w-4" />
+                                    Export CSV
+                                </Button>
                                 <AlertDialog>
                                     <AlertDialogTrigger asChild>
                                         <Button disabled={clearingLoanId === 'bulk'}>
@@ -274,6 +297,7 @@ const ArrearsManagement = () => {
                                         </AlertDialogFooter>
                                     </AlertDialogContent>
                                 </AlertDialog>
+                                </div>
                             </div>
                         )}
                         <Table>

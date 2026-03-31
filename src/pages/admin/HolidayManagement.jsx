@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
@@ -125,6 +129,22 @@ const HolidayManagement = () => {
     setIsAddingBulk(false);
   };
 
+  const holidayIds = useMemo(() => (holidays || []).map((h) => h.id), [holidays]);
+  const bulk = useBulkSelection(holidayIds);
+
+  const exportHolidaysCsv = () => {
+    const rows = (holidays || []).filter((h) => bulk.isSelected(h.id));
+    if (rows.length === 0) {
+      toast({ title: 'Nothing selected', description: 'Select one or more holidays first.', variant: 'destructive' });
+      return;
+    }
+    exportObjectsToCsv(`holidays_${Date.now()}.csv`, [
+      { header: 'Name', accessor: 'name' },
+      { header: 'Date', accessor: 'date' },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} holiday(s) to CSV.` });
+  };
+
   return (
     <DashboardLayout title="Holiday Management">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
@@ -149,9 +169,18 @@ const HolidayManagement = () => {
                 <span className="ml-2">Loading Holidays...</span>
               </div>
             ) : (
+              <>
+              <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportHolidaysCsv} />
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                        onCheckedChange={() => bulk.toggleAll()}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Holiday Name</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Actions</TableHead>
@@ -160,6 +189,13 @@ const HolidayManagement = () => {
                 <TableBody>
                   {holidays.length > 0 ? holidays.map(holiday => (
                     <TableRow key={holiday.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={bulk.isSelected(holiday.id)}
+                          onCheckedChange={() => bulk.toggle(holiday.id)}
+                          aria-label="Select row"
+                        />
+                      </TableCell>
                       <TableCell>{holiday.name}</TableCell>
                       <TableCell>{format(parseISO(holiday.date), 'MMMM dd, yyyy')}</TableCell>
                       <TableCell className="flex gap-2">
@@ -189,13 +225,14 @@ const HolidayManagement = () => {
                     </TableRow>
                   )) : (
                     <TableRow>
-                      <TableCell colSpan={3} className="text-center py-10 text-gray-500">
+                      <TableCell colSpan={4} className="text-center py-10 text-gray-500">
                         No holidays found. Start by adding a new holiday.
                       </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
               </Table>
+              </>
             )}
           </CardContent>
         </Card>

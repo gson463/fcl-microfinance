@@ -5,6 +5,10 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { CheckCircle, FileQuestion, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -74,13 +78,73 @@ const LoanRequests = () => {
 
   const totalPages = Math.max(1, Math.ceil(requests.length / PAGE_SIZE));
 
-  const handleApproveDeletion = async (loanId) => {
-    const { error } = await supabase.from('loans').update({ status: 'delete_approved_manager' }).eq('id', loanId);
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    } else {
+  const requestIds = useMemo(() => requests.map((l) => l.id), [requests]);
+  const bulk = useBulkSelection(requestIds);
+
+  const exportRequestsCsv = () => {
+    const rows = requests.filter((l) => bulk.isSelected(l.id));
+    if (rows.length === 0) {
+      toast({ title: 'Nothing selected', description: 'Select one or more rows first.', variant: 'destructive' });
+      return;
+    }
+    exportObjectsToCsv(`loan_requests_${Date.now()}.csv`, [
+      { header: 'Loan ID', accessor: 'loan_id' },
+      { header: 'Borrower', accessor: (r) => `${r.borrowers?.first_name || ''} ${r.borrowers?.surname || ''}`.trim() },
+      { header: 'Officer', accessor: (r) => r.officer?.full_name || '' },
+      { header: 'Request type', accessor: 'status' },
+      { header: 'Principal', accessor: (r) => String(r.principal ?? '') },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} row(s) to CSV.` });
+  };
+
+  const handleApproveDeletion = async (loan) => {
+    const loanId = loan.id;
+    const borrowerName = loan.borrowers
+      ? `${loan.borrowers.first_name} ${loan.borrowers.surname}`.trim()
+      : '';
+    const officerName = loan.officer?.full_name ?? null;
+    const branchId = user?.user_metadata?.branch_id ?? null;
+    try {
+      const snapshot = { ...loan };
+      const { error: insErr } = await supabase.from('deleted_loan_records').insert({
+        original_loan_id: loanId,
+        loan_public_id: loan.loan_id,
+        borrower_id: loan.borrower_id,
+        borrower_name: borrowerName || null,
+        principal: loan.principal,
+        officer_id: loan.officer_id,
+        officer_name: officerName,
+        branch_id: branchId,
+        requested_by_officer_id: loan.officer_id,
+        approved_by_manager_id: user.id,
+        snapshot,
+      });
+      if (insErr) throw insErr;
+
+      await supabase.rpc('log_audit_event', {
+        p_action: 'loan.delete.finalized',
+        p_entity_type: 'loan',
+        p_entity_id: String(loan.loan_id),
+        p_metadata: {
+          original_loan_id: loanId,
+          borrower_name: borrowerName,
+        },
+      });
+
+      const { error: delRepErr } = await supabase.from('repayments').delete().eq('loan_id', loanId);
+      if (delRepErr) throw delRepErr;
+
+      const { error: delErr } = await supabase.from('loans').delete().eq('id', loanId);
+      if (delErr) throw delErr;
+
+      toast({ title: 'Success', description: 'Loan deleted permanently (final approval).' });
       fetchData();
-      toast({ title: 'Success', description: 'Deletion request approved and sent to Admin for final review.' });
+    } catch (e) {
+      toast({
+        title: 'Error',
+        description: e?.message || 'Could not finalize loan deletion.',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -135,11 +199,20 @@ const LoanRequests = () => {
     }
   };
 
-  const handleRejectRequest = async (loanId) => {
+  const handleRejectRequest = async (loan) => {
+    const loanId = loan.id;
     const { error } = await supabase.from('loans').update({ status: 'active', edit_request: null }).eq('id', loanId);
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } else {
+      if (loan.status === 'delete_requested') {
+        await supabase.rpc('log_audit_event', {
+          p_action: 'loan.delete.rejected',
+          p_entity_type: 'loan',
+          p_entity_id: String(loan.loan_id),
+          p_metadata: { original_loan_id: loanId },
+        });
+      }
       fetchData();
       toast({ title: 'Rejected', description: 'The request has been rejected.' });
     }
@@ -179,9 +252,17 @@ const LoanRequests = () => {
             <CardDescription>These loans have been requested for modification or deletion by a Loan Officer.</CardDescription>
           </CardHeader>
           <CardContent>
+            <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportRequestsCsv} />
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
+                      onCheckedChange={() => bulk.toggleAll()}
+                      aria-label="Select all"
+                    />
+                  </TableHead>
                   <TableHead>Loan ID</TableHead>
                   <TableHead>Borrower</TableHead>
                   <TableHead>Loan Officer</TableHead>
@@ -193,6 +274,13 @@ const LoanRequests = () => {
               <TableBody>
                 {requests.length > 0 ? pagedRequests.map(loan => (
                   <TableRow key={loan.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={bulk.isSelected(loan.id)}
+                        onCheckedChange={() => bulk.toggle(loan.id)}
+                        aria-label="Select row"
+                      />
+                    </TableCell>
                     <TableCell>{loan.loan_id}</TableCell>
                     <TableCell>{loan.borrowers.first_name} {loan.borrowers.surname}</TableCell>
                     <TableCell>{loan.officer.full_name}</TableCell>
@@ -210,8 +298,10 @@ const LoanRequests = () => {
                         <AlertDialog>
                           <AlertDialogTrigger asChild><Button size="sm" variant="outline"><CheckCircle className="mr-2 h-4 w-4" /> Approve</Button></AlertDialogTrigger>
                           <AlertDialogContent>
-                            <AlertDialogHeader><AlertDialogTitle>Approve Deletion Request?</AlertDialogTitle><AlertDialogDescription>This forwards the request to Admin for final approval.</AlertDialogDescription></AlertDialogHeader>
-                            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleApproveDeletion(loan.id)}>Yes, Approve</AlertDialogAction></AlertDialogFooter>
+                            <AlertDialogHeader><AlertDialogTitle>Approve Deletion Request?</AlertDialogTitle>                            <AlertDialogDescription>
+                              This permanently deletes the loan from the system. This is the final approval (no admin step).
+                            </AlertDialogDescription></AlertDialogHeader>
+                            <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleApproveDeletion(loan)}>Yes, delete permanently</AlertDialogAction></AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
                       )}
@@ -228,14 +318,14 @@ const LoanRequests = () => {
                         <AlertDialogTrigger asChild><Button size="sm" variant="destructive"><XCircle className="mr-2 h-4 w-4" /> Reject</Button></AlertDialogTrigger>
                         <AlertDialogContent>
                           <AlertDialogHeader><AlertDialogTitle>Reject Request?</AlertDialogTitle><AlertDialogDescription>This will reject the request and revert the loan status.</AlertDialogDescription></AlertDialogHeader>
-                          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleRejectRequest(loan.id)}>Yes, Reject</AlertDialogAction></AlertDialogFooter>
+                          <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleRejectRequest(loan)}>Yes, Reject</AlertDialogAction></AlertDialogFooter>
                         </AlertDialogContent>
                       </AlertDialog>
                     </TableCell>
                   </TableRow>
                 )) : (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center">No pending requests from your officers.</TableCell>
+                    <TableCell colSpan={7} className="text-center">No pending requests from your officers.</TableCell>
                   </TableRow>
                 )}
               </TableBody>

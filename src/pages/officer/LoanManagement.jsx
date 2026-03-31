@@ -8,6 +8,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
+import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
+import { useBulkSelection } from '@/hooks/useBulkSelection';
+import { exportObjectsToCsv } from '@/lib/tableExport';
+import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
+import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
@@ -127,10 +133,14 @@ const LoanManagement = () => {
 
         await supabase.rpc('update_all_loan_statuses');
 
-        const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
-        if (config) setCurrency(config.value);
+        const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
+        const cfg = Object.fromEntries((cfgRows || []).map((r) => [r.key, r.value]));
+        if (cfg.currency) setCurrency(cfg.currency);
 
-        const { data: loansData, error: loansError } = await supabase.from('loans').select(`*, borrowers ( id, first_name, surname )`).eq('officer_id', user.id);
+        const { data: loansData, error: loansError } = await supabase
+            .from('loans')
+            .select(`*, borrowers(*, groups(name), branches(name)), loan_products(name)`)
+            .eq('officer_id', user.id);
         const { data: borrowersData, error: borrowersError } = await supabase.from('borrowers').select('*').eq('loan_officer_id', user.id);
         const { data: productsData, error: productsError } = await supabase.from('loan_products').select('*').eq('status', 'active');
         const { data: holidaysData, error: holidaysError } = await supabase.from('holidays').select('*');
@@ -193,6 +203,23 @@ const LoanManagement = () => {
         const atRiskLoans = filteredLoans.filter(l => ['delinquent', 'defaulted'].includes(l.status)).length;
         return { totalLoans, totalPrincipal, totalBalance, atRiskLoans };
     }, [filteredLoans]);
+
+    const pagedLoanIds = useMemo(() => pagedLoans.map((l) => l.id), [pagedLoans]);
+    const bulk = useBulkSelection(pagedLoanIds);
+
+    const exportLoansCsv = () => {
+        const rows = pagedLoans.filter((l) => bulk.isSelected(l.id));
+        if (rows.length === 0) return;
+        exportObjectsToCsv(`loans_${Date.now()}.csv`, [
+            { header: 'Loan ID', accessor: 'loan_id' },
+            { header: 'Borrower', accessor: (r) => `${r.borrowers?.first_name || ''} ${r.borrowers?.surname || ''}`.trim() },
+            { header: 'Principal', accessor: (r) => String(r.principal ?? '') },
+            { header: 'Balance', accessor: (r) => String(r.balance ?? '') },
+            { header: 'Disbursement', accessor: (r) => (r.disbursement_date ? formatTZ(toZonedTime(new Date(r.disbursement_date), EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }) : '') },
+            { header: 'Status', accessor: 'status' },
+        ], rows);
+        toast({ title: 'Exported', description: `${rows.length} loan(s) to CSV.` });
+    };
 
     const handleDisburse = async () => {
         const { borrowerId, productId, principal, disbursementDate, repaymentStartDate } = formData;
@@ -352,12 +379,23 @@ const LoanManagement = () => {
     };
 
     const handleRequestDeletion = async (loanId) => {
+        const { data: row, error: fetchErr } = await supabase.from('loans').select('loan_id').eq('id', loanId).single();
+        if (fetchErr) {
+            toast({ title: 'Failed', description: fetchErr.message, variant: 'destructive' });
+            return;
+        }
         const { error } = await supabase.from('loans').update({ status: 'delete_requested' }).eq('id', loanId);
         if (error) {
             toast({ title: 'Failed', description: error.message, variant: 'destructive' });
         } else {
+            await supabase.rpc('log_audit_event', {
+                p_action: 'loan.delete.requested',
+                p_entity_type: 'loan',
+                p_entity_id: String(row.loan_id),
+                p_metadata: { loan_uuid: loanId },
+            });
             fetchData();
-            toast({ title: 'Success', description: 'Deletion request sent for approval.' });
+            toast({ title: 'Success', description: 'Deletion request sent to your branch manager for approval.' });
         }
     };
     
@@ -465,7 +503,7 @@ const LoanManagement = () => {
             
             const { data: latestLoanData, error } = await supabase
                 .from('loans')
-                .select(`*, borrowers (id, first_name, surname)`)
+                .select(`*, borrowers(*, groups(name), branches(name)), loan_products(name)`)
                 .eq('id', loan.id)
                 .single();
                 
@@ -799,9 +837,15 @@ const LoanManagement = () => {
                         </div>
                     </CardHeader>
                     <CardContent className="p-0">
+                        <div className="px-4 pt-4">
+                            <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportLoansCsv} />
+                        </div>
                         <Table>
                             <TableHeader className="bg-gray-50">
                                 <TableRow>
+                                    <TableHead className="w-10 align-middle">
+                                        <Checkbox checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false} onCheckedChange={() => bulk.toggleAll()} aria-label="Select page" />
+                                    </TableHead>
                                     <TableHead className="font-semibold text-gray-600">Loan ID</TableHead>
                                     <TableHead className="font-semibold text-gray-600">Borrower</TableHead>
                                     <TableHead className="font-semibold text-gray-600">Principal</TableHead>
@@ -814,6 +858,9 @@ const LoanManagement = () => {
                             <TableBody>
                                 {pagedLoans.map(l => (
                                     <TableRow key={l.id} className="hover:bg-gray-50/50 transition-colors">
+                                        <TableCell className="align-middle">
+                                            <Checkbox checked={bulk.isSelected(l.id)} onCheckedChange={() => bulk.toggle(l.id)} aria-label={`Select ${l.loan_id}`} />
+                                        </TableCell>
                                         <TableCell className="font-medium text-gray-900">{l.loan_id}</TableCell>
                                         <TableCell>{l.borrowers?.first_name} {l.borrowers?.surname}</TableCell>
                                         <TableCell className="text-gray-700 font-medium">{currency} {Number(l.principal).toLocaleString()}</TableCell>
@@ -848,7 +895,7 @@ const LoanManagement = () => {
                                 ))}
                                 {filteredLoans.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No loans match the current filters.</TableCell>
+                                        <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">No loans match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
@@ -875,7 +922,7 @@ const LoanManagement = () => {
             
             {/* OTHER DIALOGS (Schedule, Edit, Repayment) - kept minimal for brevity, focusing on Disbursement redesign */}
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-                <DialogContent className="max-w-4xl">
+                <DialogContent className="max-w-5xl">
                     <DialogHeader>
                         <DialogTitle>Repayment Schedule for {selectedLoan?.loan_id}</DialogTitle>
                         <DialogDescription>
@@ -883,10 +930,16 @@ const LoanManagement = () => {
                             Total Payable: {currency} {(selectedLoan?.total_payable || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </DialogDescription>
                     </DialogHeader>
-                    <div className="max-h-[60vh] overflow-y-auto"><Table>
-                        <TableHeader><TableRow><TableHead>#</TableHead><TableHead>Due Date</TableHead><TableHead>Amount Due</TableHead><TableHead>Paid</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
-                        <TableBody>{selectedLoan?.schedule?.map(inst => (<TableRow key={inst.installmentNumber}><TableCell>{inst.installmentNumber}</TableCell><TableCell>{formatTZ(toZonedTime(new Date(inst.dueDate), EAT_TIMEZONE), 'MMM dd, yyyy', { timeZone: EAT_TIMEZONE })}</TableCell><TableCell>{currency} {inst.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell><TableCell>{currency} {(inst.paidAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell><TableCell><Badge variant={inst.status === 'paid' ? 'success' : inst.status === 'arrears' ? 'warning' : 'default'}>{inst.status}</Badge></TableCell></TableRow>))}</TableBody>
-                    </Table></div>
+                    <RepaymentScheduleGrid
+                      schedule={selectedLoan?.schedule}
+                      currency={currency}
+                      variant="simple"
+                      exportMeta={
+                        selectedLoan
+                          ? scheduleExportMetaFromLoan(selectedLoan, currency, 'simple')
+                          : undefined
+                      }
+                    />
                 </DialogContent>
             </Dialog>
             <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
