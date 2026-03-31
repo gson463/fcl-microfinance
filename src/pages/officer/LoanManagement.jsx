@@ -28,6 +28,7 @@ import * as XLSX from 'xlsx';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { format as formatDate, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '@/lib/utils';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -98,6 +99,8 @@ const LoanManagement = () => {
     
     const [repaymentFormData, setRepaymentFormData] = useState({ amount: '', payment_date: new Date() });
     const importFileRef = useRef(null);
+    const [increaseEligibility, setIncreaseEligibility] = useState(null);
+    const [increaseEligibilityLoading, setIncreaseEligibilityLoading] = useState(false);
     
     // Updated disabledDays to block past dates while allowing today
     const disabledDays = useMemo(() => {
@@ -163,6 +166,30 @@ const LoanManagement = () => {
     useEffect(() => {
        resetFormData();
     }, [resetFormData]);
+
+    useEffect(() => {
+        if (!formData.borrowerId) {
+            setIncreaseEligibility(null);
+            setIncreaseEligibilityLoading(false);
+            return;
+        }
+        let cancelled = false;
+        setIncreaseEligibilityLoading(true);
+        supabase
+            .rpc('borrower_loan_increase_eligibility', { p_borrower_id: formData.borrowerId })
+            .then(({ data, error }) => {
+                if (cancelled) return;
+                setIncreaseEligibilityLoading(false);
+                if (error) {
+                    setIncreaseEligibility(null);
+                    return;
+                }
+                setIncreaseEligibility(data);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [formData.borrowerId]);
 
 
     const filteredLoans = useMemo(() => {
@@ -578,11 +605,11 @@ const LoanManagement = () => {
                         <p className="text-sm text-neutral-500">Manage, disburse, and track all loan activities.</p>
                     </div>
                     <div className="flex flex-wrap gap-3">
-                        <Button variant="outline" onClick={handleDownloadTemplate} className="hover:bg-gray-50 border-gray-300">
-                             <Download className="mr-2 h-4 w-4" /> Template
+                        <Button variant="outline" onClick={handleDownloadTemplate} className="border-brand-gold/35 bg-white/80 hover:bg-brand-gold/10 dark:border-brand-gold/25 dark:bg-neutral-900/50 dark:hover:bg-brand-gold/10">
+                             <Download className="mr-2 h-4 w-4 text-brand-gold-deep" /> Template
                         </Button>
-                        <Button variant="outline" onClick={() => importFileRef.current.click()} disabled={isImporting} className="hover:bg-gray-50 border-gray-300">
-                            {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Import
+                        <Button variant="outline" onClick={() => importFileRef.current.click()} disabled={isImporting} className="border-brand-gold/35 bg-white/80 hover:bg-brand-gold/10 dark:border-brand-gold/25 dark:bg-neutral-900/50 dark:hover:bg-brand-gold/10">
+                            {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4 text-brand-gold-deep" />} Import
                         </Button>
                         <input type="file" ref={importFileRef} className="hidden" accept=".csv, .xlsx" onChange={handleImport} />
                         
@@ -591,41 +618,42 @@ const LoanManagement = () => {
                             if (open) resetFormData();
                         }}>
                             <DialogTrigger asChild>
-                                <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-lg transition-all duration-300 transform hover:scale-105">
-                                    <PlusCircle className="mr-2 h-4 w-4" /> Disburse Loan
+                                <Button className="bg-gradient-to-r from-brand-gold via-[#c9a227] to-brand-gold-deep text-neutral-950 font-semibold shadow-gold-glow-sm hover:brightness-105 hover:shadow-md transition-all duration-200 dark:from-brand-gold dark:to-brand-gold-deep">
+                                    <PlusCircle className="mr-2 h-4 w-4 shrink-0" /> Disburse Loan
                                 </Button>
                             </DialogTrigger>
-                            <DialogContent className="max-w-4xl p-0 overflow-hidden rounded-2xl border-0 shadow-2xl">
-                                <div className="bg-gradient-to-br from-blue-600 via-indigo-600 to-purple-600 p-8 text-white relative overflow-hidden">
-                                     <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none"></div>
+                            <DialogContent className="flex max-h-[min(92dvh,920px)] w-[calc(100vw-1rem)] max-w-[min(100vw-1rem,56rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-neutral-200/90 p-0 shadow-2xl dark:border-neutral-800 sm:w-full sm:max-w-4xl">
+                                <div className="relative shrink-0 bg-gradient-to-br from-neutral-950 via-[#121a24] to-brand-gold-deep/90 px-4 py-6 text-white sm:px-8 sm:py-8">
+                                     <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-brand-gold/20 blur-3xl" />
+                                     <div className="pointer-events-none absolute bottom-0 left-1/4 h-32 w-64 rounded-full bg-brand-gold/10 blur-2xl" />
                                      <div className="relative z-10">
-                                        <DialogTitle className="text-3xl font-bold tracking-tight mb-2">Disburse New Loan</DialogTitle>
-                                        <DialogDescription className="text-blue-100 text-lg opacity-90">
-                                            Follow the steps to successfully disburse a loan to a qualified borrower.
+                                        <DialogTitle className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">Disburse New Loan</DialogTitle>
+                                        <DialogDescription className="mt-2 text-sm text-white/85 sm:text-base">
+                                            Follow the steps to disburse a loan to a qualified borrower.
                                         </DialogDescription>
                                      </div>
                                 </div>
 
                                 <motion.div 
-                                    className="p-8 bg-white/50 backdrop-blur-sm space-y-8"
-                                    initial={{ opacity: 0, y: 20 }}
+                                    className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain bg-[#f4f2ed] px-4 py-6 dark:bg-neutral-950 sm:px-6 sm:py-8 md:space-y-8"
+                                    initial={{ opacity: 0, y: 12 }}
                                     animate={{ opacity: 1, y: 0 }}
-                                    transition={{ duration: 0.4 }}
+                                    transition={{ duration: 0.35 }}
                                 >
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
                                         {/* Left Column: Borrower & Product */}
-                                        <motion.div className="space-y-6" initial={{ x: -20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 }}>
-                                            <div className="space-y-1">
-                                                <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                                                    <User className="w-4 h-4 text-blue-500" />
+                                        <motion.div className="space-y-5 sm:space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 }}>
+                                            <div className="space-y-2">
+                                                <Label className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                                                    <User className="h-4 w-4 shrink-0 text-brand-gold-deep" />
                                                     Select Borrower *
                                                 </Label>
-                                                <div className="bg-white rounded-lg shadow-sm">
+                                                <div className="rounded-xl border border-neutral-200/80 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
                                                     <Select 
                                                         value={formData.borrowerId} 
                                                         onValueChange={e => setFormData({ ...formData, borrowerId: e })}
                                                     >
-                                                        <SelectTrigger className="w-full h-11 border-gray-200 focus:ring-2 focus:ring-blue-200 focus:border-blue-500 transition-all">
+                                                        <SelectTrigger className="h-11 w-full min-w-0 border-0 bg-transparent focus:ring-2 focus:ring-brand-gold/35 focus:ring-offset-0 dark:focus:ring-brand-gold/40">
                                                             <SelectValue placeholder="Select Borrower..." />
                                                         </SelectTrigger>
                                                         <SelectContent className="max-h-[300px]">
@@ -645,14 +673,64 @@ const LoanManagement = () => {
                                                     </Select>
                                                 </div>
                                             </div>
+
+                                            {(increaseEligibilityLoading || increaseEligibility) && (
+                                                <div
+                                                    className={cn(
+                                                        'rounded-lg border p-3 text-sm',
+                                                        increaseEligibilityLoading && 'border-neutral-200 bg-neutral-50 text-neutral-700',
+                                                        !increaseEligibilityLoading &&
+                                                            increaseEligibility?.requires_manager_loan_approval &&
+                                                            'border-amber-200 bg-amber-50 text-amber-950',
+                                                        !increaseEligibilityLoading &&
+                                                            !increaseEligibility?.requires_manager_loan_approval &&
+                                                            increaseEligibility?.eligible_for_auto_loan_increase &&
+                                                            'border-emerald-200 bg-emerald-50 text-emerald-950',
+                                                        !increaseEligibilityLoading &&
+                                                            !increaseEligibility?.requires_manager_loan_approval &&
+                                                            !increaseEligibility?.eligible_for_auto_loan_increase &&
+                                                            'border-neutral-200 bg-neutral-50 text-neutral-800'
+                                                    )}
+                                                >
+                                                    {increaseEligibilityLoading ? (
+                                                        <div className="flex items-center gap-2 text-neutral-600">
+                                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                                            <span>Checking attendance &amp; loan history…</span>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <p className="font-semibold text-[0.8125rem]">Loan increase eligibility</p>
+                                                            <p className="mt-1 text-xs leading-relaxed opacity-90">
+                                                                {increaseEligibility?.summary}
+                                                            </p>
+                                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                                <Badge variant="outline" className="text-[0.6875rem] font-normal">
+                                                                    Meetings {String(increaseEligibility?.meetings_attended ?? '—')} /{' '}
+                                                                    {String(increaseEligibility?.meetings_required ?? '—')}
+                                                                </Badge>
+                                                                {increaseEligibility?.requires_manager_loan_approval ? (
+                                                                    <Badge variant="outline" className="border-amber-300 bg-white/80 text-amber-900 text-[0.6875rem]">
+                                                                        Manager approval required
+                                                                    </Badge>
+                                                                ) : null}
+                                                                {increaseEligibility?.eligible_for_auto_loan_increase ? (
+                                                                    <Badge variant="outline" className="border-emerald-300 bg-white/80 text-emerald-900 text-[0.6875rem]">
+                                                                        Eligible for auto increase (rules)
+                                                                    </Badge>
+                                                                ) : null}
+                                                            </div>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
                                             
-                                            <div className="space-y-1">
-                                                <Label htmlFor="product" className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                                                    <CreditCard className="w-4 h-4 text-purple-500" />
+                                            <div className="space-y-2">
+                                                <Label htmlFor="product" className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                                                    <CreditCard className="h-4 w-4 shrink-0 text-brand-gold-deep" />
                                                     Loan Product *
                                                 </Label>
                                                 <Select value={formData.productId} onValueChange={e => setFormData({ ...formData, productId: e })}>
-                                                    <SelectTrigger className="w-full bg-white border-gray-200 focus:ring-2 focus:ring-purple-200 focus:border-purple-500 h-11 transition-all duration-200">
+                                                    <SelectTrigger id="product" className="h-11 w-full min-w-0 border-neutral-200 bg-white focus:ring-2 focus:ring-brand-gold/35 focus:border-brand-gold-deep dark:border-neutral-700 dark:bg-neutral-900">
                                                         <SelectValue placeholder="Select Loan Product" />
                                                     </SelectTrigger>
                                                     <SelectContent>
@@ -674,13 +752,13 @@ const LoanManagement = () => {
                                                         initial={{ opacity: 0, height: 0 }} 
                                                         animate={{ opacity: 1, height: 'auto' }}
                                                         exit={{ opacity: 0, height: 0 }}
-                                                        className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800"
+                                                        className="rounded-xl border border-brand-gold/25 bg-brand-gold/5 p-4 text-sm text-neutral-800 dark:border-brand-gold/30 dark:bg-brand-gold/10 dark:text-neutral-100"
                                                     >
-                                                        <div className="flex justify-between items-center mb-1">
+                                                        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
                                                             <span className="font-semibold">Product Terms</span>
-                                                            <Badge variant="outline" className="bg-white text-blue-600 border-blue-200">{selectedProduct.name}</Badge>
+                                                            <Badge variant="outline" className="border-brand-gold/40 bg-white/90 text-brand-gold-deep dark:bg-neutral-900/80 dark:text-brand-gold">{selectedProduct.name}</Badge>
                                                         </div>
-                                                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-2 text-xs">
+                                                        <div className="mt-2 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2 sm:gap-x-4 sm:gap-y-2">
                                                             <div>Min Amount: <span className="font-medium">{currency} {selectedProduct.min_amount.toLocaleString()}</span></div>
                                                             <div>Max Amount: <span className="font-medium">{currency} {selectedProduct.max_amount.toLocaleString()}</span></div>
                                                             <div>Rate: <span className="font-medium">{selectedProduct.interest_rate}%</span></div>
@@ -692,10 +770,10 @@ const LoanManagement = () => {
                                         </motion.div>
                                         
                                         {/* Right Column: Amount & Dates */}
-                                        <motion.div className="space-y-6" initial={{ x: 20, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.2 }}>
-                                            <div className="space-y-1">
-                                                <Label htmlFor="principal" className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                                                    <DollarSign className="w-4 h-4 text-green-600" />
+                                        <motion.div className="space-y-5 sm:space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+                                            <div className="space-y-2">
+                                                <Label htmlFor="principal" className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                                                    <DollarSign className="h-4 w-4 shrink-0 text-brand-gold-deep" />
                                                     Principal Amount ({currency}) *
                                                 </Label>
                                                 <div className="relative">
@@ -707,55 +785,53 @@ const LoanManagement = () => {
                                                         placeholder="0.00"
                                                         min="0"
                                                         step="0.01"
-                                                        className="pl-8 bg-white border-gray-200 focus:ring-2 focus:ring-green-200 focus:border-green-500 h-11 text-lg font-medium transition-all duration-200"
+                                                        className="h-11 min-h-[2.75rem] w-full min-w-0 pl-14 text-base font-medium tabular-nums bg-white border-neutral-200 focus-visible:ring-2 focus-visible:ring-brand-gold/35 focus-visible:border-brand-gold-deep dark:border-neutral-700 dark:bg-neutral-900 sm:text-lg"
                                                     />
-                                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-bold">$</span>
+                                                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs font-semibold uppercase tracking-wide text-neutral-500">{currency}</span>
                                                 </div>
                                                 {selectedProduct && (formData.principal < selectedProduct.min_amount || formData.principal > selectedProduct.max_amount) && formData.principal !== '' && (
                                                     <p className="text-xs text-red-500 font-medium mt-1 animate-pulse">Amount must be between {selectedProduct.min_amount.toLocaleString()} and {selectedProduct.max_amount.toLocaleString()}</p>
                                                 )}
                                             </div>
 
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-1">
-                                                    <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                                                        <CalendarDays className="w-4 h-4 text-orange-500" />
+                                            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-4">
+                                                <div className="space-y-2 min-w-0">
+                                                    <Label className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                                                        <CalendarDays className="h-4 w-4 shrink-0 text-brand-gold-deep" />
                                                         Disbursement *
                                                     </Label>
-                                                    <div className="relative">
-                                                        <Input
-                                                            type="date"
-                                                            value={formData.disbursementDate}
-                                                            onChange={(e) => setFormData(prev => ({ ...prev, disbursementDate: e.target.value }))}
-                                                            className="w-full h-11 border-gray-200 focus:ring-2 focus:ring-orange-200 focus:border-orange-500 cursor-pointer"
-                                                        />
-                                                    </div>
+                                                    <Input
+                                                        type="date"
+                                                        value={formData.disbursementDate}
+                                                        onChange={(e) => setFormData(prev => ({ ...prev, disbursementDate: e.target.value }))}
+                                                        className="h-11 w-full min-w-0 cursor-pointer border-neutral-200 bg-white focus-visible:ring-2 focus-visible:ring-brand-gold/35 focus-visible:border-brand-gold-deep dark:border-neutral-700 dark:bg-neutral-900"
+                                                    />
                                                 </div>
                                                 
-                                                <div className="space-y-1">
-                                                    <Label className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                                                        <CalendarDays className="w-4 h-4 text-teal-500" />
+                                                <div className="space-y-2 min-w-0">
+                                                    <Label className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                                                        <CalendarDays className="h-4 w-4 shrink-0 text-brand-gold-deep" />
                                                         Repayment Start *
                                                     </Label>
-                                                    <div className="relative">
-                                                        <Input
-                                                            type="date"
-                                                            value={formData.repaymentStartDate}
-                                                            onChange={(e) => setFormData(prev => ({ ...prev, repaymentStartDate: e.target.value }))}
-                                                            min={formData.disbursementDate}
-                                                            className="w-full h-11 border-gray-200 focus:ring-2 focus:ring-teal-200 focus:border-teal-500 cursor-pointer"
-                                                        />
-                                                    </div>
+                                                    <Input
+                                                        type="date"
+                                                        value={formData.repaymentStartDate}
+                                                        onChange={(e) => setFormData(prev => ({ ...prev, repaymentStartDate: e.target.value }))}
+                                                        min={formData.disbursementDate}
+                                                        className="h-11 w-full min-w-0 cursor-pointer border-neutral-200 bg-white focus-visible:ring-2 focus-visible:ring-brand-gold/35 focus-visible:border-brand-gold-deep dark:border-neutral-700 dark:bg-neutral-900"
+                                                    />
                                                 </div>
                                             </div>
                                         </motion.div>
                                     </div>
 
-                                    <motion.div className="pt-4 flex justify-end gap-3 border-t border-gray-100" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 }}>
-                                        <Button variant="outline" onClick={() => setDialogOpen(false)} className="h-11 px-6 text-gray-600 border-gray-300 hover:bg-gray-50">Cancel</Button>
+                                    <motion.div className="flex flex-col-reverse gap-3 border-t border-neutral-200/90 pt-4 dark:border-neutral-800 sm:flex-row sm:justify-end sm:gap-3" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15 }}>
+                                        <Button variant="outline" onClick={() => setDialogOpen(false)} className="h-11 w-full border-neutral-300 px-6 sm:w-auto dark:border-neutral-600 dark:hover:bg-neutral-800">
+                                            Cancel
+                                        </Button>
                                         <Button 
                                             onClick={handleDisburse} 
-                                            className="h-11 px-8 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all duration-300 rounded-lg font-semibold tracking-wide"
+                                            className="h-11 w-full bg-gradient-to-r from-brand-gold via-[#c9a227] to-brand-gold-deep px-6 font-semibold text-neutral-950 shadow-md transition-all hover:brightness-105 disabled:opacity-60 sm:w-auto sm:min-w-[200px] dark:from-brand-gold dark:to-brand-gold-deep"
                                             disabled={isDisbursingLoan}
                                         >
                                             {isDisbursingLoan ? (

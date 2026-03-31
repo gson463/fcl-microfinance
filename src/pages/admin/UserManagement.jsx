@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 
 const PAGE_SIZE = 25;
@@ -52,7 +53,10 @@ const UserManagement = () => {
 
     const { data: usersData, error: usersError, count } = await supabase
       .from('users')
-      .select('*, branches(name)', { count: 'exact' })
+      .select(
+        'id, full_name, email, role, branch_id, phone_number, is_active, created_at, branches(name)',
+        { count: 'exact' },
+      )
       .order('created_at', { ascending: false })
       .range(from, to);
       
@@ -165,15 +169,35 @@ const UserManagement = () => {
   };
 
   const handleDelete = async (userId) => {
-    const { error } = await invokeEdgeFunction('delete-user', { body: { userId } }, session?.access_token);
-    
-    if (error) {
-      const errorData = error.context ? await error.context.json() : { error: error.message };
-      toast({ title: 'Error', description: `Failed to delete user: ${errorData.error}`, variant: 'destructive' });
-    } else {
-      toast({ title: 'Success', description: 'User deleted successfully.' });
-      fetchData();
+    const result = await invokeEdgeFunction('delete-user', { body: { userId } }, session?.access_token);
+    const fail = await getEdgeInvokeFailure(result);
+    if (fail) {
+      const { error: auditErr } = await supabase.rpc('log_audit_event', {
+        p_action: 'user.delete.failed',
+        p_entity_type: 'user',
+        p_entity_id: String(userId),
+        p_metadata: {
+          stage: fail.stage || null,
+          error: fail.message,
+        },
+      });
+      if (auditErr) console.debug('[audit]', auditErr.message);
+      toast({
+        title: 'Could not delete user',
+        description: fail.message,
+        variant: 'destructive',
+      });
+      return;
     }
+    const { error: auditOkErr } = await supabase.rpc('log_audit_event', {
+      p_action: 'user.delete.success',
+      p_entity_type: 'user',
+      p_entity_id: String(userId),
+      p_metadata: {},
+    });
+    if (auditOkErr) console.debug('[audit]', auditOkErr.message);
+    toast({ title: 'Success', description: 'User deleted successfully.' });
+    fetchData();
   };
 
   const handleDeleteAllOtherUsers = async () => {
@@ -186,9 +210,15 @@ const UserManagement = () => {
             variant: 'destructive',
         });
     } else {
+        const deleted = data?.deleted_count ?? 0;
+        const skipData = data?.skipped_associated ?? 0;
+        const skipAdmin = data?.skipped_admin ?? 0;
+        const parts = [`${deleted} user(s) deleted.`];
+        if (skipData > 0) parts.push(`${skipData} skipped (still linked to loans, borrowers, or other records).`);
+        if (skipAdmin > 0) parts.push(`${skipAdmin} admin account(s) skipped.`);
         toast({
-            title: 'Action Successful',
-            description: `${data.deleted_count} users have been deleted.`,
+            title: 'Action complete',
+            description: parts.join(' '),
         });
         fetchData(); // Refresh the user list
     }

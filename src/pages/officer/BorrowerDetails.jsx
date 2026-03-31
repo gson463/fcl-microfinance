@@ -232,11 +232,28 @@ const BorrowerDetails = () => {
       const statusMap = { 'active': 'success', 'paid': 'default', 'delinquent': 'warning', 'defaulted': 'destructive' };
       return statusMap[status] || 'secondary';
   };
-  
-  const getStatusText = (status) => {
-    const statusTextMap = { 'eligible': 'Eligible', 'active_loan': 'Active Loan', 'defaulted': 'Defaulted', 'paid_up': 'Paid Up' };
+
+  const getBorrowerStatusBadge = (status) => {
+    const statusMap = {
+      eligible: 'default',
+      pending: 'secondary',
+      active_loan: 'default',
+      defaulted: 'destructive',
+      paid_up: 'outline',
+    };
+    return statusMap[status] || 'secondary';
+  };
+
+  const getBorrowerStatusText = (status) => {
+    const statusTextMap = {
+      eligible: 'Eligible',
+      pending: 'Pending (manager approval)',
+      active_loan: 'Active Loan',
+      defaulted: 'Defaulted',
+      paid_up: 'Paid Up',
+    };
     return statusTextMap[status] || status;
-  }
+  };
   
   if (loading) {
     return (
@@ -277,7 +294,7 @@ const BorrowerDetails = () => {
                     <CardDescription>{borrower.borrower_id}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-1">
-                    <DetailItem label="Loan Status" value={getStatusText(borrower.status)} isBadge badgeVariant={getLoanStatusBadge(borrower.status)} />
+                    <DetailItem label="Loan Status" value={getBorrowerStatusText(borrower.status)} isBadge badgeVariant={getBorrowerStatusBadge(borrower.status)} />
                     <DetailItem label="Registration Date" value={new Date(borrower.created_at).toLocaleDateString()} />
                 </CardContent>
             </Card>

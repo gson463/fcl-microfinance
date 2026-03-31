@@ -39,15 +39,15 @@ const AdminSignup = () => {
 
       setSignupSuccess(true);
       toast({
-        title: "Usajili Umefanikiwa!",
-        description: "Akaunti ya admin imetengenezwa. Sasa unaweza kuingia.",
+        title: "Registration successful",
+        description: "Admin account created. You can sign in now.",
       });
 
     } catch (error) {
       toast({
         variant: "destructive",
-        title: "Usajili Umefeli",
-        description: error.message || "Kuna kosa limetokea. Jaribu tena.",
+        title: "Registration failed",
+        description: error.message || "Something went wrong. Please try again.",
       });
     } finally {
       setIsSigningUp(false);
@@ -55,14 +55,14 @@ const AdminSignup = () => {
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-screen">Inapakia...</div>;
+    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
 
   return (
     <>
       <Helmet>
-        <title>Admin Signup - Mfumo wa Mikopo</title>
-        <meta name="description" content="Sajili akaunti ya Admin" />
+        <title>Admin Signup — Loan Management</title>
+        <meta name="description" content="Register an admin account" />
       </Helmet>
       
       <div className="min-h-screen flex items-center justify-center bg-neutral-950 p-4">
@@ -74,20 +74,20 @@ const AdminSignup = () => {
         >
           {signupSuccess ? (
             <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-800">Umefanikiwa Kujisajili!</h2>
+              <h2 className="text-2xl font-bold text-gray-800">You are registered</h2>
               <p className="mt-4 text-gray-600">
-                Akaunti yako ya admin imetengenezwa na kuthibitishwa. Sasa unaweza kuingia.
+                Your admin account has been created and verified. You can sign in now.
               </p>
               <Button asChild className="mt-6 w-full font-semibold">
-                <Link to="/login">Nenda Kwenye Login</Link>
+                <Link to="/login">Go to login</Link>
               </Button>
             </div>
           ) : (
             <>
-              <h2 className="text-2xl font-bold text-center text-gray-800">Sajili Akaunti ya Admin</h2>
+              <h2 className="text-2xl font-bold text-center text-gray-800">Register admin account</h2>
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div className="space-y-2">
-                  <Label htmlFor="fullName">Jina Kamili</Label>
+                  <Label htmlFor="fullName">Full name</Label>
                   <Input
                     id="fullName"
                     type="text"
@@ -97,7 +97,7 @@ const AdminSignup = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="email">Barua Pepe</Label>
+                  <Label htmlFor="email">Email</Label>
                   <Input
                     id="email"
                     type="email"
@@ -107,7 +107,7 @@ const AdminSignup = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="password">Nenosiri</Label>
+                  <Label htmlFor="password">Password</Label>
                   <Input
                     id="password"
                     type="password"
@@ -117,13 +117,13 @@ const AdminSignup = () => {
                   />
                 </div>
                 <Button type="submit" className="w-full h-11 font-semibold" disabled={isSigningUp}>
-                  {isSigningUp ? 'Inasajili...' : 'Sajili'}
+                  {isSigningUp ? 'Registering…' : 'Register'}
                 </Button>
               </form>
               <p className="text-center text-sm text-gray-600">
-                Tayari una akaunti?{' '}
+                Already have an account?{' '}
                 <Link to="/login" className="font-medium text-primary hover:underline">
-                  Ingia hapa
+                  Sign in
                 </Link>
               </p>
             </>

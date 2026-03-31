@@ -25,12 +25,16 @@ import LoanManagement from '@/pages/officer/LoanManagement';
 import RepaymentManagement from '@/pages/officer/RepaymentManagement';
 import GroupRepayment from '@/pages/officer/GroupRepayment';
 import ExpenseManagement from '@/pages/officer/ExpenseManagement';
+import AttendanceManagement from '@/pages/officer/AttendanceManagement';
+import FieldWalletCashFlow from '@/pages/officer/FieldWalletCashFlow';
 import Reports from '@/pages/shared/Reports';
 import Profile from '@/pages/shared/Profile';
 import LoanOfficerManagement from '@/pages/manager/LoanOfficerManagement';
 import ManagerLoanRequests from '@/pages/manager/LoanRequests';
+import ManagerSettings from '@/pages/manager/ManagerSettings';
 import ManagerRepaymentManagement from '@/pages/manager/RepaymentManagement';
 import ManagerLoanManagement from '@/pages/manager/LoanManagement';
+import ManagerBorrowerManagement from '@/pages/manager/BorrowerManagement';
 import { DateProvider } from '@/contexts/DateContext';
 import ArrearsManagement from '@/pages/shared/ArrearsManagement';
 import DefaultersManagement from '@/pages/shared/DefaultersManagement';
@@ -101,6 +105,7 @@ function App() {
       {/* Admin Routes */}
       <Route path="/admin/dashboard/metrics/:metricKey" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboardDrilldownRoute /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
+      <Route path="/admin/field-wallet" element={<ProtectedRoute allowedRoles={['admin']}><FieldWalletCashFlow /></ProtectedRoute>} />
       <Route path="/admin/branches" element={<ProtectedRoute allowedRoles={['admin']}><BranchManagement /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['admin']}><UserManagement /></ProtectedRoute>} />
       <Route path="/admin/borrowers" element={<ProtectedRoute allowedRoles={['admin']}><AdminBorrowerManagement /></ProtectedRoute>} />
@@ -117,7 +122,10 @@ function App() {
       {/* Manager Routes */}
       <Route path="/manager/dashboard/metrics/:metricKey" element={<ProtectedRoute allowedRoles={['manager']}><ManagerDashboardDrilldownRoute /></ProtectedRoute>} />
       <Route path="/manager/dashboard" element={<ProtectedRoute allowedRoles={['manager']}><BranchManagerDashboard /></ProtectedRoute>} />
+      <Route path="/manager/field-wallet" element={<ProtectedRoute allowedRoles={['manager']}><FieldWalletCashFlow /></ProtectedRoute>} />
+      <Route path="/manager/settings" element={<ProtectedRoute allowedRoles={['manager']}><ManagerSettings /></ProtectedRoute>} />
       <Route path="/manager/loan-officers" element={<ProtectedRoute allowedRoles={['manager']}><LoanOfficerManagement /></ProtectedRoute>} />
+      <Route path="/manager/borrowers" element={<ProtectedRoute allowedRoles={['manager']}><ManagerBorrowerManagement /></ProtectedRoute>} />
       <Route path="/manager/loans" element={<ProtectedRoute allowedRoles={['manager']}><ManagerLoanManagement /></ProtectedRoute>} />
       <Route path="/manager/loan-requests" element={<ProtectedRoute allowedRoles={['manager']}><ManagerLoanRequests /></ProtectedRoute>} />
       <Route path="/manager/repayment-management" element={<ProtectedRoute allowedRoles={['manager']}><ManagerRepaymentManagement /></ProtectedRoute>} />
@@ -132,6 +140,8 @@ function App() {
       <Route path="/officer/repayment-management" element={<ProtectedRoute allowedRoles={['officer']}><RepaymentManagement /></ProtectedRoute>} />
       <Route path="/officer/group-repayment" element={<ProtectedRoute allowedRoles={['officer']}><GroupRepayment /></ProtectedRoute>} />
       <Route path="/officer/expenses" element={<ProtectedRoute allowedRoles={['officer']}><ExpenseManagement /></ProtectedRoute>} />
+      <Route path="/officer/field-wallet" element={<ProtectedRoute allowedRoles={['officer']}><FieldWalletCashFlow /></ProtectedRoute>} />
+      <Route path="/officer/attendance" element={<ProtectedRoute allowedRoles={['officer']}><AttendanceManagement /></ProtectedRoute>} />
       
       {/* Shared Routes */}
       <Route path="/arrears" element={<ProtectedRoute><ArrearsManagement /></ProtectedRoute>} />

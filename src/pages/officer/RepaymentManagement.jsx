@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Edit, Trash2, Calendar as CalendarIcon, FileDown, Download, Eye, Loader2, ArrowRightLeft, TrendingUp, TrendingDown, Scale, PlusCircle, Coins as HandCoins, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Edit, Trash2, Calendar as CalendarIcon, FileDown, Download, Eye, Loader2, ArrowRightLeft, TrendingUp, TrendingDown, Scale, PlusCircle, Coins as HandCoins, Search, ChevronLeft, ChevronRight, Layers, ArrowUpCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 
@@ -165,6 +165,11 @@ const RepaymentManagement = () => {
     
     const stats = useMemo(() => {
         const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
+        const totalPrepayment = filteredRepayments.reduce((sum, r) => sum + (Number(r.prepayment_amount) || 0), 0);
+        const totalScheduledCollection = filteredRepayments.reduce(
+            (sum, r) => sum + Math.max(0, r.amount - (Number(r.prepayment_amount) || 0)),
+            0
+        );
         const totalInterest = filteredRepayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0);
         const totalPrincipalPaid = filteredRepayments.reduce((sum, r) => sum + (r.principal_paid || 0), 0);
         
@@ -197,7 +202,14 @@ const RepaymentManagement = () => {
              return sum + (loan.principal - principalPaid);
         }, 0);
 
-        return { totalPaid, totalInterest, totalPrincipalPaid, totalOutstandingPrincipal };
+        return {
+            totalPaid,
+            totalPrepayment,
+            totalScheduledCollection,
+            totalInterest,
+            totalPrincipalPaid,
+            totalOutstandingPrincipal,
+        };
     }, [filteredRepayments, loans, borrowerFilter, groupFilter, searchTerm]);
 
     const handleEdit = (repayment) => {
@@ -220,8 +232,12 @@ const RepaymentManagement = () => {
                 .update({ amount: editForm.amount, actual_payment_date: editForm.payment_date, payment_date: editForm.payment_date })
                 .eq('id', currentRepayment.id);
             if (updateError) throw updateError;
-            
-            await supabase.rpc('recalculate_loan_schedule', { p_loan_id: currentRepayment.loan_id });
+
+            const { error: prepErr } = await supabase.rpc('repayment_recompute_prepayment', {
+                p_repayment_id: currentRepayment.id,
+            });
+            if (prepErr) throw prepErr;
+
             await supabase.rpc('update_all_loan_statuses');
 
             toast({ title: 'Success', description: 'Repayment updated successfully.' });
@@ -457,6 +473,8 @@ const RepaymentManagement = () => {
             { header: 'Principal Paid', accessor: (r) => String(r.principal_paid ?? '') },
             { header: 'Interest Paid', accessor: (r) => String(r.interest_paid ?? '') },
             { header: 'Total Paid', accessor: (r) => String(r.amount ?? '') },
+            { header: 'Scheduled collection', accessor: (r) => String(Math.max(0, (r.amount ?? 0) - (Number(r.prepayment_amount) || 0))) },
+            { header: 'Prepayment', accessor: (r) => String(r.prepayment_amount ?? '0') },
         ], rows);
         toast({ title: 'Exported', description: `${rows.length} repayment(s) to CSV.` });
     };
@@ -702,8 +720,10 @@ const RepaymentManagement = () => {
                         <CardDescription>Summary of repayments based on selected filters.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
                             <StatCard title="Total Repayments (Filtered)" value={`${currency} ${stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={ArrowRightLeft} color="text-blue-500" />
+                            <StatCard title="Scheduled collection" value={`${currency} ${stats.totalScheduledCollection.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={Layers} color="text-cyan-600" />
+                            <StatCard title="Prepayment" value={`${currency} ${stats.totalPrepayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={ArrowUpCircle} color="text-emerald-600" />
                             <StatCard title="Interest Collected" value={`${currency} ${stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingUp} color="text-green-500" />
                             <StatCard title="Principal Repayments" value={`${currency} ${stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingDown} color="text-orange-500" />
                             <StatCard title="Outstanding Principal" value={`${currency} ${stats.totalOutstandingPrincipal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={Scale} color="text-red-500" />
@@ -803,6 +823,8 @@ const RepaymentManagement = () => {
                                     <TableHead>Principal Paid</TableHead>
                                     <TableHead>Interest Paid</TableHead>
                                     <TableHead>Total Paid</TableHead>
+                                    <TableHead>Scheduled</TableHead>
+                                    <TableHead>Prepayment</TableHead>
                                     <TableHead>Actions</TableHead>
                                 </TableRow>
                             </TableHeader>
@@ -828,6 +850,20 @@ const RepaymentManagement = () => {
                                                 )}
                                             </div>
                                         </TableCell>
+                                        <TableCell className="text-muted-foreground">
+                                            {currency}{' '}
+                                            {Math.max(0, r.amount - (Number(r.prepayment_amount) || 0)).toLocaleString(undefined, {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                            })}
+                                        </TableCell>
+                                        <TableCell className="font-medium text-emerald-700 dark:text-emerald-400">
+                                            {currency}{' '}
+                                            {(Number(r.prepayment_amount) || 0).toLocaleString(undefined, {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                            })}
+                                        </TableCell>
                                         <TableCell className="flex gap-1">
                                             <Button variant="ghost" size="icon" onClick={() => handleEdit(r)}><Edit className="h-4 w-4" /></Button>
                                             <AlertDialog>
@@ -847,7 +883,7 @@ const RepaymentManagement = () => {
                                 ))}
                                 {filteredRepayments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
+                                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
@@ -857,6 +893,8 @@ const RepaymentManagement = () => {
                                     <TableCell className="font-bold">{currency} {stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                    <TableCell className="font-bold">{currency} {stats.totalScheduledCollection.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                    <TableCell className="font-bold">{currency} {stats.totalPrepayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell></TableCell>
                                 </TableRow>
                             </TableFooter>

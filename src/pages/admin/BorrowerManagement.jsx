@@ -104,6 +104,7 @@ const AdminBorrowerManagement = () => {
     const getLoanStatusBadge = (status) => {
         const statusMap = {
             'eligible': 'success',
+            'pending': 'secondary',
             'active': 'default',
             'active_loan': 'warning',
             'defaulted': 'destructive',
@@ -115,6 +116,7 @@ const AdminBorrowerManagement = () => {
     const getStatusText = (status) => {
         const statusTextMap = {
             'eligible': 'Eligible',
+            'pending': 'Pending',
             'active': 'Active',
             'active_loan': 'Active Loan',
             'defaulted': 'Defaulted',
@@ -173,6 +175,7 @@ const AdminBorrowerManagement = () => {
                                 <SelectTrigger className="w-full md:w-[180px]"><SelectValue placeholder="Filter by Status" /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All Statuses</SelectItem>
+                                    <SelectItem value="pending">Pending</SelectItem>
                                     <SelectItem value="eligible">Eligible</SelectItem>
                                     <SelectItem value="active">Active</SelectItem>
                                     <SelectItem value="active_loan">Active Loan</SelectItem>
@@ -275,6 +278,7 @@ const AdminBorrowerManagement = () => {
                                     <SelectValue placeholder="Select a status" />
                                 </SelectTrigger>
                                 <SelectContent>
+                                    <SelectItem value="pending">Pending</SelectItem>
                                     <SelectItem value="eligible">Eligible</SelectItem>
                                     <SelectItem value="active">Active</SelectItem>
                                     <SelectItem value="active_loan">Active Loan</SelectItem>

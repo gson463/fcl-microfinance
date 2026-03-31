@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Ondoa token ya zamani na anzisha upya (haitumii nenosiri kwenye faili)
+# Remove old Supabase CLI token and start fresh (does not store passwords in files)
 set -euo pipefail
-echo ">>> Logout ya Supabase CLI..."
+echo ">>> Supabase CLI logout..."
 yes | supabase logout 2>/dev/null || true
-echo ">>> Imemaliza. Sasa fanya mwenyewe:"
+echo ">>> Done. Next steps:"
 echo "    supabase login"
 echo "    cd $(cd "$(dirname "$0")/.." && pwd) && export SUPABASE_DB_PASSWORD='...' && npm run supabase:deploy"
 echo ""

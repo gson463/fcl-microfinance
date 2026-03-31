@@ -65,9 +65,9 @@ export function RepaymentScheduleGrid({
         currency: exportMeta.currency ?? currency,
         variant: exportMeta.variant ?? variant,
       });
-      toast({ title: successTitle, description: 'Fungua faili au dirisha la uchapishaji.' });
+      toast({ title: successTitle, description: 'Open the downloaded file or the print dialog.' });
     } catch (e) {
-      toast({ title: 'Imeshindwa', description: e?.message || 'Jaribu tena.', variant: 'destructive' });
+      toast({ title: 'Action failed', description: e?.message || 'Please try again.', variant: 'destructive' });
     } finally {
       setExporting(false);
     }
@@ -78,7 +78,7 @@ export function RepaymentScheduleGrid({
       {exportMeta && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-brand-gold/25 bg-gradient-to-r from-brand-gold/5 to-transparent px-3 py-2">
           <span className="text-xs font-semibold uppercase tracking-wide text-brand-gold-deep dark:text-brand-gold">
-            Hamisha / Chapisha
+            Export / Print
           </span>
           <Button
             type="button"
@@ -105,7 +105,7 @@ export function RepaymentScheduleGrid({
             variant="outline"
             size="sm"
             disabled={exporting || rows.length === 0}
-            onClick={() => runExport(printRepaymentSchedule, 'Chapisha')}
+            onClick={() => runExport(printRepaymentSchedule, 'Print')}
           >
             {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Printer className="mr-2 h-4 w-4" />}
             Print

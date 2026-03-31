@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -218,15 +219,32 @@ const LoanOfficerManagement = () => {
   };
 
   const handleDelete = async (officerId) => {
-    const { error } = await invokeEdgeFunction('delete-user', { body: { userId: officerId } }, session?.access_token);
-    
-    if (error) {
-      const errorData = error.context ? await error.context.json() : { error: error.message };
-      toast({ title: 'Error', description: `Failed to delete officer: ${errorData.error}`, variant: 'destructive' });
-    } else {
-      toast({ title: 'Success', description: 'Loan Officer deleted successfully.' });
-      fetchOfficers();
+    const result = await invokeEdgeFunction('delete-user', { body: { userId: officerId } }, session?.access_token);
+    const fail = await getEdgeInvokeFailure(result);
+    if (fail) {
+      const { error: auditErr } = await supabase.rpc('log_audit_event', {
+        p_action: 'loan_officer.delete.failed',
+        p_entity_type: 'user',
+        p_entity_id: String(officerId),
+        p_metadata: { stage: fail.stage || null, error: fail.message },
+      });
+      if (auditErr) console.debug('[audit]', auditErr.message);
+      toast({
+        title: 'Could not delete loan officer',
+        description: fail.message,
+        variant: 'destructive',
+      });
+      return;
     }
+    const { error: auditOkErr } = await supabase.rpc('log_audit_event', {
+      p_action: 'loan_officer.delete.success',
+      p_entity_type: 'user',
+      p_entity_id: String(officerId),
+      p_metadata: {},
+    });
+    if (auditOkErr) console.debug('[audit]', auditOkErr.message);
+    toast({ title: 'Success', description: 'Loan Officer deleted successfully.' });
+    fetchOfficers();
   };
   
   const getBadgeVariant = (isActive) => {

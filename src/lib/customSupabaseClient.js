@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 /**
  * Point to any Supabase project via .env (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY).
- * The other project must expose the same tables, RPCs, RLS, Storage buckets, and Edge Functions this app expects.
+ * The other project must expose the same tables, RPCs, RLS, Storage buckets (logos, profile-photos), and Edge Functions this app expects.
  */
 const supabaseUrl =
 	import.meta.env.VITE_SUPABASE_URL || 'https://jdwgpfyaygirkqyywvvj.supabase.co';

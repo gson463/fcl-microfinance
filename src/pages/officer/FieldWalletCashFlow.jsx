@@ -1,0 +1,706 @@
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { format, subDays, startOfDay, endOfDay } from 'date-fns';
+import { format as formatTZ, toZonedTime } from 'date-fns-tz';
+import DashboardLayout from '@/components/layout/DashboardLayout';
+import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { supabase } from '@/lib/customSupabaseClient';
+import { useToast } from '@/components/ui/use-toast';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import {
+  Calendar as CalendarIcon,
+  Download,
+  Loader2,
+  Wallet,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ChevronDown,
+  ChevronRight,
+  FileSpreadsheet,
+  FileDown,
+} from 'lucide-react';
+import { exportObjectsToCsv } from '@/lib/tableExport';
+import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
+import { buildOfficerCenterBlocks } from '@/lib/fieldWalletAggregates';
+import { downloadFieldWalletExcel, fetchLogoBufferFromUrl } from '@/lib/fieldWalletReportExcel';
+import { downloadFieldWalletPdf } from '@/lib/fieldWalletReportPdf';
+import { resolveLogoUrl, DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE } from '@/lib/brand';
+
+const EAT_TIMEZONE = 'Africa/Nairobi';
+
+const LOAN_SELECT = `id, loan_id, principal, disbursement_date, officer_id, borrower_id,
+  borrowers(
+    id, first_name, surname,
+    groups(id, name, center_id, centers(id, name))
+  )`;
+
+const REP_SELECT = `id, amount, prepayment_amount, scheduled_due_snapshot, actual_payment_date, officer_id, loan_id,
+  loans(
+    loan_id,
+    borrower_id,
+    borrowers(
+      id, first_name, surname,
+      groups(id, name, center_id, centers(id, name))
+    )
+  )`;
+
+const FieldWalletCashFlow = () => {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const role = user?.user_metadata?.role;
+
+  const [currency, setCurrency] = useState('TZS');
+  const [applicationFee, setApplicationFee] = useState(0);
+  const [systemName, setSystemName] = useState(DEFAULT_SYSTEM_NAME);
+  const [tagline, setTagline] = useState(DEFAULT_TAGLINE);
+  const [logoUrlConfig, setLogoUrlConfig] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [managerBranchId, setManagerBranchId] = useState(null);
+  const [managerBranchName, setManagerBranchName] = useState('');
+  const [repayments, setRepayments] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [disbursements, setDisbursements] = useState([]);
+  const [centers, setCenters] = useState([]);
+  const [officerRows, setOfficerRows] = useState([]);
+  const [exportingExcel, setExportingExcel] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const [range, setRange] = useState(() => {
+    const to = new Date();
+    const from = subDays(to, 7);
+    return { from: startOfDay(from), to: endOfDay(to) };
+  });
+  const [expandedDates, setExpandedDates] = useState(() => new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!user?.id || role !== 'manager') {
+        setProfileLoading(false);
+        return;
+      }
+      setProfileLoading(true);
+      const { data: row, error } = await supabase.from('users').select('branch_id, role').eq('id', user.id).maybeSingle();
+      if (cancelled) return;
+      if (error || !row || row.role !== 'manager') {
+        setManagerBranchId(null);
+        setManagerBranchName('');
+        setProfileLoading(false);
+        return;
+      }
+      setManagerBranchId(row.branch_id ?? null);
+      if (row.branch_id) {
+        const { data: br } = await supabase.from('branches').select('name').eq('id', row.branch_id).maybeSingle();
+        if (!cancelled) setManagerBranchName(br?.name || '');
+      } else {
+        setManagerBranchName('');
+      }
+      setProfileLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, role]);
+
+  const fetchData = useCallback(async () => {
+    if (!user?.id || !role) return;
+    if (role === 'manager' && profileLoading) return;
+    if (role === 'manager' && !managerBranchId) {
+      setRepayments([]);
+      setExpenses([]);
+      setDisbursements([]);
+      setCenters([]);
+      setOfficerRows([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { data: cfg } = await supabase
+        .from('system_config')
+        .select('key, value')
+        .in('key', ['currency', 'applicationFeePerDisbursement', 'systemName', 'logoUrl', 'tagline']);
+      const map = Object.fromEntries((cfg || []).map((r) => [r.key, r.value]));
+      if (map.currency) setCurrency(map.currency);
+      setApplicationFee(parseFloat(map.applicationFeePerDisbursement) || 0);
+      setSystemName(map.systemName || DEFAULT_SYSTEM_NAME);
+      setTagline(map.tagline && String(map.tagline).trim() ? map.tagline : DEFAULT_TAGLINE);
+      setLogoUrlConfig(map.logoUrl ?? null);
+
+      const fromStr = format(range.from, 'yyyy-MM-dd');
+      const toStr = format(range.to, 'yyyy-MM-dd');
+
+      let officerIdsFilter = null;
+
+      if (role === 'officer') {
+        officerIdsFilter = [user.id];
+      } else if (role === 'manager' && managerBranchId) {
+        const { data: offs } = await supabase.from('users').select('id').eq('branch_id', managerBranchId).eq('role', 'officer');
+        officerIdsFilter = (offs || []).map((o) => o.id);
+        if (officerIdsFilter.length === 0) officerIdsFilter = ['00000000-0000-0000-0000-000000000000'];
+      }
+
+      const repQ = supabase
+        .from('repayments')
+        .select(REP_SELECT)
+        .gte('actual_payment_date', fromStr)
+        .lte('actual_payment_date', toStr);
+      const loanQ = supabase
+        .from('loans')
+        .select(LOAN_SELECT)
+        .gte('disbursement_date', fromStr)
+        .lte('disbursement_date', toStr);
+      const expQ = supabase
+        .from('expenses')
+        .select('id, amount, expense_type, description, expense_date, officer_id')
+        .gte('expense_date', fromStr)
+        .lte('expense_date', toStr);
+
+      if (officerIdsFilter) {
+        repQ.in('officer_id', officerIdsFilter);
+        loanQ.in('officer_id', officerIdsFilter);
+        expQ.in('officer_id', officerIdsFilter);
+      }
+
+      const [repRes, loanRes, expRes] = await Promise.all([repQ.order('actual_payment_date', { ascending: false }), loanQ.order('disbursement_date', { ascending: false }), expQ.order('expense_date', { ascending: false })]);
+
+      if (repRes.error) throw repRes.error;
+      if (loanRes.error) throw loanRes.error;
+      if (expRes.error) throw expRes.error;
+
+      const reps = repRes.data || [];
+      const loans = loanRes.data || [];
+      const exps = expRes.data || [];
+
+      setRepayments(reps);
+      setExpenses(exps);
+      setDisbursements(loans);
+
+      const oid = new Set();
+      reps.forEach((r) => r.officer_id && oid.add(r.officer_id));
+      loans.forEach((l) => l.officer_id && oid.add(l.officer_id));
+      exps.forEach((e) => e.officer_id && oid.add(e.officer_id));
+
+      const ids = [...oid];
+      let officers = [];
+      if (ids.length > 0) {
+        const { data: ou } = await supabase.from('users').select('id, full_name').in('id', ids).order('full_name');
+        officers = ou || [];
+      }
+      if (role === 'officer' && officers.length === 0) {
+        officers = [{ id: user.id, full_name: user.user_metadata?.full_name || 'Officer' }];
+      }
+
+      setOfficerRows(officers);
+
+      let centersData = [];
+      const centerOfficerIds = officers.map((o) => o.id);
+      if (centerOfficerIds.length > 0) {
+        const { data: c } = await supabase.from('centers').select('id, name, loan_officer_id').in('loan_officer_id', centerOfficerIds).order('name');
+        centersData = c || [];
+      }
+      setCenters(centersData);
+    } catch (e) {
+      toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [user, role, range.from, range.to, profileLoading, managerBranchId, toast]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const branchLabel = useMemo(() => {
+    if (role === 'admin') return 'Scope: All branches';
+    if (role === 'manager') return managerBranchName ? `Branch: ${managerBranchName}` : 'Branch: —';
+    return 'My officer wallet';
+  }, [role, managerBranchName]);
+
+  const pageTitle = useMemo(() => {
+    if (role === 'admin') return 'Field wallet (all branches)';
+    if (role === 'manager') return 'Field wallet (branch)';
+    return 'Field wallet & cash flow';
+  }, [role]);
+
+  const reportBlocks = useMemo(
+    () =>
+      buildOfficerCenterBlocks({
+        officers: officerRows,
+        centers,
+        repayments,
+        loans: disbursements,
+        expenses,
+        applicationFeePerDisbursement: applicationFee,
+      }).blocks,
+    [officerRows, centers, repayments, disbursements, expenses, applicationFee]
+  );
+
+  const byDateRepayments = useMemo(() => {
+    const map = new Map();
+    for (const r of repayments) {
+      const d = formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd');
+      if (!map.has(d)) map.set(d, []);
+      map.get(d).push(r);
+    }
+    return map;
+  }, [repayments]);
+
+  const dailySummary = useMemo(() => {
+    const dates = [...byDateRepayments.keys()].sort((a, b) => b.localeCompare(a));
+    return dates.map((dateKey) => {
+      const rows = byDateRepayments.get(dateKey) || [];
+      let sched = 0;
+      let prep = 0;
+      let total = 0;
+      for (const r of rows) {
+        total += Number(r.amount) || 0;
+        sched += scheduledCollectionAmount(r);
+        prep += prepaymentAmount(r);
+      }
+      return { dateKey, rows, scheduled: sched, prepayment: prep, total };
+    });
+  }, [byDateRepayments]);
+
+  const totals = useMemo(() => {
+    const inScheduled = repayments.reduce((s, r) => s + scheduledCollectionAmount(r), 0);
+    const inPrepay = repayments.reduce((s, r) => s + prepaymentAmount(r), 0);
+    const inTotal = repayments.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+    const outExp = expenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    const outDisb = disbursements.reduce((s, l) => s + (Number(l.principal) || 0), 0);
+    return {
+      inScheduled,
+      inPrepay,
+      inTotal,
+      outExp,
+      outDisb,
+      outTotal: outExp + outDisb,
+      net: inTotal - outExp - outDisb,
+    };
+  }, [repayments, expenses, disbursements]);
+
+  const toggleDate = (dateKey) => {
+    setExpandedDates((prev) => {
+      const next = new Set(prev);
+      if (next.has(dateKey)) next.delete(dateKey);
+      else next.add(dateKey);
+      return next;
+    });
+  };
+
+  const exportWalletCsv = () => {
+    const rows = repayments.map((r) => ({
+      date: formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
+      loan_id: r.loans?.loan_id ?? '',
+      borrower: `${r.loans?.borrowers?.first_name ?? ''} ${r.loans?.borrowers?.surname ?? ''}`.trim(),
+      scheduled: scheduledCollectionAmount(r),
+      prepayment: prepaymentAmount(r),
+      total: r.amount,
+    }));
+    exportObjectsToCsv(`wallet_repayments_${Date.now()}.csv`, [
+      { header: 'Date', accessor: 'date' },
+      { header: 'Loan ID', accessor: 'loan_id' },
+      { header: 'Borrower', accessor: 'borrower' },
+      { header: 'Scheduled collection', accessor: (x) => String(x.scheduled) },
+      { header: 'Prepayment', accessor: (x) => String(x.prepayment) },
+      { header: 'Total', accessor: (x) => String(x.total) },
+    ], rows);
+    toast({ title: 'Exported', description: `${rows.length} repayment line(s).` });
+  };
+
+  const handleExportExcel = async () => {
+    setExportingExcel(true);
+    try {
+      const path = resolveLogoUrl(logoUrlConfig);
+      const logoUrl =
+        path.startsWith('http') ? path : `${window.location.origin}${path.startsWith('/') ? '' : '/'}${path}`;
+      let logoBuffer = null;
+      let logoExtension = 'png';
+      const fetched = await fetchLogoBufferFromUrl(logoUrl);
+      if (fetched) {
+        logoBuffer = fetched.buffer;
+        logoExtension = fetched.extension;
+      }
+
+      await downloadFieldWalletExcel({
+        systemName,
+        branchLabel,
+        dateRangeLabel: `Period: ${format(range.from, 'PPP')} – ${format(range.to, 'PPP')}`,
+        logoBuffer,
+        logoExtension,
+        currency,
+        blocks: reportBlocks,
+      });
+      toast({ title: 'Exported', description: 'Excel report downloaded.' });
+    } catch (e) {
+      toast({ title: 'Export failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    setExportingPdf(true);
+    try {
+      await downloadFieldWalletPdf({
+        systemName,
+        tagline,
+        logoUrl: logoUrlConfig,
+        branchLabel,
+        dateRangeLabel: `Period: ${format(range.from, 'PPP')} – ${format(range.to, 'PPP')}`,
+        currency,
+        blocks: reportBlocks,
+      });
+      toast({ title: 'Exported', description: 'PDF report downloaded.' });
+    } catch (e) {
+      toast({ title: 'PDF export failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  if (role === 'manager' && !profileLoading && !managerBranchId) {
+    return (
+      <DashboardLayout title={pageTitle}>
+        <p className="text-sm text-muted-foreground">
+          Your manager account has no branch assigned. Ask an admin to set your branch, then sign out and sign in again.
+        </p>
+      </DashboardLayout>
+    );
+  }
+
+  return (
+    <DashboardLayout title={pageTitle}>
+      <div className="space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="max-w-2xl space-y-1">
+            <p className="text-sm font-medium text-foreground">{branchLabel}</p>
+            <p className="text-sm text-muted-foreground">
+              <strong>Cash in</strong> splits repayments into <strong>Scheduled</strong> and <strong>Prepayment</strong>.
+              Admin sees all officers; managers see their branch only; officers see themselves.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="min-w-[260px] justify-start font-normal">
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {range.from && range.to
+                    ? `${format(range.from, 'LLL d, y')} – ${format(range.to, 'LLL d, y')}`
+                    : 'Date range'}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <Calendar
+                  mode="range"
+                  numberOfMonths={2}
+                  selected={{ from: range.from, to: range.to }}
+                  onSelect={(rng) => {
+                    if (rng?.from) setRange({ from: startOfDay(rng.from), to: endOfDay(rng.to ?? rng.from) });
+                  }}
+                />
+              </PopoverContent>
+            </Popover>
+            <Button type="button" variant="outline" onClick={exportWalletCsv} disabled={repayments.length === 0}>
+              <Download className="mr-2 h-4 w-4" />
+              CSV (repayments)
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              onClick={handleExportExcel}
+              disabled={exportingExcel || exportingPdf || reportBlocks.length === 0}
+            >
+              {exportingExcel ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileSpreadsheet className="mr-2 h-4 w-4" />}
+              Excel (officer × centre)
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={handleExportPdf}
+              disabled={exportingExcel || exportingPdf || reportBlocks.length === 0}
+            >
+              {exportingPdf ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileDown className="mr-2 h-4 w-4" />}
+              PDF
+            </Button>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">Cash in — scheduled</CardTitle>
+                  <ArrowDownLeft className="h-4 w-4 text-cyan-600" />
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold">
+                    {currency} {totals.inScheduled.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">Cash in — prepayment</CardTitle>
+                  <Wallet className="h-4 w-4 text-emerald-600" />
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+                    {currency} {totals.inPrepay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">Cash out</CardTitle>
+                  <ArrowUpRight className="h-4 w-4 text-orange-600" />
+                </CardHeader>
+                <CardContent>
+                  <p className="text-2xl font-bold">
+                    {currency} {totals.outTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Expenses {currency} {totals.outExp.toLocaleString()} · Disbursements {currency} {totals.outDisb.toLocaleString()}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium">Net (in − out)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className={`text-2xl font-bold ${totals.net >= 0 ? '' : 'text-destructive'}`}>
+                    {currency} {totals.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Wallet history — by day</CardTitle>
+                <CardDescription>Tap a date to expand repayment lines (scheduled vs prepayment).</CardDescription>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-10" />
+                      <TableHead>Date</TableHead>
+                      <TableHead>Lines</TableHead>
+                      <TableHead>Scheduled</TableHead>
+                      <TableHead>Prepayment</TableHead>
+                      <TableHead>Total in</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {dailySummary.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                          No repayments in this range.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      dailySummary.map(({ dateKey, rows, scheduled, prepayment, total }) => {
+                        const open = expandedDates.has(dateKey);
+                        return (
+                          <React.Fragment key={dateKey}>
+                            <TableRow className="cursor-pointer hover:bg-muted/50" onClick={() => toggleDate(dateKey)}>
+                              <TableCell>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleDate(dateKey);
+                                  }}
+                                >
+                                  {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                </Button>
+                              </TableCell>
+                              <TableCell className="font-medium">
+                                {formatTZ(toZonedTime(new Date(`${dateKey}T12:00:00`), EAT_TIMEZONE), 'PPP')}
+                              </TableCell>
+                              <TableCell>{rows.length}</TableCell>
+                              <TableCell>
+                                {currency}{' '}
+                                {scheduled.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="text-emerald-700 dark:text-emerald-400 font-medium">
+                                {currency}{' '}
+                                {prepayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                              <TableCell className="font-semibold">
+                                {currency}{' '}
+                                {total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </TableCell>
+                            </TableRow>
+                            {open && (
+                              <TableRow>
+                                <TableCell colSpan={6} className="bg-muted/30 p-0">
+                                  <div className="p-4 border-t">
+                                    <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Repayment detail</p>
+                                    <Table>
+                                      <TableHeader>
+                                        <TableRow>
+                                          <TableHead>Borrower</TableHead>
+                                          <TableHead>Loan</TableHead>
+                                          <TableHead>Scheduled</TableHead>
+                                          <TableHead>Prepayment</TableHead>
+                                          <TableHead>Total</TableHead>
+                                          <TableHead className="text-right">Due snapshot</TableHead>
+                                        </TableRow>
+                                      </TableHeader>
+                                      <TableBody>
+                                        {rows.map((r) => (
+                                          <TableRow key={r.id}>
+                                            <TableCell>
+                                              {r.loans?.borrowers?.first_name} {r.loans?.borrowers?.surname}
+                                            </TableCell>
+                                            <TableCell className="font-mono text-sm">{r.loans?.loan_id}</TableCell>
+                                            <TableCell>
+                                              {currency}{' '}
+                                              {scheduledCollectionAmount(r).toLocaleString(undefined, {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                              })}
+                                            </TableCell>
+                                            <TableCell className="font-medium text-emerald-700 dark:text-emerald-400">
+                                              {currency}{' '}
+                                              {prepaymentAmount(r).toLocaleString(undefined, {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                              })}
+                                            </TableCell>
+                                            <TableCell className="font-semibold">
+                                              {currency}{' '}
+                                              {Number(r.amount).toLocaleString(undefined, {
+                                                minimumFractionDigits: 2,
+                                                maximumFractionDigits: 2,
+                                              })}
+                                            </TableCell>
+                                            <TableCell className="text-right text-muted-foreground text-sm">
+                                              {r.scheduled_due_snapshot != null
+                                                ? `${currency} ${Number(r.scheduled_due_snapshot).toLocaleString(undefined, {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                  })}`
+                                                : '—'}
+                                            </TableCell>
+                                          </TableRow>
+                                        ))}
+                                      </TableBody>
+                                    </Table>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </React.Fragment>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Cash out — expenses</CardTitle>
+                  <CardDescription>Expenses in range (scoped).</CardDescription>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Type</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {expenses.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-muted-foreground text-center py-6">
+                            No expenses in range.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        expenses.map((e) => (
+                          <TableRow key={e.id}>
+                            <TableCell>{e.expense_date}</TableCell>
+                            <TableCell className="capitalize">{e.expense_type}</TableCell>
+                            <TableCell className="text-right">
+                              {currency}{' '}
+                              {Number(e.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Cash out — disbursements</CardTitle>
+                  <CardDescription>Principal disbursed in range (scoped).</CardDescription>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Loan</TableHead>
+                        <TableHead className="text-right">Principal</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {disbursements.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={3} className="text-muted-foreground text-center py-6">
+                            No disbursements in range.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        disbursements.map((l) => (
+                          <TableRow key={l.id}>
+                            <TableCell>{l.disbursement_date}</TableCell>
+                            <TableCell>
+                              <span className="font-mono text-sm">{l.loan_id}</span>
+                              <span className="text-muted-foreground text-xs block">
+                                {l.borrowers?.first_name} {l.borrowers?.surname}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              {currency}{' '}
+                              {Number(l.principal).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </div>
+          </>
+        )}
+      </div>
+    </DashboardLayout>
+  );
+};
+
+export default FieldWalletCashFlow;

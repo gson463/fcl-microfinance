@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
 import { Upload, Save, RotateCw } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/customSupabaseClient';
 import { DEFAULT_SYSTEM_NAME, resolveLogoUrl } from '@/lib/brand';
 
@@ -16,6 +17,9 @@ const SystemSettings = () => {
     systemName: '',
     logoUrl: '',
     currency: '',
+    applicationFeePerDisbursement: '0',
+    attendanceMinMeetingsForIncreaseEligibility: '6',
+    attendanceRequireNoDefaultForAutoIncrease: 'true',
   });
   const [logoPreview, setLogoPreview] = useState('');
   const [newLogoFile, setNewLogoFile] = useState(null);
@@ -37,6 +41,14 @@ const SystemSettings = () => {
         systemName: dbConfig.systemName || DEFAULT_SYSTEM_NAME,
         logoUrl: dbConfig.logoUrl || '',
         currency: dbConfig.currency || 'TZS',
+        applicationFeePerDisbursement:
+          dbConfig.applicationFeePerDisbursement != null && String(dbConfig.applicationFeePerDisbursement).trim() !== ''
+            ? String(dbConfig.applicationFeePerDisbursement)
+            : '0',
+        attendanceMinMeetingsForIncreaseEligibility:
+          dbConfig.attendanceMinMeetingsForIncreaseEligibility || '6',
+        attendanceRequireNoDefaultForAutoIncrease:
+          dbConfig.attendanceRequireNoDefaultForAutoIncrease === 'false' ? 'false' : 'true',
       };
       setConfig(fetchedConfig);
       setLogoPreview(fetchedConfig.logoUrl || resolveLogoUrl(''));
@@ -192,6 +204,73 @@ const SystemSettings = () => {
                       onChange={handleInputChange}
                       placeholder="e.g., TZS, USD"
                     />
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/25 p-4">
+                    <div>
+                      <p className="text-sm font-medium">Application fee (field / wallet)</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Amount counted once per loan disbursement to a member. It is for cash-flow and reporting; it does{' '}
+                        <strong>not</strong> add to loan principal. Used when the field wallet flow is enabled.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="applicationFeePerDisbursement">
+                        Application fee per disbursement ({config.currency || 'TZS'})
+                      </Label>
+                      <Input
+                        id="applicationFeePerDisbursement"
+                        name="applicationFeePerDisbursement"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={config.applicationFeePerDisbursement}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/25 p-4">
+                    <div>
+                      <p className="text-sm font-medium">Attendance &amp; loan increase</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Used by the centre attendance feature and the borrower loan-increase eligibility check.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="attendanceMinMeetingsForIncreaseEligibility">
+                        Minimum centre meetings attended (for auto increase)
+                      </Label>
+                      <Input
+                        id="attendanceMinMeetingsForIncreaseEligibility"
+                        name="attendanceMinMeetingsForIncreaseEligibility"
+                        type="number"
+                        min={0}
+                        value={config.attendanceMinMeetingsForIncreaseEligibility}
+                        onChange={handleInputChange}
+                      />
+                    </div>
+                    <div className="flex items-start gap-3 space-y-0">
+                      <Checkbox
+                        id="attendanceRequireNoDefaultForAutoIncrease"
+                        checked={config.attendanceRequireNoDefaultForAutoIncrease === 'true'}
+                        onCheckedChange={(checked) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            attendanceRequireNoDefaultForAutoIncrease: checked === true ? 'true' : 'false',
+                          }))
+                        }
+                      />
+                      <div className="space-y-1">
+                        <Label htmlFor="attendanceRequireNoDefaultForAutoIncrease" className="cursor-pointer font-normal">
+                          Require no defaulted loan for automatic increase eligibility
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          If unchecked, attendance and prior loan can still qualify for the flag; borrowers with a default
+                          still need manager approval.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </>
               )}

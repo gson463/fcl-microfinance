@@ -12,11 +12,12 @@ verify_jwt = false
 [functions.update-user]
 verify_jwt = false
 
+# JWT validated inside function (avoids gateway 401 when client token is valid but gateway rejects).
 [functions.delete-user]
-verify_jwt = true
+verify_jwt = false
 
 [functions.delete-all-other-users]
-verify_jwt = true
+verify_jwt = false
 
 [functions.record-repayment]
 verify_jwt = true

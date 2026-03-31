@@ -23,20 +23,44 @@ Deno.serve(async (req: Request) => {
         },
       );
     }
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return new Response(JSON.stringify({ error: "amount must be a positive number" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { data: loan, error: loanErr } = await supabaseAdmin
       .from("loans")
-      .select("borrower_id")
+      .select("borrower_id, schedule")
       .eq("id", loan_id)
       .single();
     if (loanErr || !loan) throw new Error("Loan not found");
 
+    const payDate = String(actual_payment_date).slice(0, 10);
+
+    const { data: dueRaw, error: dueErr } = await supabaseAdmin.rpc(
+      "scheduled_due_for_payment_date",
+      {
+        p_schedule: loan.schedule,
+        p_payment_date: payDate,
+      },
+    );
+    if (dueErr) throw dueErr;
+
+    const due = Number(dueRaw ?? 0);
+    const prepayment = Math.max(0, amt - due);
+
     const { error: insErr } = await supabaseAdmin.from("repayments").insert({
       loan_id,
       borrower_id: loan.borrower_id,
-      amount: Number(amount),
+      amount: amt,
       officer_id,
       payment_date: actual_payment_date,
       actual_payment_date: actual_payment_date,
+      prepayment_amount: prepayment,
+      scheduled_due_snapshot: due,
     });
     if (insErr) throw insErr;
 
@@ -56,7 +80,12 @@ Deno.serve(async (req: Request) => {
         action: "repayment.record",
         entity_type: "loan",
         entity_id: loan_id,
-        metadata: { amount: Number(amount), actual_payment_date },
+        metadata: {
+          amount: amt,
+          actual_payment_date,
+          prepayment_amount: prepayment,
+          scheduled_due_snapshot: due,
+        },
         ip_address: ip,
         user_agent: req.headers.get("user-agent"),
         device_summary: null,

@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, CheckCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
@@ -166,40 +166,6 @@ const BorrowerManagement = () => {
         }
     };
     
-    const handleMarkAsEligible = async () => {
-        if (selectedBorrowers.size === 0) {
-            toast({ title: 'No Borrowers Selected', description: 'Please select borrowers to mark as eligible.', variant: 'warning' });
-            return;
-        }
-
-        const borrowersToUpdate = borrowers.filter(b => selectedBorrowers.has(b.id) && b.status === 'paid_up');
-        const borrowerIdsToUpdate = borrowersToUpdate.map(b => b.id);
-        const nonEligibleCount = selectedBorrowers.size - borrowerIdsToUpdate.length;
-
-        if (borrowerIdsToUpdate.length === 0) {
-            toast({ title: 'Action Not Allowed', description: 'None of the selected borrowers are in "Paid Up" status.', variant: 'warning' });
-            return;
-        }
-
-        const { error } = await supabase
-            .from('borrowers')
-            .update({ status: 'eligible' })
-            .in('id', borrowerIdsToUpdate);
-
-        if (error) {
-            toast({ title: 'Error', description: error.message, variant: 'destructive' });
-        } else {
-            let successMessage = `${borrowerIdsToUpdate.length} borrower(s) marked as eligible.`;
-            if (nonEligibleCount > 0) {
-                successMessage += ` ${nonEligibleCount} borrower(s) were skipped as they are not "Paid Up".`;
-            }
-            toast({ title: 'Success', description: successMessage });
-            fetchData();
-            setSelectedBorrowers(new Set());
-        }
-    };
-
-
     const handleExportBorrowersCsv = () => {
         if (selectedBorrowers.size === 0) {
             toast({ title: 'No borrowers selected', description: 'Select at least one row.', variant: 'destructive' });
@@ -265,6 +231,7 @@ const BorrowerManagement = () => {
             total: borrowers.length,
             active: borrowers.filter(b => b.status === 'active_loan').length,
             eligible: borrowers.filter(b => b.status === 'eligible').length,
+            pending: borrowers.filter(b => b.status === 'pending').length,
             defaulted: borrowers.filter(b => b.status === 'defaulted').length,
         };
     }, [borrowers]);
@@ -291,10 +258,10 @@ const BorrowerManagement = () => {
                 .maybeSingle();
             setIsSaving(false);
             toast({
-                title: 'Tayari yupo kwenye mfumo',
-                description: `Nambari ya simu au kitambulisho kinatumika tayari na ${dup.first_name} ${dup.surname} (${dup.borrower_id}).${
-                    off?.full_name ? ` Mteja yuko kwa officer: ${off.full_name}.` : ''
-                } Hakuna kusajili tena mtu mmoja mara mbili.`,
+                title: 'Already in the system',
+                description: `Phone or ID is already used by ${dup.first_name} ${dup.surname} (${dup.borrower_id}).${
+                    off?.full_name ? ` Borrower is assigned to officer: ${off.full_name}.` : ''
+                } The same person cannot be registered twice.`,
                 variant: 'destructive',
             });
             return;
@@ -305,7 +272,7 @@ const BorrowerManagement = () => {
             group_id: borrower_type === 'individual' ? null : group_id,
             loan_officer_id: user.id,
             branch_id: user.user_metadata.branch_id,
-            status: editingBorrower ? editingBorrower.status : 'eligible',
+            status: editingBorrower ? editingBorrower.status : 'pending',
         };
 
         let result;
@@ -323,7 +290,7 @@ const BorrowerManagement = () => {
                 toast({
                     title: 'Duplicate',
                     description:
-                        'Nambari ya simu au kitambulisho kimesajiliwa tayari (hata na officer mwingine). Rekebisha au tumia rekodi iliyopo.',
+                        'Phone or ID is already registered (possibly by another officer). Fix the values or use the existing record.',
                     variant: 'destructive',
                 });
             } else {
@@ -394,10 +361,10 @@ const BorrowerManagement = () => {
                     const pk = normalizePhoneKey(row.phone_number);
                     const ik = normalizeIdKey(row.identification_number);
                     if (pk && seenInFile.has(`p:${pk}`)) {
-                        throw new Error(`Faili lina nambari ya simu inayorudiwa (duplicate): ${row.phone_number}`);
+                        throw new Error(`File has duplicate phone number: ${row.phone_number}`);
                     }
                     if (ik && seenInFile.has(`i:${ik}`)) {
-                        throw new Error(`Faili lina nambari ya kitambulisho inayorudiwa: ${row.identification_number}`);
+                        throw new Error(`File has duplicate identification number: ${row.identification_number}`);
                     }
                     if (pk) seenInFile.add(`p:${pk}`);
                     if (ik) seenInFile.add(`i:${ik}`);
@@ -428,7 +395,7 @@ const BorrowerManagement = () => {
                         group_id: group_id,
                         loan_officer_id: user.id,
                         branch_id: user.user_metadata.branch_id,
-                        status: 'eligible',
+                        status: 'pending',
                         borrower_id: `B-${Date.now().toString().slice(-6)}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
                     };
                 });
@@ -464,15 +431,15 @@ const BorrowerManagement = () => {
                 if (imported > 0) {
                     toast({
                         title: 'Import completed',
-                        description: `${imported} wameingizwa.${skipped.length ? ` ${skipped.length} wamerukwa: ${skipped.slice(0, 5).join('; ')}${skipped.length > 5 ? '…' : ''}` : ''}`,
+                        description: `${imported} imported.${skipped.length ? ` ${skipped.length} skipped: ${skipped.slice(0, 5).join('; ')}${skipped.length > 5 ? '…' : ''}` : ''}`,
                     });
                 } else {
                     toast({
-                        title: 'Hakuna aliyeingizwa',
+                        title: 'Nothing imported',
                         description:
                             skipped.length > 0
-                                ? `Wote walikuwa duplicates: ${skipped.slice(0, 3).join('; ')}`
-                                : 'Hakuna rekodi.',
+                                ? `All rows were duplicates: ${skipped.slice(0, 3).join('; ')}`
+                                : 'No records in file.',
                         variant: 'destructive',
                     });
                 }
@@ -493,6 +460,7 @@ const BorrowerManagement = () => {
     const getLoanStatusBadge = (status) => {
       const statusMap = {
         'eligible': 'success',
+        'pending': 'secondary',
         'active_loan': 'warning',
         'defaulted': 'destructive',
         'paid_up': 'default',
@@ -503,6 +471,7 @@ const BorrowerManagement = () => {
     const getStatusText = (status) => {
         const statusTextMap = {
             'eligible': 'Eligible',
+            'pending': 'Pending (manager)',
             'active_loan': 'Active Loan',
             'defaulted': 'Defaulted',
             'paid_up': 'Paid Up',
@@ -530,8 +499,8 @@ const BorrowerManagement = () => {
                                 <DialogHeader>
                                     <DialogTitle>{editingBorrower ? 'Edit' : 'Register'} Borrower</DialogTitle>
                                     <DialogDescription>
-                                        Nambari ya simu na kitambulisho lazima ziwe za kipekee kote mfumo — huzuia mtu mmoja kusajiliwa mara mbili hata kwa
-                                        maofisa tofauti.
+                                        Phone and ID must be unique across the system — this prevents the same person registered twice, even across different officers.
+                                        New borrowers start as <strong>Pending</strong>; only a <strong>branch manager</strong> can mark them <strong>Eligible</strong> for a new loan.
                                     </DialogDescription>
                                 </DialogHeader>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4 max-h-[80vh] overflow-y-auto px-1">
@@ -554,10 +523,11 @@ const BorrowerManagement = () => {
                         </Dialog>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                     <StatCard title="Total Borrowers" value={stats.total} icon={Users} color="text-blue-600" />
                     <StatCard title="Active Loans" value={stats.active} icon={UserCheck} color="text-yellow-600" />
-                    <StatCard title="Eligible for Loan" value={stats.eligible} icon={UserPlusIcon} color="text-green-600" />
+                    <StatCard title="Eligible" value={stats.eligible} icon={UserPlusIcon} color="text-green-600" />
+                    <StatCard title="Pending approval" value={stats.pending} icon={Clock} color="text-slate-500" />
                     <StatCard title="Defaulted" value={stats.defaulted} icon={UserX} color="text-red-600" />
                 </div>
 
@@ -579,6 +549,7 @@ const BorrowerManagement = () => {
                                     <SelectContent>
                                         <SelectItem value="all">All Statuses</SelectItem>
                                         <SelectItem value="eligible">Eligible</SelectItem>
+                                        <SelectItem value="pending">Pending (manager)</SelectItem>
                                         <SelectItem value="active_loan">Active Loan</SelectItem>
                                         <SelectItem value="defaulted">Defaulted</SelectItem>
                                         <SelectItem value="paid_up">Paid Up</SelectItem>
@@ -595,10 +566,6 @@ const BorrowerManagement = () => {
                                     <Button type="button" variant="outline" onClick={handleExportBorrowersCsv}>
                                         <Download className="mr-2 h-4 w-4"/>
                                         Export CSV
-                                    </Button>
-                                    <Button onClick={handleMarkAsEligible} variant="secondary">
-                                        <CheckCircle className="mr-2 h-4 w-4"/>
-                                        Mark as Eligible
                                     </Button>
                                     <Button onClick={handleGenerateLoanTemplate}>
                                         <FileSpreadsheet className="mr-2 h-4 w-4"/>

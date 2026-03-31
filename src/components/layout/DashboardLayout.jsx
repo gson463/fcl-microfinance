@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   Home, Users, Briefcase, DollarSign, Settings, LogOut, Building, UserPlus, 
   BookOpen, GitBranch, ArrowLeftRight, Calendar, Users2, 
-  FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText, Archive
+  FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText, Archive, ClipboardList, Wallet
 } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
@@ -17,12 +17,22 @@ import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { SidebarPaletteMenu } from '@/components/theme/SidebarPaletteMenu';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getSidebarPreset } from '@/lib/sidebarPresets';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+
+function headerProfileInitials(user) {
+  const name = (user?.user_metadata?.full_name || '').trim();
+  if (!name) return 'U';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (parts.length > 1) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0].substring(0, 2).toUpperCase();
+}
 
 const reportsNavLinks = [{ to: '/reports', icon: BarChart3, text: 'Reports' }];
 
 /** Admin primary nav (under "Menu") */
 const adminMainLinks = [
   { to: '/admin/dashboard', icon: Home, text: 'Dashboard' },
+  { to: '/admin/field-wallet', icon: Wallet, text: 'Field wallet' },
   { to: '/admin/branches', icon: GitBranch, text: 'Branches' },
   { to: '/admin/users', icon: Users, text: 'Users' },
   { to: '/admin/borrowers', icon: Users2, text: 'Borrowers' },
@@ -44,16 +54,20 @@ const adminSystemLinks = [
 
 const managerLinks = [
   { to: '/manager/dashboard', icon: Home, text: 'Dashboard' },
+  { to: '/manager/field-wallet', icon: Wallet, text: 'Field wallet' },
   { to: '/manager/loan-officers', icon: UserPlus, text: 'Loan Officers' },
+  { to: '/manager/borrowers', icon: Users, text: 'Borrowers' },
   { to: '/manager/loans', icon: Briefcase, text: 'Loans' },
   { to: '/manager/loan-requests', icon: FileText, text: 'Loan Requests' },
   { to: '/manager/repayment-management', icon: DollarSign, text: 'Repayments' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
+  { to: '/manager/settings', icon: Settings, text: 'Settings' },
 ];
 
 const officerLinks = [
   { to: '/officer/dashboard', icon: Home, text: 'Dashboard' },
+  { to: '/officer/field-wallet', icon: Wallet, text: 'Field wallet' },
   { to: '/officer/centers-groups', icon: Building, text: 'Centers & Groups' },
   { to: '/officer/borrowers', icon: Users, text: 'Borrowers' },
   { to: '/officer/loans', icon: Briefcase, text: 'Loans' },
@@ -62,6 +76,7 @@ const officerLinks = [
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
   { to: '/officer/expenses', icon: BookOpen, text: 'Expenses' },
+  { to: '/officer/attendance', icon: ClipboardList, text: 'Attendance' },
 ];
 
 const SidebarLink = ({ to, icon: Icon, text, collapsed }) => (
@@ -142,6 +157,8 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
   const toggleCollapse = () => setIsCollapsed(!isCollapsed);
+
+  const profilePhotoUrl = user?.user_metadata?.photoUrl || null;
 
   return (
     <>
@@ -327,7 +344,7 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
                 to="/profile"
                 className={({ isActive }) =>
                   cn(
-                    'flex h-10 w-10 items-center justify-center rounded-xl border transition-colors',
+                    'flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl border transition-colors',
                     isActive
                       ? 'border-brand-gold bg-brand-gold/20 text-brand-gold'
                       : 'border-white/15 bg-white/5 text-brand-gold/90 hover:bg-white/10 hover:text-brand-gold'
@@ -336,7 +353,16 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
                 aria-label="Profile"
                 title="Profile"
               >
-                <UserCog className="h-5 w-5" strokeWidth={2} />
+                {profilePhotoUrl ? (
+                  <Avatar className="h-9 w-9">
+                    <AvatarImage src={profilePhotoUrl} alt="" className="object-cover" />
+                    <AvatarFallback className="bg-brand-gold/20 text-xs font-semibold text-brand-gold">
+                      {headerProfileInitials(user)}
+                    </AvatarFallback>
+                  </Avatar>
+                ) : (
+                  <UserCog className="h-5 w-5" strokeWidth={2} />
+                )}
               </NavLink>
               <img
                 src={resolveLogoUrl(systemConfig.logoUrl)}
@@ -370,7 +396,16 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
                   )
                 }
               >
-                <UserCog className="h-4 w-4 shrink-0" strokeWidth={2} />
+                {profilePhotoUrl ? (
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={profilePhotoUrl} alt="" className="object-cover" />
+                    <AvatarFallback className="bg-brand-gold/15 text-xs font-semibold text-brand-gold-deep dark:text-brand-gold">
+                      {headerProfileInitials(user)}
+                    </AvatarFallback>
+                  </Avatar>
+                ) : (
+                  <UserCog className="h-4 w-4 shrink-0" strokeWidth={2} />
+                )}
                 <span>Profile</span>
               </NavLink>
             </div>
