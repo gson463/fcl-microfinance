@@ -48,6 +48,10 @@ const DashboardMetricDrilldown = () => {
 	const [dateRange, setDateRange] = useState(defaultDashboardRange);
 	const [filterBranchId, setFilterBranchId] = useState('');
 	const [filterOfficerId, setFilterOfficerId] = useState('');
+	const [filterCenterId, setFilterCenterId] = useState('');
+	const [filterGroupId, setFilterGroupId] = useState('');
+	const [centers, setCenters] = useState([]);
+	const [groups, setGroups] = useState([]);
 	const [branches, setBranches] = useState([]);
 	const [officers, setOfficers] = useState([]);
 	const [managerBranchName, setManagerBranchName] = useState('');
@@ -104,9 +108,11 @@ const DashboardMetricDrilldown = () => {
 		if (isAdminRoute) {
 			setFilterBranchId(searchParams.get('branch') || '');
 			setFilterOfficerId(searchParams.get('officer') || '');
-		} else 		if (isManagerRoute) {
+		} else if (isManagerRoute) {
 			setFilterOfficerId(searchParams.get('officer') || '');
 		}
+		setFilterCenterId(searchParams.get('center') || '');
+		setFilterGroupId(searchParams.get('group') || '');
 	}, [searchParams, isAdminRoute, isManagerRoute]);
 
 	useEffect(() => {
@@ -155,6 +161,57 @@ const DashboardMetricDrilldown = () => {
 		};
 	}, [isManagerRoute, managerBranchId]);
 
+	/** Centers for selected officer (admin/manager) or signed-in officer (officer route). */
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			if (isOfficerRoute && user?.id) {
+				let q = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
+				if (officerBranchId) q = q.eq('branch_id', officerBranchId);
+				const { data } = await q;
+				if (!cancelled) setCenters(data || []);
+				return;
+			}
+			if (!filterOfficerId || (!isAdminRoute && !isManagerRoute)) {
+				if (!cancelled) setCenters([]);
+				return;
+			}
+			let q = supabase.from('centers').select('id, name').eq('loan_officer_id', filterOfficerId).order('name');
+			if (isAdminRoute && filterBranchId) q = q.eq('branch_id', filterBranchId);
+			if (isManagerRoute && managerBranchId) q = q.eq('branch_id', managerBranchId);
+			const { data } = await q;
+			if (!cancelled) setCenters(data || []);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [
+		isOfficerRoute,
+		user?.id,
+		officerBranchId,
+		filterOfficerId,
+		isAdminRoute,
+		isManagerRoute,
+		filterBranchId,
+		managerBranchId,
+	]);
+
+	/** Groups for selected center. */
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			if (!filterCenterId) {
+				if (!cancelled) setGroups([]);
+				return;
+			}
+			const { data } = await supabase.from('groups').select('id, name').eq('center_id', filterCenterId).order('name');
+			if (!cancelled) setGroups(data || []);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [filterCenterId]);
+
 	const persistQuery = useCallback(
 		(updates) => {
 			const next = new URLSearchParams(searchParams);
@@ -171,10 +228,38 @@ const DashboardMetricDrilldown = () => {
 					if (updates.officerId) next.set('officer', updates.officerId);
 					else next.delete('officer');
 				}
+				if ('centerId' in updates) {
+					if (updates.centerId) next.set('center', updates.centerId);
+					else next.delete('center');
+				}
+				if ('groupId' in updates) {
+					if (updates.groupId) next.set('group', updates.groupId);
+					else next.delete('group');
+				}
 			}
-			if (isManagerRoute && 'officerId' in updates) {
-				if (updates.officerId) next.set('officer', updates.officerId);
-				else next.delete('officer');
+			if (isManagerRoute) {
+				if ('officerId' in updates) {
+					if (updates.officerId) next.set('officer', updates.officerId);
+					else next.delete('officer');
+				}
+				if ('centerId' in updates) {
+					if (updates.centerId) next.set('center', updates.centerId);
+					else next.delete('center');
+				}
+				if ('groupId' in updates) {
+					if (updates.groupId) next.set('group', updates.groupId);
+					else next.delete('group');
+				}
+			}
+			if (isOfficerRoute) {
+				if ('centerId' in updates) {
+					if (updates.centerId) next.set('center', updates.centerId);
+					else next.delete('center');
+				}
+				if ('groupId' in updates) {
+					if (updates.groupId) next.set('group', updates.groupId);
+					else next.delete('group');
+				}
 			}
 			if ('days' in updates) {
 				if (updates.days != null && updates.days !== '') next.set('days', String(updates.days));
@@ -182,7 +267,7 @@ const DashboardMetricDrilldown = () => {
 			}
 			setSearchParams(next, { replace: true });
 		},
-		[searchParams, setSearchParams, isAdminRoute, isManagerRoute]
+		[searchParams, setSearchParams, isAdminRoute, isManagerRoute, isOfficerRoute]
 	);
 
 	const officersForBranch = useMemo(() => {
@@ -250,6 +335,8 @@ const DashboardMetricDrilldown = () => {
 				p_branch_id: branchIdForRpc || null,
 				p_officer_id: officerIdForRpc || null,
 				p_nearing_days: horizon,
+				p_center_id: filterCenterId || null,
+				p_group_id: filterGroupId || null,
 			});
 
 			if (error) throw error;
@@ -298,6 +385,8 @@ const DashboardMetricDrilldown = () => {
 		dateRange?.from,
 		dateRange?.to,
 		nearingDays,
+		filterCenterId,
+		filterGroupId,
 	]);
 
 	useEffect(() => {
@@ -313,6 +402,8 @@ const DashboardMetricDrilldown = () => {
 		isOfficerRoute,
 		user?.id,
 		nearingDays,
+		filterCenterId,
+		filterGroupId,
 	]);
 
 	useEffect(() => {
@@ -380,8 +471,18 @@ const DashboardMetricDrilldown = () => {
 							if (isAdminRoute) {
 								if (filterBranchId) q.set('branch', filterBranchId);
 								if (filterOfficerId) q.set('officer', filterOfficerId);
+								if (filterCenterId) q.set('center', filterCenterId);
+								if (filterGroupId) q.set('group', filterGroupId);
 							}
-							if (isManagerRoute && filterOfficerId) q.set('officer', filterOfficerId);
+							if (isManagerRoute) {
+								if (filterOfficerId) q.set('officer', filterOfficerId);
+								if (filterCenterId) q.set('center', filterCenterId);
+								if (filterGroupId) q.set('group', filterGroupId);
+							}
+							if (isOfficerRoute) {
+								if (filterCenterId) q.set('center', filterCenterId);
+								if (filterGroupId) q.set('group', filterGroupId);
+							}
 							if (isOfficerRoute) navigate(`/officer/dashboard?${q.toString()}`);
 							else if (isManagerRoute) navigate(`/manager/dashboard?${q.toString()}`);
 							else navigate(`/admin/dashboard?${q.toString()}`);
@@ -456,7 +557,9 @@ const DashboardMetricDrilldown = () => {
 											const next = v === 'all' ? '' : v;
 											setFilterBranchId(next);
 											setFilterOfficerId('');
-											persistQuery({ branchId: next, officerId: '' });
+											setFilterCenterId('');
+											setFilterGroupId('');
+											persistQuery({ branchId: next, officerId: '', centerId: '', groupId: '' });
 										}}
 									>
 										<SelectTrigger>
@@ -479,7 +582,9 @@ const DashboardMetricDrilldown = () => {
 										onValueChange={(v) => {
 											const next = v === 'all' ? '' : v;
 											setFilterOfficerId(next);
-											persistQuery({ officerId: next });
+											setFilterCenterId('');
+											setFilterGroupId('');
+											persistQuery({ officerId: next, centerId: '', groupId: '' });
 										}}
 									>
 										<SelectTrigger>
@@ -495,7 +600,59 @@ const DashboardMetricDrilldown = () => {
 										</SelectContent>
 									</Select>
 								</div>
-								{(filterBranchId || filterOfficerId) && (
+								{filterOfficerId && (
+									<>
+										<div className="w-full min-w-[200px] sm:w-[220px]">
+											<p className="mb-1.5 text-xs font-medium text-neutral-500">Center</p>
+											<Select
+												value={filterCenterId || 'all'}
+												onValueChange={(v) => {
+													const next = v === 'all' ? '' : v;
+													setFilterCenterId(next);
+													setFilterGroupId('');
+													persistQuery({ centerId: next, groupId: '' });
+												}}
+											>
+												<SelectTrigger>
+													<SelectValue placeholder="All centers" />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="all">All centers</SelectItem>
+													{centers.map((c) => (
+														<SelectItem key={c.id} value={c.id}>
+															{c.name}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+										<div className="w-full min-w-[200px] sm:w-[220px]">
+											<p className="mb-1.5 text-xs font-medium text-neutral-500">Group</p>
+											<Select
+												value={filterGroupId || 'all'}
+												disabled={!filterCenterId}
+												onValueChange={(v) => {
+													const next = v === 'all' ? '' : v;
+													setFilterGroupId(next);
+													persistQuery({ groupId: next });
+												}}
+											>
+												<SelectTrigger>
+													<SelectValue placeholder={filterCenterId ? 'All groups' : 'Pick a center first'} />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="all">All groups</SelectItem>
+													{groups.map((g) => (
+														<SelectItem key={g.id} value={g.id}>
+															{g.name}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+									</>
+								)}
+								{(filterBranchId || filterOfficerId || filterCenterId || filterGroupId) && (
 									<Button
 										type="button"
 										variant="ghost"
@@ -504,7 +661,9 @@ const DashboardMetricDrilldown = () => {
 										onClick={() => {
 											setFilterBranchId('');
 											setFilterOfficerId('');
-											persistQuery({ branchId: '', officerId: '' });
+											setFilterCenterId('');
+											setFilterGroupId('');
+											persistQuery({ branchId: '', officerId: '', centerId: '', groupId: '' });
 										}}
 									>
 										Clear filters
@@ -528,7 +687,9 @@ const DashboardMetricDrilldown = () => {
 										onValueChange={(v) => {
 											const next = v === 'all' ? '' : v;
 											setFilterOfficerId(next);
-											persistQuery({ officerId: next });
+											setFilterCenterId('');
+											setFilterGroupId('');
+											persistQuery({ officerId: next, centerId: '', groupId: '' });
 										}}
 									>
 										<SelectTrigger>
@@ -545,6 +706,58 @@ const DashboardMetricDrilldown = () => {
 									</Select>
 								</div>
 								{filterOfficerId && (
+									<>
+										<div className="w-full min-w-[200px] sm:w-[220px]">
+											<p className="mb-1.5 text-xs font-medium text-neutral-500">Center</p>
+											<Select
+												value={filterCenterId || 'all'}
+												onValueChange={(v) => {
+													const next = v === 'all' ? '' : v;
+													setFilterCenterId(next);
+													setFilterGroupId('');
+													persistQuery({ centerId: next, groupId: '' });
+												}}
+											>
+												<SelectTrigger>
+													<SelectValue placeholder="All centers" />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="all">All centers</SelectItem>
+													{centers.map((c) => (
+														<SelectItem key={c.id} value={c.id}>
+															{c.name}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+										<div className="w-full min-w-[200px] sm:w-[220px]">
+											<p className="mb-1.5 text-xs font-medium text-neutral-500">Group</p>
+											<Select
+												value={filterGroupId || 'all'}
+												disabled={!filterCenterId}
+												onValueChange={(v) => {
+													const next = v === 'all' ? '' : v;
+													setFilterGroupId(next);
+													persistQuery({ groupId: next });
+												}}
+											>
+												<SelectTrigger>
+													<SelectValue placeholder={filterCenterId ? 'All groups' : 'Pick a center first'} />
+												</SelectTrigger>
+												<SelectContent>
+													<SelectItem value="all">All groups</SelectItem>
+													{groups.map((g) => (
+														<SelectItem key={g.id} value={g.id}>
+															{g.name}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+										</div>
+									</>
+								)}
+								{(filterOfficerId || filterCenterId || filterGroupId) && (
 									<Button
 										type="button"
 										variant="ghost"
@@ -552,10 +765,80 @@ const DashboardMetricDrilldown = () => {
 										className="text-neutral-600"
 										onClick={() => {
 											setFilterOfficerId('');
-											persistQuery({ officerId: '' });
+											setFilterCenterId('');
+											setFilterGroupId('');
+											persistQuery({ officerId: '', centerId: '', groupId: '' });
 										}}
 									>
-										Clear officer
+										Clear officer &amp; location
+									</Button>
+								)}
+							</>
+						)}
+
+						{isOfficerRoute && (
+							<>
+								<div className="w-full min-w-[200px] sm:w-[220px]">
+									<p className="mb-1.5 text-xs font-medium text-neutral-500">Center</p>
+									<Select
+										value={filterCenterId || 'all'}
+										onValueChange={(v) => {
+											const next = v === 'all' ? '' : v;
+											setFilterCenterId(next);
+											setFilterGroupId('');
+											persistQuery({ centerId: next, groupId: '' });
+										}}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="All centers" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All centers</SelectItem>
+											{centers.map((c) => (
+												<SelectItem key={c.id} value={c.id}>
+													{c.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+								<div className="w-full min-w-[200px] sm:w-[220px]">
+									<p className="mb-1.5 text-xs font-medium text-neutral-500">Group</p>
+									<Select
+										value={filterGroupId || 'all'}
+										disabled={!filterCenterId}
+										onValueChange={(v) => {
+											const next = v === 'all' ? '' : v;
+											setFilterGroupId(next);
+											persistQuery({ groupId: next });
+										}}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder={filterCenterId ? 'All groups' : 'Pick a center first'} />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="all">All groups</SelectItem>
+											{groups.map((g) => (
+												<SelectItem key={g.id} value={g.id}>
+													{g.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+								{(filterCenterId || filterGroupId) && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="text-neutral-600"
+										onClick={() => {
+											setFilterCenterId('');
+											setFilterGroupId('');
+											persistQuery({ centerId: '', groupId: '' });
+										}}
+									>
+										Clear center / group
 									</Button>
 								)}
 							</>
@@ -574,7 +857,7 @@ const DashboardMetricDrilldown = () => {
 									<strong>{nearingDays}</strong> days.
 								</span>
 							)}
-							{isAdminRoute && (filterBranchId || filterOfficerId) && (
+							{isAdminRoute && (filterBranchId || filterOfficerId || filterCenterId || filterGroupId) && (
 								<span className="block text-neutral-600 dark:text-neutral-400">
 									{filterBranchId && (
 										<>
@@ -585,11 +868,45 @@ const DashboardMetricDrilldown = () => {
 									{filterOfficerId && (
 										<>Officer: {officers.find((o) => o.id === filterOfficerId)?.full_name || filterOfficerId}</>
 									)}
+									{filterCenterId && (
+										<>
+											{' '}
+											· Center: {centers.find((c) => c.id === filterCenterId)?.name || '—'}
+										</>
+									)}
+									{filterGroupId && (
+										<>
+											{' '}
+											· Group: {groups.find((g) => g.id === filterGroupId)?.name || '—'}
+										</>
+									)}
 								</span>
 							)}
-							{isManagerRoute && filterOfficerId && (
+							{isManagerRoute && (filterOfficerId || filterCenterId || filterGroupId) && (
 								<span className="block text-neutral-600 dark:text-neutral-400">
-									Officer: {officers.find((o) => o.id === filterOfficerId)?.full_name || filterOfficerId}
+									{filterOfficerId && (
+										<>Officer: {officers.find((o) => o.id === filterOfficerId)?.full_name || filterOfficerId}</>
+									)}
+									{filterCenterId && (
+										<>
+											{filterOfficerId ? ' · ' : ''}Center: {centers.find((c) => c.id === filterCenterId)?.name || '—'}
+										</>
+									)}
+									{filterGroupId && (
+										<>
+											{' · '}Group: {groups.find((g) => g.id === filterGroupId)?.name || '—'}
+										</>
+									)}
+								</span>
+							)}
+							{isOfficerRoute && (filterCenterId || filterGroupId) && (
+								<span className="block text-neutral-600 dark:text-neutral-400">
+									{filterCenterId && <>Center: {centers.find((c) => c.id === filterCenterId)?.name || '—'}</>}
+									{filterGroupId && (
+										<>
+											{filterCenterId ? ' · ' : ''}Group: {groups.find((g) => g.id === filterGroupId)?.name || '—'}
+										</>
+									)}
 								</span>
 							)}
 						</CardDescription>
