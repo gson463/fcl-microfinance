@@ -17,20 +17,67 @@ import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
 import { Checkbox } from '@/components/ui/checkbox';
 import { exportObjectsToCsv } from '@/lib/tableExport';
+import { cn } from '@/lib/utils';
+import {
+    NIDA_DIGIT_LENGTH,
+    VOTERS_ID_MAX_INPUT_LENGTH,
+    DRIVER_LICENSE_DIGIT_LENGTH,
+    PHONE_DIGIT_LENGTH,
+    normalizeNidaDigits,
+    normalizeVotersIdInput,
+    normalizeDriversLicenseDigits,
+    normalizePhoneDigitsMax10,
+    normalizePersonNameLettersOnly,
+    validateNidaIdentificationNumber,
+    validateVotersIdentificationNumber,
+    validateDriversLicenseIdentificationNumber,
+    validatePhoneNumberTenDigits,
+    isNationalIdIdentificationType,
+    isVotersIdIdentificationType,
+    isDriversLicenseIdentificationType,
+} from '@/lib/borrowerIdValidation';
 
 const PAGE_SIZE = 25;
 
-/** Match DB normalize_borrower_phone / normalize_borrower_id_number for client-side checks */
-function normalizePhoneKey(p) {
-    return String(p ?? '')
-        .replace(/\s/g, '')
-        .toLowerCase()
-        .trim();
+function FieldRequired() {
+    return <span className="text-destructive ml-0.5" aria-hidden>*</span>;
 }
+
+/** Match DB normalize_borrower_id_number for client-side checks */
 function normalizeIdKey(p) {
     return String(p ?? '')
         .trim()
         .toLowerCase();
+}
+
+function getIdentificationNumberFieldLabel(identificationType) {
+    switch (identificationType) {
+        case 'national_id':
+            return 'NIDA number';
+        case 'passport':
+            return 'Passport number';
+        case 'drivers_license':
+            return 'Driver\'s licence number';
+        case 'voters_id':
+            return 'Voter\'s ID number';
+        default:
+            return 'ID number';
+    }
+}
+
+/** Canonical ID string for duplicate detection within import file */
+function idKeyForImportDuplicateCheck(row) {
+    if (isNationalIdIdentificationType(row.identification_type)) {
+        return normalizeNidaDigits(row.identification_number);
+    }
+    if (isVotersIdIdentificationType(row.identification_type)) {
+        const v = validateVotersIdentificationNumber(String(row.identification_number ?? ''));
+        return v.ok ? v.value : String(row.identification_number ?? '');
+    }
+    if (isDriversLicenseIdentificationType(row.identification_type)) {
+        return normalizeDriversLicenseDigits(row.identification_number);
+    }
+    return row.identification_number;
 }
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
@@ -51,6 +98,7 @@ const BorrowerManagement = () => {
     const navigate = useNavigate();
     const [borrowers, setBorrowers] = useState([]);
     const [groups, setGroups] = useState([]);
+    const [centers, setCenters] = useState([]);
     const [loanProducts, setLoanProducts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -66,7 +114,20 @@ const BorrowerManagement = () => {
     const [page, setPage] = useState(1);
 
     const defaultFormState = {
-        first_name: '', surname: '', gender: 'male', phone_number: '', address: '', business_name: '', business_location: '', group_id: null, identification_type: 'national_id', identification_number: '', borrower_type: 'individual'
+        first_name: '',
+        surname: '',
+        gender: 'male',
+        phone_number: '',
+        address: '',
+        business_name: '',
+        business_location: '',
+        group_id: null,
+        center_id: null,
+        identification_type: 'national_id',
+        identification_number: '',
+        borrower_type: 'group',
+        guarantor_name: '',
+        guarantor_phone: '',
     };
 
     const [formData, setFormData] = useState(defaultFormState);
@@ -100,14 +161,25 @@ const BorrowerManagement = () => {
             .select('*')
             .eq('loan_officer_id', user.id);
 
+        const { data: centersData, error: centersError } = await supabase
+            .from('centers')
+            .select('id, name')
+            .eq('loan_officer_id', user.id)
+            .order('name');
+
         const { data: productsData, error: productsError } = await supabase
             .from('loan_products').select('name').eq('status', 'active');
 
-        if (borrowersError || groupsError || productsError) {
-            toast({ title: 'Error fetching data', description: borrowersError?.message || groupsError?.message || productsError.message, variant: 'destructive' });
+        if (borrowersError || groupsError || centersError || productsError) {
+            toast({
+                title: 'Error fetching data',
+                description: borrowersError?.message || groupsError?.message || centersError?.message || productsError.message,
+                variant: 'destructive',
+            });
         } else {
             setBorrowers(borrowersData || []);
             setGroups(groupsData || []);
+            setCenters(centersData || []);
             setLoanProducts(productsData || []);
         }
         setLoading(false);
@@ -125,7 +197,9 @@ const BorrowerManagement = () => {
                 b.surname.toLowerCase().includes(query) ||
                 (b.borrower_id && b.borrower_id.toLowerCase().includes(query)) ||
                 (b.phone_number && b.phone_number.includes(query)) ||
-                (b.identification_number && b.identification_number.includes(query));
+                (b.identification_number && b.identification_number.includes(query)) ||
+                (b.guarantor_name && b.guarantor_name.toLowerCase().includes(query)) ||
+                (b.guarantor_phone && String(b.guarantor_phone).includes(query));
             const matchesGroup = groupFilter === 'all' || b.group_id === groupFilter;
             const matchesStatus = statusFilter === 'all' || b.status === statusFilter;
             return matchesSearch && matchesGroup && matchesStatus;
@@ -142,6 +216,11 @@ const BorrowerManagement = () => {
     }, [filteredBorrowers, page]);
 
     const totalPages = Math.max(1, Math.ceil(filteredBorrowers.length / PAGE_SIZE));
+
+    const groupsInSelectedCenter = useMemo(() => {
+        if (!formData.center_id) return [];
+        return groups.filter((g) => g.center_id === formData.center_id);
+    }, [groups, formData.center_id]);
 
     const handleSelectBorrower = (borrowerId, isSelected) => {
         const newSelection = new Set(selectedBorrowers);
@@ -178,6 +257,8 @@ const BorrowerManagement = () => {
             { header: 'Surname', accessor: 'surname' },
             { header: 'Phone', accessor: (r) => r.phone_number ?? '' },
             { header: 'ID number', accessor: (r) => r.identification_number ?? '' },
+            { header: 'Guarantor name', accessor: (r) => r.guarantor_name ?? '' },
+            { header: 'Guarantor phone', accessor: (r) => r.guarantor_phone ?? '' },
             { header: 'Status', accessor: 'status' },
         ], rows);
         toast({ title: 'Exported', description: `${rows.length} borrower(s) to CSV.` });
@@ -238,16 +319,89 @@ const BorrowerManagement = () => {
 
     const handleSave = async () => {
         setIsSaving(true);
-        const { first_name, surname, phone_number, identification_number, group_id, borrower_type } = formData;
-        if (!first_name || !surname || !phone_number || !identification_number || (borrower_type === 'group' && !group_id)) {
-            toast({ title: 'Error', description: 'Please fill all required fields.', variant: 'destructive' });
+        const { first_name, surname, phone_number, identification_number, group_id, borrower_type, center_id } = formData;
+        const trim = (v) => String(v ?? '').trim();
+
+        const missing = [];
+        if (!trim(first_name)) missing.push('First name');
+        if (!trim(surname)) missing.push('Surname');
+        if (!formData.gender) missing.push('Gender');
+        if (!trim(formData.address)) missing.push('Address');
+        if (!trim(formData.business_name)) missing.push('Business name');
+        if (!trim(formData.business_location)) missing.push('Business location');
+        if (!trim(formData.guarantor_name)) missing.push('Guarantor name');
+        if (!formData.identification_type) missing.push('ID type');
+        if (!String(identification_number ?? '').trim()) missing.push('ID number');
+        if (borrower_type === 'group') {
+            if (!center_id) missing.push('Centre');
+            if (!group_id) missing.push('Group');
+        }
+
+        if (missing.length > 0) {
+            toast({
+                title: 'Missing information',
+                description: `Please complete: ${missing.join(', ')}.`,
+                variant: 'destructive',
+            });
             setIsSaving(false);
             return;
         }
 
+        const phoneCheck = validatePhoneNumberTenDigits(phone_number);
+        if (!phoneCheck.ok) {
+            toast({ title: 'Invalid phone', description: phoneCheck.error, variant: 'destructive' });
+            setIsSaving(false);
+            return;
+        }
+
+        const guarantorPhoneCheck = validatePhoneNumberTenDigits(formData.guarantor_phone);
+        if (!guarantorPhoneCheck.ok) {
+            toast({ title: 'Invalid guarantor phone', description: guarantorPhoneCheck.error, variant: 'destructive' });
+            setIsSaving(false);
+            return;
+        }
+
+        if (borrower_type === 'group') {
+            const g = groups.find((x) => x.id === group_id);
+            if (!g || g.center_id !== center_id) {
+                toast({ title: 'Error', description: 'The selected group must belong to the selected centre.', variant: 'destructive' });
+                setIsSaving(false);
+                return;
+            }
+        }
+
+        let idNumberForSave = identification_number;
+        if (isNationalIdIdentificationType(formData.identification_type)) {
+            const nida = validateNidaIdentificationNumber(identification_number);
+            if (!nida.ok) {
+                toast({ title: 'Invalid National ID', description: nida.error, variant: 'destructive' });
+                setIsSaving(false);
+                return;
+            }
+            idNumberForSave = nida.value;
+        } else if (isVotersIdIdentificationType(formData.identification_type)) {
+            const vid = validateVotersIdentificationNumber(identification_number);
+            if (!vid.ok) {
+                toast({ title: "Invalid Voter's ID", description: vid.error, variant: 'destructive' });
+                setIsSaving(false);
+                return;
+            }
+            idNumberForSave = vid.value;
+        } else if (isDriversLicenseIdentificationType(formData.identification_type)) {
+            const dl = validateDriversLicenseIdentificationNumber(identification_number);
+            if (!dl.ok) {
+                toast({ title: "Invalid Driver's License", description: dl.error, variant: 'destructive' });
+                setIsSaving(false);
+                return;
+            }
+            idNumberForSave = dl.value;
+        } else if (formData.identification_type === 'passport') {
+            idNumberForSave = String(identification_number).trim();
+        }
+
         const dup = await fetchDuplicateBorrower(
-            phone_number,
-            identification_number,
+            phoneCheck.value,
+            idNumberForSave,
             editingBorrower ? editingBorrower.id : null
         );
         if (dup) {
@@ -267,12 +421,22 @@ const BorrowerManagement = () => {
             return;
         }
 
+        const guarantorName = normalizePersonNameLettersOnly(formData.guarantor_name).trim();
+        const guarantorPhone = guarantorPhoneCheck.value;
+
         const payload = {
             ...formData,
+            first_name: normalizePersonNameLettersOnly(formData.first_name).trim(),
+            surname: normalizePersonNameLettersOnly(formData.surname).trim(),
+            phone_number: phoneCheck.value,
+            identification_number: idNumberForSave,
             group_id: borrower_type === 'individual' ? null : group_id,
+            center_id: borrower_type === 'group' ? center_id : null,
+            guarantor_name: guarantorName,
+            guarantor_phone: guarantorPhone,
             loan_officer_id: user.id,
             branch_id: user.user_metadata.branch_id,
-            status: editingBorrower ? editingBorrower.status : 'pending',
+            status: editingBorrower ? editingBorrower.status : 'eligible',
         };
 
         let result;
@@ -316,7 +480,25 @@ const BorrowerManagement = () => {
     
     const handleEdit = (borrower) => {
         setEditingBorrower(borrower);
-        setFormData({ ...defaultFormState, ...borrower, group_id: borrower.group_id || null });
+        let center_id = borrower.center_id || null;
+        const group_id = borrower.group_id || null;
+        if (!center_id && group_id) {
+            const g = groups.find((x) => x.id === group_id);
+            if (g?.center_id) center_id = g.center_id;
+        }
+        let idNum = borrower.identification_number ?? '';
+        if (borrower.identification_type === 'voters_id' && idNum.charAt(0) === 't') {
+            idNum = `T${idNum.slice(1)}`;
+        }
+        setFormData({
+            ...defaultFormState,
+            ...borrower,
+            identification_number: idNum,
+            group_id,
+            center_id,
+            guarantor_name: borrower.guarantor_name ?? '',
+            guarantor_phone: borrower.guarantor_phone ?? '',
+        });
         setDialogOpen(true);
     };
 
@@ -331,8 +513,11 @@ const BorrowerManagement = () => {
             business_location: 'Kariakoo',
             identification_type: 'national_id',
             identification_number: '12345678901234567890',
-            borrower_type: 'group', // or 'individual'
-            group_name: 'Upendo Group' // Required if borrower_type is 'group'
+            borrower_type: 'group',
+            center_name: 'My Centre Name',
+            group_name: 'Upendo Group',
+            guarantor_name: 'Jane Doe',
+            guarantor_phone: '0755123456',
         }];
         const worksheet = XLSX.utils.json_to_sheet(templateData);
         const workbook = XLSX.utils.book_new();
@@ -354,12 +539,14 @@ const BorrowerManagement = () => {
                 const worksheet = workbook.Sheets[sheetName];
                 const json = XLSX.utils.sheet_to_json(worksheet);
 
-                const groupsMap = new Map(groups.map(g => [g.name.toLowerCase(), g.id]));
+                const centersMap = new Map(centers.map((c) => [c.name.toLowerCase(), c.id]));
 
                 const seenInFile = new Set();
-                for (const row of json) {
-                    const pk = normalizePhoneKey(row.phone_number);
-                    const ik = normalizeIdKey(row.identification_number);
+                for (let idx = 0; idx < json.length; idx++) {
+                    const row = json[idx];
+                    const pk = normalizePhoneDigitsMax10(String(row.phone_number ?? ''));
+                    const idRaw = idKeyForImportDuplicateCheck(row);
+                    const ik = normalizeIdKey(idRaw);
                     if (pk && seenInFile.has(`p:${pk}`)) {
                         throw new Error(`File has duplicate phone number: ${row.phone_number}`);
                     }
@@ -371,31 +558,101 @@ const BorrowerManagement = () => {
                 }
 
                 const newBorrowers = json.map((row, idx) => {
-                    const borrower_type = row.borrower_type?.toLowerCase() || 'individual';
+                    const borrower_type = row.borrower_type?.toLowerCase() || 'group';
                     let group_id = null;
+                    let center_id = null;
                     if (borrower_type === 'group') {
-                        const groupName = row.group_name?.toLowerCase();
-                        if (!groupName || !groupsMap.has(groupName)) {
-                            throw new Error(`Group '${row.group_name}' not found for borrower ${row.first_name}. Please create the group first.`);
+                        const centerName = String(row.center_name ?? '')
+                            .trim()
+                            .toLowerCase();
+                        const groupName = String(row.group_name ?? '')
+                            .trim()
+                            .toLowerCase();
+                        if (!centerName || !centersMap.has(centerName)) {
+                            throw new Error(
+                                `Row ${idx + 1}: centre '${row.center_name || ''}' not found or missing. Use the exact centre name from Centers & Groups.`
+                            );
                         }
-                        group_id = groupsMap.get(groupName);
+                        center_id = centersMap.get(centerName);
+                        const match = groups.find(
+                            (g) => g.center_id === center_id && g.name.toLowerCase() === groupName
+                        );
+                        if (!groupName || !match) {
+                            throw new Error(
+                                `Row ${idx + 1}: group '${row.group_name || ''}' not found in that centre for ${row.first_name}.`
+                            );
+                        }
+                        group_id = match.id;
                     }
 
+                    const phoneImp = validatePhoneNumberTenDigits(String(row.phone_number ?? ''));
+                    if (!phoneImp.ok) {
+                        throw new Error(`Row ${idx + 1}: ${phoneImp.error}`);
+                    }
+                    const guarantorPh = validatePhoneNumberTenDigits(String(row.guarantor_phone ?? ''));
+                    if (!guarantorPh.ok) {
+                        throw new Error(`Row ${idx + 1}: ${guarantorPh.error}`);
+                    }
+                    if (!String(row.address ?? '').trim()) {
+                        throw new Error(`Row ${idx + 1}: Address is required.`);
+                    }
+                    if (!String(row.business_name ?? '').trim()) {
+                        throw new Error(`Row ${idx + 1}: Business name is required.`);
+                    }
+                    if (!String(row.business_location ?? '').trim()) {
+                        throw new Error(`Row ${idx + 1}: Business location is required.`);
+                    }
+                    if (!normalizePersonNameLettersOnly(String(row.guarantor_name ?? '')).trim()) {
+                        throw new Error(`Row ${idx + 1}: Guarantor name is required.`);
+                    }
+
+                    let idNum = String(row.identification_number);
+                    if (isNationalIdIdentificationType(row.identification_type)) {
+                        const nida = validateNidaIdentificationNumber(idNum);
+                        if (!nida.ok) {
+                            throw new Error(`Row ${idx + 1} (${row.first_name ?? '?'} ${row.surname ?? ''}): ${nida.error}`);
+                        }
+                        idNum = nida.value;
+                    } else if (isVotersIdIdentificationType(row.identification_type)) {
+                        const vid = validateVotersIdentificationNumber(idNum);
+                        if (!vid.ok) {
+                            throw new Error(`Row ${idx + 1} (${row.first_name ?? '?'} ${row.surname ?? ''}): ${vid.error}`);
+                        }
+                        idNum = vid.value;
+                    } else if (isDriversLicenseIdentificationType(row.identification_type)) {
+                        const dl = validateDriversLicenseIdentificationNumber(idNum);
+                        if (!dl.ok) {
+                            throw new Error(`Row ${idx + 1} (${row.first_name ?? '?'} ${row.surname ?? ''}): ${dl.error}`);
+                        }
+                        idNum = dl.value;
+                    } else if (String(row.identification_type ?? '').toLowerCase() === 'passport') {
+                        idNum = String(idNum).trim();
+                        if (!idNum) {
+                            throw new Error(`Row ${idx + 1}: Passport number is required.`);
+                        }
+                    }
+
+                    const gName = normalizePersonNameLettersOnly(String(row.guarantor_name ?? '')).trim();
+                    const gPhone = guarantorPh.value;
+
                     return {
-                        first_name: row.first_name,
-                        surname: row.surname,
+                        first_name: normalizePersonNameLettersOnly(String(row.first_name ?? '')).trim(),
+                        surname: normalizePersonNameLettersOnly(String(row.surname ?? '')).trim(),
                         gender: row.gender,
-                        phone_number: String(row.phone_number),
-                        address: row.address,
-                        business_name: row.business_name,
-                        business_location: row.business_location,
+                        phone_number: phoneImp.value,
+                        address: String(row.address ?? '').trim(),
+                        business_name: String(row.business_name ?? '').trim(),
+                        business_location: String(row.business_location ?? '').trim(),
                         identification_type: row.identification_type,
-                        identification_number: String(row.identification_number),
+                        identification_number: idNum,
                         borrower_type: borrower_type,
                         group_id: group_id,
+                        center_id: center_id,
+                        guarantor_name: gName,
+                        guarantor_phone: gPhone,
                         loan_officer_id: user.id,
                         branch_id: user.user_metadata.branch_id,
-                        status: 'pending',
+                        status: 'eligible',
                         borrower_id: `B-${Date.now().toString().slice(-6)}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
                     };
                 });
@@ -482,6 +739,8 @@ const BorrowerManagement = () => {
 
     if (loading) return <DashboardLayout title="Borrower Management"><div className="flex justify-center items-center h-full">Loading...</div></DashboardLayout>;
 
+    const identificationNumberLabel = getIdentificationNumberFieldLabel(formData.identification_type);
+
     return (
         <DashboardLayout title="Borrower Management">
             <div className="space-y-6">
@@ -495,30 +754,161 @@ const BorrowerManagement = () => {
                             <DialogTrigger asChild>
                                 <Button onClick={() => { setFormData(defaultFormState); setEditingBorrower(null); }}><PlusCircle className="mr-2 h-4 w-4" /> Register</Button>
                             </DialogTrigger>
-                            <DialogContent className="max-w-3xl">
-                                <DialogHeader>
-                                    <DialogTitle>{editingBorrower ? 'Edit' : 'Register'} Borrower</DialogTitle>
-                                    <DialogDescription>
-                                        Phone and ID must be unique across the system — this prevents the same person registered twice, even across different officers.
-                                        New borrowers start as <strong>Pending</strong>; only a <strong>branch manager</strong> can mark them <strong>Eligible</strong> for a new loan.
+                            <DialogContent
+                                className={cn(
+                                    /* Base Dialog is mobile-safe; this form uses a fixed column layout + inner scroll */
+                                    'flex max-w-3xl flex-col gap-0 overflow-hidden rounded-xl border bg-background p-0 shadow-xl',
+                                    'h-[calc(100dvh-2rem)] sm:h-auto sm:max-h-[min(92vh,900px)]',
+                                    'sm:w-full sm:p-6',
+                                )}
+                            >
+                                <DialogHeader className="shrink-0 space-y-2 border-b px-4 pb-3 pt-4 text-left sm:border-0 sm:p-0 sm:pb-2">
+                                    <DialogTitle className="text-base sm:text-lg">{editingBorrower ? 'Edit' : 'Register'} Borrower</DialogTitle>
+                                    <DialogDescription className="text-xs leading-snug sm:text-sm">
+                                        All fields are required. Phone and ID must be unique across the system — this prevents the same person registered twice, even across different officers.
+                                        New borrowers are registered as <strong>Eligible</strong> and can be selected for a new loan.
                                     </DialogDescription>
                                 </DialogHeader>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4 max-h-[80vh] overflow-y-auto px-1">
-                                    <div className="space-y-2"><Label>First Name</Label><Input value={formData.first_name} onChange={e => setFormData({ ...formData, first_name: e.target.value })} /></div>
-                                    <div className="space-y-2"><Label>Surname</Label><Input value={formData.surname} onChange={e => setFormData({ ...formData, surname: e.target.value })} /></div>
-                                    <div className="space-y-2"><Label>Gender</Label><Select value={formData.gender} onValueChange={(v) => setFormData({ ...formData, gender: v })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="male">Male</SelectItem><SelectItem value="female">Female</SelectItem></SelectContent></Select></div>
-                                    <div className="space-y-2"><Label>Phone</Label><Input value={formData.phone_number} onChange={e => setFormData({ ...formData, phone_number: e.target.value })} /></div>
-                                    <div className="space-y-2"><Label>ID Type</Label><Select value={formData.identification_type} onValueChange={(v) => setFormData({...formData, identification_type:v})}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="national_id">National ID</SelectItem><SelectItem value="passport">Passport</SelectItem><SelectItem value="drivers_license">Driver's License</SelectItem><SelectItem value="voters_id">Voter's ID</SelectItem></SelectContent></Select></div>
-                                    <div className="space-y-2"><Label>ID Number</Label><Input value={formData.identification_number} onChange={e => setFormData({ ...formData, identification_number: e.target.value })} /></div>
-                                    <div className="space-y-2 md:col-span-2"><Label>Address</Label><Input value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} /></div>
-                                    <div className="space-y-2"><Label>Business Name</Label><Input value={formData.business_name} onChange={e => setFormData({ ...formData, business_name: e.target.value })} /></div>
-                                    <div className="space-y-2"><Label>Business Location</Label><Input value={formData.business_location} onChange={e => setFormData({ ...formData, business_location: e.target.value })} /></div>
-                                    <div className="space-y-2 md:col-span-2"><Label>Borrower Type</Label><Select value={formData.borrower_type} onValueChange={(v) => setFormData({...formData, borrower_type: v, group_id: null })}><SelectTrigger><SelectValue placeholder="Select Type"/></SelectTrigger><SelectContent><SelectItem value="individual">Individual Borrower</SelectItem><SelectItem value="group">Group Borrower</SelectItem></SelectContent></Select></div>
+                                <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 [-webkit-overflow-scrolling:touch] sm:px-0 sm:py-2">
+                                <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:gap-5">
+                                    <div className="space-y-2"><Label>First name <FieldRequired /></Label><Input value={formData.first_name} onChange={(e) => setFormData({ ...formData, first_name: normalizePersonNameLettersOnly(e.target.value) })} autoComplete="given-name" required /></div>
+                                    <div className="space-y-2"><Label>Surname <FieldRequired /></Label><Input value={formData.surname} onChange={(e) => setFormData({ ...formData, surname: normalizePersonNameLettersOnly(e.target.value) })} autoComplete="family-name" required /></div>
+                                    <div className="space-y-2"><Label>Gender <FieldRequired /></Label><Select value={formData.gender} onValueChange={(v) => setFormData({ ...formData, gender: v })}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="male">Male</SelectItem><SelectItem value="female">Female</SelectItem></SelectContent></Select></div>
+                                    <div className="space-y-2">
+                                        <Label>Phone ({PHONE_DIGIT_LENGTH} digits) <FieldRequired /></Label>
+                                        <Input
+                                            value={formData.phone_number}
+                                            onChange={(e) => setFormData({ ...formData, phone_number: normalizePhoneDigitsMax10(e.target.value) })}
+                                            inputMode="numeric"
+                                            maxLength={PHONE_DIGIT_LENGTH}
+                                            autoComplete="tel"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="space-y-2"><Label>ID type <FieldRequired /></Label><Select value={formData.identification_type} onValueChange={(v) => setFormData((prev) => ({
+                                        ...prev,
+                                        identification_type: v,
+                                        ...(v === 'voters_id' && prev.identification_type !== 'voters_id'
+                                            ? { identification_number: 'T' }
+                                            : {}),
+                                    }))}><SelectTrigger><SelectValue/></SelectTrigger><SelectContent><SelectItem value="national_id">National ID</SelectItem><SelectItem value="passport">Passport</SelectItem><SelectItem value="drivers_license">Driver's License</SelectItem><SelectItem value="voters_id">Voter's ID</SelectItem></SelectContent></Select></div>
+                                    <div className="space-y-2">
+                                        <Label>{identificationNumberLabel} <FieldRequired /></Label>
+                                        <Input
+                                            value={formData.identification_number}
+                                            className={formData.identification_type === 'voters_id' ? 'font-semibold' : undefined}
+                                            inputMode={
+                                                formData.identification_type === 'national_id' ||
+                                                formData.identification_type === 'drivers_license'
+                                                    ? 'numeric'
+                                                    : undefined
+                                            }
+                                            autoComplete="off"
+                                            required
+                                            maxLength={
+                                                formData.identification_type === 'national_id'
+                                                    ? NIDA_DIGIT_LENGTH
+                                                    : formData.identification_type === 'voters_id'
+                                                      ? VOTERS_ID_MAX_INPUT_LENGTH
+                                                      : formData.identification_type === 'drivers_license'
+                                                        ? DRIVER_LICENSE_DIGIT_LENGTH
+                                                        : undefined
+                                            }
+                                            onChange={(e) => {
+                                                let v = e.target.value;
+                                                if (formData.identification_type === 'national_id') {
+                                                    v = normalizeNidaDigits(e.target.value).slice(0, NIDA_DIGIT_LENGTH);
+                                                } else if (formData.identification_type === 'voters_id') {
+                                                    v = normalizeVotersIdInput(e.target.value);
+                                                } else if (formData.identification_type === 'drivers_license') {
+                                                    v = normalizeDriversLicenseDigits(e.target.value);
+                                                }
+                                                setFormData({ ...formData, identification_number: v });
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="space-y-2 md:col-span-2"><Label>Address <FieldRequired /></Label><Input value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} required /></div>
+                                    <div className="space-y-2"><Label>Business name <FieldRequired /></Label><Input value={formData.business_name} onChange={e => setFormData({ ...formData, business_name: e.target.value })} required /></div>
+                                    <div className="space-y-2"><Label>Business location <FieldRequired /></Label><Input value={formData.business_location} onChange={e => setFormData({ ...formData, business_location: e.target.value })} required /></div>
+                                    <div className="space-y-2 md:col-span-2"><Label>Borrower type <FieldRequired /></Label><Select value={formData.borrower_type} onValueChange={(v) => setFormData({ ...formData, borrower_type: v, group_id: null, center_id: null })}><SelectTrigger><SelectValue placeholder="Select type"/></SelectTrigger><SelectContent><SelectItem value="individual">Individual Borrower</SelectItem><SelectItem value="group">Group Borrower</SelectItem></SelectContent></Select></div>
                                     {formData.borrower_type === 'group' && (
-                                        <div className="space-y-2 md:col-span-2"><Label>Group</Label><Select value={formData.group_id || ''} onValueChange={(v) => setFormData({...formData, group_id:v})}><SelectTrigger><SelectValue placeholder="Select Group"/></SelectTrigger><SelectContent>{groups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}</SelectContent></Select></div>
+                                        <>
+                                            <div className="space-y-2 md:col-span-2">
+                                                <Label>Centre <FieldRequired /></Label>
+                                                <Select
+                                                    value={formData.center_id ?? undefined}
+                                                    onValueChange={(v) => setFormData({ ...formData, center_id: v, group_id: null })}
+                                                >
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Select centre" />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {centers.map((c) => (
+                                                            <SelectItem key={c.id} value={c.id}>
+                                                                {c.name}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                {centers.length === 0 && (
+                                                    <p className="text-sm text-muted-foreground">No centres yet. Create a centre under Centers &amp; Groups first.</p>
+                                                )}
+                                            </div>
+                                            <div className="space-y-2 md:col-span-2">
+                                                <Label>Group <FieldRequired /></Label>
+                                                <Select
+                                                    value={formData.group_id ?? undefined}
+                                                    onValueChange={(v) => setFormData({ ...formData, group_id: v })}
+                                                    disabled={!formData.center_id || groupsInSelectedCenter.length === 0}
+                                                >
+                                                    <SelectTrigger>
+                                                        <SelectValue
+                                                            placeholder={
+                                                                formData.center_id ? 'Select group' : 'Select centre first'
+                                                            }
+                                                        />
+                                                    </SelectTrigger>
+                                                    <SelectContent>
+                                                        {groupsInSelectedCenter.map((g) => (
+                                                            <SelectItem key={g.id} value={g.id}>
+                                                                {g.name}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                            </div>
+                                        </>
                                     )}
+                                    <div className="space-y-2 md:col-span-2 border-t pt-4 mt-2">
+                                        <p className="text-sm font-medium text-muted-foreground">Guarantor <FieldRequired /></p>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <Label>Guarantor name <FieldRequired /></Label>
+                                                <Input
+                                                    value={formData.guarantor_name}
+                                                    onChange={(e) => setFormData({ ...formData, guarantor_name: normalizePersonNameLettersOnly(e.target.value) })}
+                                                    autoComplete="off"
+                                                    required
+                                                />
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label>Guarantor phone ({PHONE_DIGIT_LENGTH} digits) <FieldRequired /></Label>
+                                                <Input
+                                                    value={formData.guarantor_phone}
+                                                    onChange={(e) => setFormData({ ...formData, guarantor_phone: normalizePhoneDigitsMax10(e.target.value) })}
+                                                    inputMode="numeric"
+                                                    maxLength={PHONE_DIGIT_LENGTH}
+                                                    autoComplete="off"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="flex justify-end pt-4"><Button onClick={handleSave} disabled={isSaving}>{isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : (editingBorrower ? 'Save Changes' : 'Register Borrower')}</Button></div>
+                                </div>
+                                <div className="flex shrink-0 justify-end border-t bg-background px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:border-0 sm:bg-transparent sm:px-0 sm:pb-0 sm:pt-4">
+                                    <Button className="w-full sm:w-auto" onClick={handleSave} disabled={isSaving}>{isSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : (editingBorrower ? 'Save Changes' : 'Register Borrower')}</Button>
+                                </div>
                             </DialogContent>
                         </Dialog>
                 </div>
@@ -536,7 +926,7 @@ const BorrowerManagement = () => {
                         <div className="flex flex-col md:flex-row justify-between gap-4">
                             <CardTitle>My Borrowers</CardTitle>
                              <div className="flex items-center gap-2">
-                                <Input placeholder="Search by ID, name, phone..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full md:w-64" />
+                                <Input placeholder="Search ID, name, phone, guarantor..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full md:w-64" />
                                 <Select value={groupFilter} onValueChange={setGroupFilter}>
                                     <SelectTrigger className="w-full md:w-[180px]"><SelectValue placeholder="Filter by Group" /></SelectTrigger>
                                     <SelectContent>
@@ -586,6 +976,8 @@ const BorrowerManagement = () => {
                                     <TableHead>Borrower ID</TableHead>
                                     <TableHead>Name</TableHead>
                                     <TableHead>Phone</TableHead>
+                                    <TableHead>Guarantor name</TableHead>
+                                    <TableHead>Guarantor phone</TableHead>
                                     <TableHead>Group</TableHead>
                                     <TableHead>Loan Status</TableHead>
                                     <TableHead>Actions</TableHead>
@@ -603,6 +995,10 @@ const BorrowerManagement = () => {
                                         <TableCell>{b.borrower_id}</TableCell>
                                         <TableCell>{b.first_name} {b.surname}</TableCell>
                                         <TableCell>{b.phone_number}</TableCell>
+                                        <TableCell className="max-w-[140px] truncate" title={b.guarantor_name || undefined}>
+                                            {b.guarantor_name || '—'}
+                                        </TableCell>
+                                        <TableCell>{b.guarantor_phone || '—'}</TableCell>
                                         <TableCell>{b.borrower_type === 'group' ? getGroupName(b.group_id) : 'Individual'}</TableCell>
                                         <TableCell><Badge variant={getLoanStatusBadge(b.status)}>{getStatusText(b.status)}</Badge></TableCell>
                                         <TableCell className="space-x-2">
@@ -614,7 +1010,7 @@ const BorrowerManagement = () => {
                                 ))}
                                 {filteredBorrowers.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">No borrowers match the current filters.</TableCell>
+                                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No borrowers match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>

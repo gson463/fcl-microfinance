@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Badge } from '@/components/ui/badge';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
+import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -354,8 +355,8 @@ const AdminRepaymentManagement = () => {
             </div>
             
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-              <DialogContent className="max-w-5xl">
-                <DialogHeader>
+              <DialogContent className={SCHEDULE_DIALOG_CONTENT}>
+                <DialogHeader className="shrink-0">
                     <DialogTitle>Repayment Schedule for {selectedLoanForSchedule?.loan_id}</DialogTitle>
                     <DialogDescription>
                         Borrower: {selectedLoanForSchedule?.borrowers?.first_name} {selectedLoanForSchedule?.borrowers?.surname} <br/>
@@ -363,6 +364,7 @@ const AdminRepaymentManagement = () => {
                     </DialogDescription>
                 </DialogHeader>
                 {selectedLoanForSchedule && (
+                    <div className={SCHEDULE_DIALOG_SCROLL}>
                     <RepaymentScheduleGrid
                       schedule={selectedLoanForSchedule.schedule}
                       currency={currency}
@@ -373,6 +375,7 @@ const AdminRepaymentManagement = () => {
                         'full'
                       )}
                     />
+                    </div>
                 )}
               </DialogContent>
             </Dialog>

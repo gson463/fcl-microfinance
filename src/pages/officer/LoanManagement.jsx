@@ -14,6 +14,7 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
+import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL, LOAN_EDIT_WIDE_CONTENT } from '@/lib/dialogLayout';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
@@ -998,14 +999,15 @@ const LoanManagement = () => {
             
             {/* OTHER DIALOGS (Schedule, Edit, Repayment) - kept minimal for brevity, focusing on Disbursement redesign */}
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-                <DialogContent className="max-w-5xl">
-                    <DialogHeader>
+                <DialogContent className={SCHEDULE_DIALOG_CONTENT}>
+                    <DialogHeader className="shrink-0">
                         <DialogTitle>Repayment Schedule for {selectedLoan?.loan_id}</DialogTitle>
                         <DialogDescription>
                             Borrower: {selectedLoan?.borrowers?.first_name} {selectedLoan?.borrowers?.surname} <br/>
                             Total Payable: {currency} {(selectedLoan?.total_payable || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </DialogDescription>
                     </DialogHeader>
+                    <div className={SCHEDULE_DIALOG_SCROLL}>
                     <RepaymentScheduleGrid
                       schedule={selectedLoan?.schedule}
                       currency={currency}
@@ -1016,11 +1018,13 @@ const LoanManagement = () => {
                           : undefined
                       }
                     />
+                    </div>
                 </DialogContent>
             </Dialog>
             <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-                <DialogContent className="max-w-4xl">
-                    <DialogHeader><DialogTitle>Request Edit for Loan {editingLoan?.loan_id}</DialogTitle></DialogHeader>
+                <DialogContent className={LOAN_EDIT_WIDE_CONTENT}>
+                    <DialogHeader className="shrink-0"><DialogTitle>Request Edit for Loan {editingLoan?.loan_id}</DialogTitle></DialogHeader>
+                    <div className={SCHEDULE_DIALOG_SCROLL}>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
                         <div className="space-y-4">
                             <Select value={editFormData.productId} onValueChange={e => setEditFormData({ ...editFormData, productId: e })}>
@@ -1079,6 +1083,7 @@ const LoanManagement = () => {
                                 </Table>
                              </div>
                         </div>
+                    </div>
                     </div>
                 </DialogContent>
             </Dialog>

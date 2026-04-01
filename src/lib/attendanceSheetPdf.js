@@ -104,7 +104,8 @@ async function populateBrandedHeader(doc, opts, pageW, margin, { mainTitle, badg
  */
 export async function downloadAttendanceSheetPdf(opts) {
   const numBoxes = Math.min(40, Math.max(1, Number(opts.numBoxes) || 12));
-  const orientation = numBoxes > 14 ? 'landscape' : 'portrait';
+  /** Portrait (A4 kusimama) by default; landscape only when many manual mark columns need width. */
+  const orientation = numBoxes > 30 ? 'landscape' : 'portrait';
   const doc = new jsPDF({ orientation, unit: 'mm', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 10;
@@ -194,7 +195,7 @@ export async function downloadAttendanceSheetPdf(opts) {
  * @param {string} opts.officerName
  * @param {string} opts.meetingDate — meeting session date (YYYY-MM-DD)
  * @param {string} [opts.generatedAt] — print timestamp label
- * @param {Array<{ groupName: string, rows: Array<{ sn: number, name: string, borrowerId: string, present: boolean }> }>} opts.groups
+ * @param {Array<{ groupName: string, rows: Array<{ sn: number, name: string, borrowerId: string, status: 'present'|'absent'|'ruhusa' }> }>} opts.groups
  * @param {string} [opts.fileName]
  */
 export async function downloadRecordedAttendancePdf(opts) {
@@ -230,17 +231,24 @@ export async function downloadRecordedAttendancePdf(opts) {
 
   let presentN = 0;
   let absentN = 0;
+  let ruhusaN = 0;
   for (const g of opts.groups || []) {
     for (const r of g.rows || []) {
-      if (r.present) presentN += 1;
+      const st = r.status || (r.present === true ? 'present' : r.present === false ? 'absent' : 'present');
+      if (st === 'present') presentN += 1;
+      else if (st === 'ruhusa') ruhusaN += 1;
       else absentN += 1;
     }
   }
-  const total = presentN + absentN;
+  const total = presentN + absentN + ruhusaN;
   doc.setFontSize(9);
   doc.setFont(undefined, 'bold');
   doc.setTextColor(NEUTRAL_700[0], NEUTRAL_700[1], NEUTRAL_700[2]);
-  doc.text(`Summary: Present ${presentN}  ·  Absent ${absentN}  ·  Total ${total}`, margin, y);
+  doc.text(
+    `Summary: Present ${presentN}  ·  Absent ${absentN}  ·  Ruhusa ${ruhusaN}  ·  Total ${total}`,
+    margin,
+    y
+  );
   y += 8;
 
   const head = ['s/n', 'Name', 'Borrower ID', 'Status'];
@@ -263,12 +271,11 @@ export async function downloadRecordedAttendancePdf(opts) {
     doc.setFont(undefined, 'normal');
     y += 10;
 
-    const body = (g.rows || []).map((r) => [
-      String(r.sn),
-      String(r.name),
-      String(r.borrowerId || '—'),
-      r.present ? 'Present' : 'Absent',
-    ]);
+    const body = (g.rows || []).map((r) => {
+      const st = r.status || (r.present === true ? 'present' : r.present === false ? 'absent' : 'present');
+      const label = st === 'absent' ? 'Absent' : st === 'ruhusa' ? 'Ruhusa' : 'Present';
+      return [String(r.sn), String(r.name), String(r.borrowerId || '—'), label];
+    });
 
     doc.autoTable({
       startY: y,
@@ -298,6 +305,9 @@ export async function downloadRecordedAttendancePdf(opts) {
           } else if (raw === 'Absent') {
             data.cell.styles.fillColor = [254, 226, 226];
             data.cell.styles.textColor = [153, 27, 27];
+          } else if (raw === 'Ruhusa') {
+            data.cell.styles.fillColor = [254, 243, 199];
+            data.cell.styles.textColor = [146, 64, 14];
           }
         }
       },
@@ -328,7 +338,7 @@ export async function downloadRecordedAttendancePdf(opts) {
  *       sn: number;
  *       name: string;
  *       borrowerId: string;
- *       presence: Array<boolean | null>;
+ *       presence: Array<'present'|'absent'|'ruhusa'|null|boolean>;
  *       totalPresent: number;
  *     }>;
  *   }>;
@@ -406,8 +416,9 @@ export async function downloadCompiledAttendancePdf(opts) {
       const head = ['s/n', 'Name', 'Borrower ID', ...mlist.map((m) => m.shortLabel || m.dateLabel), 'Σ P'];
       const body = (g.rows || []).map((r) => {
         const cells = (r.presence || []).map((p) => {
-          if (p === true) return 'P';
-          if (p === false) return 'A';
+          if (p === true || p === 'present') return 'P';
+          if (p === 'ruhusa') return 'R';
+          if (p === false || p === 'absent') return 'A';
           return '—';
         });
         while (cells.length < nM) cells.push('—');
@@ -458,6 +469,9 @@ export async function downloadCompiledAttendancePdf(opts) {
             } else if (raw === 'A') {
               data.cell.styles.fillColor = [254, 226, 226];
               data.cell.styles.textColor = [153, 27, 27];
+            } else if (raw === 'R') {
+              data.cell.styles.fillColor = [254, 243, 199];
+              data.cell.styles.textColor = [146, 64, 14];
             } else {
               data.cell.styles.fillColor = [248, 250, 252];
               data.cell.styles.textColor = [100, 116, 139];

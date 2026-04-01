@@ -27,6 +27,7 @@ export const DRILLDOWN_COLUMN_PRIORITY = [
 	'outstanding_total',
 	'default_total_amount',
 	'due_today_amount',
+	'due_tomorrow_amount',
 	'last_installment_due',
 	'days_to_final_due',
 	'remaining_installments',

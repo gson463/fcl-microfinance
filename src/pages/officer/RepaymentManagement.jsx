@@ -23,6 +23,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Edit, Trash2, Calendar as CalendarIcon, FileDown, Download, Eye, Loader2, ArrowRightLeft, TrendingUp, TrendingDown, Scale, PlusCircle, Coins as HandCoins, Search, ChevronLeft, ChevronRight, Layers, ArrowUpCircle } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { exportObjectsToCsv } from '@/lib/tableExport';
+import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -941,8 +942,8 @@ const RepaymentManagement = () => {
             </Dialog>
 
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-              <DialogContent className="max-w-5xl">
-                <DialogHeader>
+              <DialogContent className={SCHEDULE_DIALOG_CONTENT}>
+                <DialogHeader className="shrink-0">
                     <DialogTitle>Repayment Schedule for {selectedLoanForSchedule?.loan_id}</DialogTitle>
                     <DialogDescription>
                         Borrower: {selectedLoanForSchedule?.borrowers?.first_name} {selectedLoanForSchedule?.borrowers?.surname} <br/>
@@ -950,6 +951,7 @@ const RepaymentManagement = () => {
                     </DialogDescription>
                 </DialogHeader>
                 {selectedLoanForSchedule && (
+                    <div className={SCHEDULE_DIALOG_SCROLL}>
                     <RepaymentScheduleGrid
                       schedule={selectedLoanForSchedule.schedule}
                       currency={currency}
@@ -960,6 +962,7 @@ const RepaymentManagement = () => {
                         'full'
                       )}
                     />
+                    </div>
                 )}
               </DialogContent>
             </Dialog>

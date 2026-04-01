@@ -109,15 +109,15 @@ BEGIN
     (v_center, (current_date - 14)::date, v_officer, 'demo_seed'),
     (v_center, (current_date - 7)::date, v_officer, 'demo_seed');
 
-  INSERT INTO public.attendance_records (centre_meeting_id, borrower_id, group_id, present)
+  INSERT INTO public.attendance_records (centre_meeting_id, borrower_id, group_id, attendance_status)
   SELECT
     m.id,
     b.id,
     b.group_id,
     CASE
-      WHEN b.borrower_id = 'DEMO-ATT-006' AND m.rn <= 2 THEN false
-      WHEN b.borrower_id = 'DEMO-ATT-004' AND m.rn <= 5 THEN false
-      ELSE true
+      WHEN b.borrower_id = 'DEMO-ATT-006' AND m.rn <= 2 THEN 'absent'
+      WHEN b.borrower_id = 'DEMO-ATT-004' AND m.rn <= 5 THEN 'absent'
+      ELSE 'present'
     END
   FROM public.borrowers b
   CROSS JOIN (

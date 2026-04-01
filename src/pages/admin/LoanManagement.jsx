@@ -13,6 +13,7 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
+import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -376,14 +377,15 @@ const AdminLoanManagement = () => {
 
             {/* Schedule Dialog */}
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-                <DialogContent className="max-w-5xl">
-                    <DialogHeader>
+                <DialogContent className={SCHEDULE_DIALOG_CONTENT}>
+                    <DialogHeader className="shrink-0">
                         <DialogTitle>Repayment Schedule for {selectedLoan?.loan_id}</DialogTitle>
                         <DialogDescription>
                             Borrower: {selectedLoan?.borrowers?.first_name} {selectedLoan?.borrowers?.surname} <br/>
                             Total Payable: {currency} {(selectedLoan?.total_payable || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </DialogDescription>
                     </DialogHeader>
+                    <div className={SCHEDULE_DIALOG_SCROLL}>
                     <RepaymentScheduleGrid
                       schedule={selectedLoan?.schedule}
                       currency={currency}
@@ -394,6 +396,7 @@ const AdminLoanManagement = () => {
                           : undefined
                       }
                     />
+                    </div>
                 </DialogContent>
             </Dialog>
 

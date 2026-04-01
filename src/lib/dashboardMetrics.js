@@ -18,6 +18,11 @@ export const DRILLDOWN_METRICS = {
 	default_interest: 'default_interest',
 	default_total: 'default_total',
 	expected_today: 'expected_today',
+	expected_tomorrow: 'expected_tomorrow',
+	disbursed_today: 'disbursed_today',
+	collected_today: 'collected_today',
+	/** Borrowers registered by the officer (same scope as total_borrowers count) */
+	my_borrowers: 'my_borrowers',
 	/** Active loans whose last schedule installment falls within the next N days (default 14) */
 	nearing_completion: 'nearing_completion',
 };
@@ -41,5 +46,9 @@ export const METRIC_TITLES = {
 	[DRILLDOWN_METRICS.default_interest]: 'Default — interest amount',
 	[DRILLDOWN_METRICS.default_total]: 'Default — total amount',
 	[DRILLDOWN_METRICS.expected_today]: 'Expected today (installments due)',
+	[DRILLDOWN_METRICS.expected_tomorrow]: 'Projected tomorrow (installments due)',
+	[DRILLDOWN_METRICS.disbursed_today]: 'Disbursed today',
+	[DRILLDOWN_METRICS.collected_today]: 'Collected today',
+	[DRILLDOWN_METRICS.my_borrowers]: 'Borrowers Registered by you',
 	[DRILLDOWN_METRICS.nearing_completion]: 'Nearing loan completion (final payment within days)',
 };

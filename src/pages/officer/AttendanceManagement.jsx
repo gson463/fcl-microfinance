@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { cn } from '@/lib/utils';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase } from '@/lib/customSupabaseClient';
@@ -42,6 +43,14 @@ function groupBorrowersByGroup(borrowers, groups) {
   }));
 }
 
+/** Saved in DB; ruhusa = excused (does not count toward loan-increase meeting minimum). */
+const STATUS_KEYS = ['present', 'absent', 'ruhusa'];
+function statusLabel(s) {
+  if (s === 'absent') return 'Absent';
+  if (s === 'ruhusa') return 'Ruhusa';
+  return 'Present';
+}
+
 const AttendanceManagement = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -58,7 +67,8 @@ const AttendanceManagement = () => {
   const [savingMeeting, setSavingMeeting] = useState(false);
 
   const [recordMeetingId, setRecordMeetingId] = useState('');
-  const [presentMap, setPresentMap] = useState({});
+  /** borrower_id -> 'present' | 'absent' | 'ruhusa' */
+  const [attendanceMap, setAttendanceMap] = useState({});
   const [savingAttendance, setSavingAttendance] = useState(false);
 
   const [printCentreId, setPrintCentreId] = useState('');
@@ -153,7 +163,7 @@ const AttendanceManagement = () => {
 
   useEffect(() => {
     if (!selectedMeeting || !borrowers.length) {
-      setPresentMap({});
+      setAttendanceMap({});
       return;
     }
     const centreId = selectedMeeting.centre_id;
@@ -164,19 +174,20 @@ const AttendanceManagement = () => {
     (async () => {
       const { data: recs } = await supabase
         .from('attendance_records')
-        .select('borrower_id, present')
+        .select('borrower_id, attendance_status')
         .eq('centre_meeting_id', selectedMeeting.id);
 
       const m = {};
       for (const b of list) {
-        m[b.id] = true;
+        m[b.id] = 'present';
       }
       if (recs?.length) {
         for (const r of recs) {
-          m[r.borrower_id] = r.present;
+          const st = r.attendance_status;
+          m[r.borrower_id] = STATUS_KEYS.includes(st) ? st : 'present';
         }
       }
-      setPresentMap(m);
+      setAttendanceMap(m);
     })();
   }, [selectedMeeting, borrowers, groups]);
 
@@ -195,7 +206,7 @@ const AttendanceManagement = () => {
       centre_meeting_id: selectedMeeting.id,
       borrower_id: b.id,
       group_id: b.group_id,
-      present: presentMap[b.id] !== false,
+      attendance_status: STATUS_KEYS.includes(attendanceMap[b.id]) ? attendanceMap[b.id] : 'present',
     }));
     const { error } = await supabase.from('attendance_records').upsert(rows, {
       onConflict: 'centre_meeting_id,borrower_id',
@@ -222,7 +233,7 @@ const AttendanceManagement = () => {
         .from('attendance_records')
         .select('borrower_id')
         .in('centre_meeting_id', mids)
-        .eq('present', true);
+        .eq('attendance_status', 'present');
       for (const a of att || []) {
         if (!myBorrowerIds.has(a.borrower_id)) continue;
         counts.set(a.borrower_id, (counts.get(a.borrower_id) || 0) + 1);
@@ -285,7 +296,7 @@ const AttendanceManagement = () => {
     }
   };
 
-  const buildRecordedPdfGroups = (meeting, presentByBorrowerId) => {
+  const buildRecordedPdfGroups = (meeting, statusByBorrowerId) => {
     const centreId = meeting.centre_id;
     const centreGroups = groups.filter((g) => g.center_id === centreId);
     const gids = new Set(centreGroups.map((g) => g.id));
@@ -297,7 +308,7 @@ const AttendanceManagement = () => {
         sn: idx + 1,
         name: `${b.first_name} ${b.surname}`,
         borrowerId: b.borrower_id,
-        present: presentByBorrowerId[b.id] !== false,
+        status: STATUS_KEYS.includes(statusByBorrowerId[b.id]) ? statusByBorrowerId[b.id] : 'present',
       })),
     }));
   };
@@ -312,7 +323,7 @@ const AttendanceManagement = () => {
       return;
     }
     const centre = centers.find((c) => c.id === selectedMeeting.centre_id);
-    const pdfGroups = buildRecordedPdfGroups(selectedMeeting, presentMap);
+    const pdfGroups = buildRecordedPdfGroups(selectedMeeting, attendanceMap);
     try {
       await downloadRecordedAttendancePdf({
         systemName,
@@ -350,13 +361,13 @@ const AttendanceManagement = () => {
     }
     const { data: recs } = await supabase
       .from('attendance_records')
-      .select('borrower_id, present')
+      .select('borrower_id, attendance_status')
       .eq('centre_meeting_id', mid);
     const map = {};
-    for (const b of list) map[b.id] = true;
+    for (const b of list) map[b.id] = 'present';
     if (recs?.length) {
       for (const r of recs) {
-        map[r.borrower_id] = r.present;
+        map[r.borrower_id] = STATUS_KEYS.includes(r.attendance_status) ? r.attendance_status : 'present';
       }
     }
     const pdfGroups = buildRecordedPdfGroups(m, map);
@@ -400,12 +411,12 @@ const AttendanceManagement = () => {
       const allMids = selected.map((m) => m.id);
       const { data: recs, error } = await supabase
         .from('attendance_records')
-        .select('borrower_id, present, centre_meeting_id')
+        .select('borrower_id, attendance_status, centre_meeting_id')
         .in('centre_meeting_id', allMids);
       if (error) throw error;
       const recMap = new Map();
       for (const r of recs || []) {
-        recMap.set(`${r.borrower_id}:${r.centre_meeting_id}`, r.present);
+        recMap.set(`${r.borrower_id}:${r.centre_meeting_id}`, r.attendance_status);
       }
 
       const byCentre = new Map();
@@ -435,7 +446,7 @@ const AttendanceManagement = () => {
               const v = recMap.get(`${b.id}:${mt.id}`);
               return v === undefined ? null : v;
             });
-            const totalPresent = presence.filter((p) => p === true).length;
+            const totalPresent = presence.filter((p) => p === 'present').length;
             return {
               sn: idx + 1,
               name: `${b.first_name} ${b.surname}`,
@@ -594,7 +605,10 @@ const AttendanceManagement = () => {
             <Card>
               <CardHeader>
                 <CardTitle>Mark attendance</CardTitle>
-                <CardDescription>Select a meeting, then tick who was present.</CardDescription>
+                <CardDescription>
+                  Select a meeting, then set each borrower to <strong>Present</strong>, <strong>Absent</strong>, or{' '}
+                  <strong>Ruhusa</strong> (excused — does not count toward the loan-increase meeting minimum).
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2 max-w-md">
@@ -624,21 +638,40 @@ const AttendanceManagement = () => {
                         <h4 className="font-semibold text-sm bg-emerald-600 text-white px-2 py-1 rounded inline-block">
                           {group?.name || 'Group'}
                         </h4>
-                        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                          {brs.map((b) => (
-                            <label key={b.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                              <Checkbox
-                                checked={presentMap[b.id] !== false}
-                                onCheckedChange={(v) =>
-                                  setPresentMap((prev) => ({ ...prev, [b.id]: v === true }))
-                                }
-                              />
-                              <span>
-                                {b.first_name} {b.surname}{' '}
-                                <span className="text-muted-foreground">({b.borrower_id})</span>
-                              </span>
-                            </label>
-                          ))}
+                        <div className="space-y-2">
+                          {brs.map((b) => {
+                            const st = STATUS_KEYS.includes(attendanceMap[b.id]) ? attendanceMap[b.id] : 'present';
+                            return (
+                              <div
+                                key={b.id}
+                                className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between dark:border-neutral-700 dark:bg-neutral-900/40"
+                              >
+                                <span className="text-sm font-medium">
+                                  {b.first_name} {b.surname}{' '}
+                                  <span className="text-muted-foreground font-normal">({b.borrower_id})</span>
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                  {STATUS_KEYS.map((key) => (
+                                    <Button
+                                      key={key}
+                                      type="button"
+                                      size="sm"
+                                      variant={st === key ? 'default' : 'outline'}
+                                      className={cn(
+                                        'h-8 min-w-[5.5rem] text-xs',
+                                        st === key && key === 'present' && 'bg-emerald-600 hover:bg-emerald-700',
+                                        st === key && key === 'absent' && 'bg-red-600 hover:bg-red-700',
+                                        st === key && key === 'ruhusa' && 'bg-amber-600 hover:bg-amber-700'
+                                      )}
+                                      onClick={() => setAttendanceMap((prev) => ({ ...prev, [b.id]: key }))}
+                                    >
+                                      {statusLabel(key)}
+                                    </Button>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
@@ -666,8 +699,8 @@ const AttendanceManagement = () => {
               <CardHeader>
                 <CardTitle>Recorded attendance (digital)</CardTitle>
                 <CardDescription>
-                  Print a PDF of saved Present/Absent marks for one meeting (from the database). Same layout as the manual sheet: logo and
-                  brand colours, plus a summary line.
+                  Print a PDF of saved Present / Absent / Ruhusa marks for one meeting (from the database). Same layout as the manual
+                  sheet: logo and brand colours, plus a summary line.
                 </CardDescription>
               </CardHeader>
               <CardContent className="flex flex-wrap items-end gap-4">
@@ -697,8 +730,8 @@ const AttendanceManagement = () => {
               <CardHeader>
                 <CardTitle>Compile &amp; print (multiple meetings)</CardTitle>
                 <CardDescription>
-                  Chagua mikutano mingi (hata kutoka vituo tofauti). PDF moja ina jedwali: kila safu ya tarehe = P (alihudhuria), A (hakuhudhuria),
-                  au — (hakuna rekodi). Kila kituo kina sehemu yake; safu ya mwisho &quot;Σ P&quot; ni jumla ya mikutano aliyohudhuria.
+                  Chagua mikutano mingi (hata kutoka vituo tofauti). PDF moja ina jedwali: kila tarehe = P (present), A (absent), R (ruhusa),
+                  au — (hakuna rekodi). Σ P = idadi ya mikutano aliyohudhuria (present pekee; ruhusa haihesabiwi).
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -782,7 +815,8 @@ const AttendanceManagement = () => {
               <CardHeader>
                 <CardTitle>Attendance counts (your borrowers)</CardTitle>
                 <CardDescription>
-                  Number of centre meetings marked present (all time). Loan increase eligibility also uses the minimum set in System Settings.
+                  Number of centre meetings marked <strong>Present</strong> (all time). <strong>Ruhusa</strong> does not add to this count.
+                  Loan increase eligibility uses the minimum set in System Settings.
                 </CardDescription>
               </CardHeader>
               <CardContent>

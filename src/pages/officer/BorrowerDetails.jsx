@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useDate } from '@/contexts/DateContext';
 import jsPDF from 'jspdf';
@@ -50,7 +51,7 @@ const BorrowerDetails = () => {
     try {
         const { data: borrowerData, error: borrowerError } = await supabase
             .from('borrowers')
-            .select('*, branches(name)')
+            .select('*, branches(name), centers(name)')
             .eq('id', borrowerId)
             .single();
         if (borrowerError || !borrowerData) throw new Error(borrowerError?.message || 'Borrower not found.');
@@ -119,6 +120,9 @@ const BorrowerDetails = () => {
         ["Address:", borrower.address],
         ["ID Type:", idTypeMap[borrower.identification_type]],
         ["ID Number:", borrower.identification_number],
+        ...(borrower.centers?.name ? [["Centre:", borrower.centers.name]] : []),
+        ...(borrower.guarantor_name ? [["Mdhamini / Guarantor:", borrower.guarantor_name]] : []),
+        ...(borrower.guarantor_phone ? [["Simu ya mdhamini:", borrower.guarantor_phone]] : []),
         ["Report Date:", new Date(serverDate).toLocaleDateString()],
     ];
 
@@ -186,6 +190,9 @@ const BorrowerDetails = () => {
         ["Address", borrower.address],
         ["ID Type", idTypeMap[borrower.identification_type]],
         ["ID Number", borrower.identification_number],
+        ...(borrower.centers?.name ? [["Centre", borrower.centers.name]] : []),
+        ...(borrower.guarantor_name ? [["Mdhamini / Guarantor", borrower.guarantor_name]] : []),
+        ...(borrower.guarantor_phone ? [["Simu ya mdhamini", borrower.guarantor_phone]] : []),
         ["Report Date", new Date(serverDate).toLocaleDateString()],
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
@@ -316,7 +323,16 @@ const BorrowerDetails = () => {
                     <DetailItem label="Business Name" value={borrower.business_name} />
                     <DetailItem label="Business Location" value={borrower.business_location} />
                     <DetailItem label="Type" value={borrower.borrower_type} />
+                    {borrower.centers?.name && <DetailItem label="Centre" value={borrower.centers.name} />}
                     {borrower.borrower_type === 'group' && <DetailItem label="Group" value={group?.name} />}
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader><CardTitle>Guarantor</CardTitle></CardHeader>
+                <CardContent className="space-y-1">
+                    <DetailItem label="Name" value={borrower.guarantor_name} />
+                    <DetailItem label="Phone" value={borrower.guarantor_phone} />
                 </CardContent>
             </Card>
         </div>
@@ -361,14 +377,15 @@ const BorrowerDetails = () => {
       </div>
 
       <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
-          <DialogContent className="max-w-5xl">
-              <DialogHeader>
+          <DialogContent className={SCHEDULE_DIALOG_CONTENT}>
+              <DialogHeader className="shrink-0">
                   <DialogTitle>Repayment Schedule for {selectedLoan?.loan_id}</DialogTitle>
                   <DialogDescription>
                       Borrower: {borrower.first_name} {borrower.surname} <br/>
                       Total Payable: {currency} {Number(selectedLoan?.total_payable).toLocaleString()}
                   </DialogDescription>
               </DialogHeader>
+              <div className={SCHEDULE_DIALOG_SCROLL}>
               <RepaymentScheduleGrid
                 schedule={selectedLoan?.schedule}
                 currency={currency}
@@ -402,6 +419,7 @@ const BorrowerDetails = () => {
                     : undefined
                 }
               />
+              </div>
           </DialogContent>
       </Dialog>
     </DashboardLayout>

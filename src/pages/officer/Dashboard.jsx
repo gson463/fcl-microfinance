@@ -10,17 +10,13 @@ import {
 	Users,
 	Loader2,
 	Banknote,
-	Wallet,
-	AlertTriangle,
 	TrendingUp,
 	Briefcase,
 	Building2,
-	User,
-	PiggyBank,
-	CircleDollarSign,
-	Landmark,
 	CalendarClock,
-	CalendarDays,
+	Sunrise,
+	AlertTriangle,
+	ShieldAlert,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -29,11 +25,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
-import {
-	defaultDashboardRange,
-	quickActionCardClass,
-	quickActionIconWrapClass,
-} from '@/components/dashboard/DashboardMetricShell';
+import { defaultDashboardRange, quickActionCardClass } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
 
 const OFFICER_CARD_SHELLS = [
@@ -168,6 +160,154 @@ const LoanOfficerDashboard = () => {
 		return `${currency} ${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 	};
 
+	const dailyFocusCards = useMemo(() => {
+		const z = stats || {};
+		const fc = (v) =>
+			`${currency} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+		return [
+			{
+				id: 'df_disb',
+				title: 'Today disbursements',
+				value: fc(z.disbursed_today ?? 0),
+				icon: TrendingUp,
+				shell: OFFICER_CARD_SHELLS[3],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — disbursements today',
+						metricKey: DRILLDOWN_METRICS.disbursed_today,
+						key: 'df-disb-drill',
+					},
+				],
+			},
+			{
+				id: 'df_clients_today',
+				title: 'Clients disbursed today',
+				value: String(z.borrowers_disbursed_today ?? 0),
+				icon: Users,
+				shell: OFFICER_CARD_SHELLS[2],
+				progressPct: 0,
+				subItems: [{ label: 'Borrowers list', path: '/officer/borrowers', key: 'df-cli-bor' }],
+			},
+			{
+				id: 'df_coll',
+				title: 'Today collection',
+				value: fc(z.collected_today ?? 0),
+				icon: Banknote,
+				shell: OFFICER_CARD_SHELLS[4],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — collected today',
+						metricKey: DRILLDOWN_METRICS.collected_today,
+						key: 'df-coll-drill',
+					},
+				],
+			},
+			{
+				id: 'df_exp',
+				title: 'Expected today',
+				value: fc(z.expected_today ?? 0),
+				icon: CalendarClock,
+				shell: OFFICER_CARD_SHELLS[10],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — expected today',
+						metricKey: DRILLDOWN_METRICS.expected_today,
+						key: 'df-exp-drill',
+					},
+				],
+			},
+			{
+				id: 'df_proj',
+				title: 'Projected tomorrow',
+				value: fc(z.expected_tomorrow ?? 0),
+				icon: Sunrise,
+				shell: OFFICER_CARD_SHELLS[11],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — projected tomorrow',
+						metricKey: DRILLDOWN_METRICS.expected_tomorrow,
+						key: 'df-proj-drill',
+					},
+				],
+			},
+			{
+				id: 'df_bor',
+				title: 'Total borrowers',
+				value: String(z.total_borrowers ?? 0),
+				icon: Users,
+				shell: OFFICER_CARD_SHELLS[0],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — your borrowers',
+						metricKey: DRILLDOWN_METRICS.my_borrowers,
+						key: 'df-bor-drill',
+					},
+				],
+			},
+		];
+	}, [stats, currency]);
+
+	const riskCards = useMemo(() => {
+		const z = stats || {};
+		const book = Number(z.loans_book_count) || 0;
+		const rate = (part, total) => {
+			const p = Number(part) || 0;
+			const t = Number(total) || 0;
+			if (t <= 0) return 0;
+			return Math.min(100, Math.round((p / t) * 100));
+		};
+		const ar = rate(z.loans_delinquent_count, book);
+		const dfp = rate(z.loans_defaulted_count, book);
+		const fc = (v) =>
+			`${currency} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+		const delN = Number(z.loans_delinquent_count) || 0;
+		const defN = Number(z.loans_defaulted_count) || 0;
+		return [
+			{
+				id: 'risk_arrears',
+				title: 'Arrears (delinquent)',
+				value: fc(z.portfolio_delinquent ?? 0),
+				icon: AlertTriangle,
+				shell: OFFICER_CARD_SHELLS[6],
+				progressPct: ar,
+				subItems: [
+					{
+						label: 'Open Arrears page',
+						path: '/arrears',
+						value: `${ar}% · ${delN} loan${delN === 1 ? '' : 's'} · book ${book}`,
+						key: 'risk-ar',
+					},
+				],
+			},
+			{
+				id: 'risk_default',
+				title: 'Defaulters',
+				value: fc(z.portfolio_defaulted ?? 0),
+				icon: ShieldAlert,
+				shell: OFFICER_CARD_SHELLS[8],
+				progressPct: dfp,
+				subItems: [
+					{
+						label: 'Open Defaulters page',
+						path: '/defaulters',
+						value: `${dfp}% · ${defN} loan${defN === 1 ? '' : 's'} · book ${book}`,
+						key: 'risk-def',
+					},
+					{
+						label: 'Drilldown — defaulted portfolio',
+						metricKey: DRILLDOWN_METRICS.portfolio_defaulted,
+						key: 'risk-def-drill',
+					},
+				],
+			},
+		];
+	}, [stats, currency]);
+
 	const openMetric = (metricKey, drillParams = {}) => {
 		const start = format(dateRange.from, 'yyyy-MM-dd');
 		const end = format(dateRange.to, 'yyyy-MM-dd');
@@ -228,19 +368,8 @@ const LoanOfficerDashboard = () => {
 
 	const portfolioTotal = Number(s.portfolio_general) || 0;
 
+	/** Expandable portfolio cards — officer only keeps Active Loans. */
 	const metricCards = [
-		{
-			id: 'borrowers',
-			title: 'My Borrowers',
-			value: String(s.total_borrowers ?? 0),
-			icon: User,
-			shell: OFFICER_CARD_SHELLS[0],
-			progressPct: pct(s.total_borrowers, 5000),
-			subItems: [
-				{ label: 'Borrowers list', path: '/officer/borrowers', key: 'b-b' },
-				{ label: 'My loans', path: '/officer/loans', key: 'b-l' },
-			],
-		},
 		{
 			id: 'active_loans',
 			title: 'Active Loans',
@@ -260,280 +389,6 @@ const LoanOfficerDashboard = () => {
 					value: formatCurrency(s.portfolio_defaulted),
 					metricKey: DRILLDOWN_METRICS.portfolio_defaulted,
 					key: 'al-def',
-				},
-			],
-		},
-		{
-			id: 'total_portfolio',
-			title: 'My Portfolio',
-			value: formatCurrency(s.portfolio_general),
-			icon: PiggyBank,
-			shell: OFFICER_CARD_SHELLS[2],
-			progressPct: portfolioTotal > 0 ? pct(s.portfolio_active, portfolioTotal) : 0,
-			subItems: [
-				{
-					label: 'Active',
-					value: formatCurrency(s.portfolio_active),
-					metricKey: DRILLDOWN_METRICS.portfolio_active,
-					key: 'tp-act',
-				},
-				{
-					label: 'Defaulted',
-					value: formatCurrency(s.portfolio_defaulted),
-					metricKey: DRILLDOWN_METRICS.portfolio_defaulted,
-					key: 'tp-def',
-				},
-				{
-					label: 'General',
-					value: formatCurrency(s.portfolio_general),
-					metricKey: DRILLDOWN_METRICS.portfolio_general,
-					key: 'tp-gen',
-				},
-			],
-		},
-		{
-			id: 'principal_disbursed',
-			title: 'Principal Disbursed',
-			value: formatCurrency(s.disbursed_overall),
-			icon: TrendingUp,
-			shell: OFFICER_CARD_SHELLS[3],
-			progressPct: pct(s.disbursed_monthly, s.disbursed_overall),
-			subItems: [
-				{
-					label: 'Monthly',
-					value: formatCurrency(s.disbursed_monthly),
-					metricKey: DRILLDOWN_METRICS.disbursed_monthly,
-					key: 'pd-m',
-				},
-				{
-					label: 'Yearly',
-					value: formatCurrency(s.disbursed_yearly),
-					metricKey: DRILLDOWN_METRICS.disbursed_yearly,
-					key: 'pd-y',
-				},
-				{
-					label: 'Overall',
-					value: formatCurrency(s.disbursed_overall),
-					metricKey: DRILLDOWN_METRICS.disbursed_overall,
-					key: 'pd-o',
-				},
-			],
-		},
-		{
-			id: 'principal_collected',
-			title: 'Principal Collected',
-			value: formatCurrency(s.collected_month_principal),
-			icon: Banknote,
-			shell: OFFICER_CARD_SHELLS[4],
-			progressPct: pct(s.collected_month_principal, s.collected_month_total),
-			subItems: [
-				{
-					label: 'Principal',
-					value: formatCurrency(s.collected_month_principal),
-					metricKey: DRILLDOWN_METRICS.collected_month_principal,
-					key: 'pc-p',
-				},
-				{
-					label: 'Interest',
-					value: formatCurrency(s.collected_month_interest),
-					metricKey: DRILLDOWN_METRICS.collected_month_interest,
-					key: 'pc-i',
-				},
-				{
-					label: 'Total (P+I)',
-					value: formatCurrency(s.collected_month_total),
-					metricKey: DRILLDOWN_METRICS.collected_month_total,
-					key: 'pc-t',
-				},
-			],
-		},
-		{
-			id: 'interest_collected',
-			title: 'Interest Collected',
-			value: formatCurrency(s.collected_month_interest),
-			icon: CircleDollarSign,
-			shell: OFFICER_CARD_SHELLS[5],
-			progressPct: pct(s.collected_month_interest, s.collected_month_total),
-			subItems: [
-				{
-					label: 'Principal',
-					value: formatCurrency(s.collected_month_principal),
-					metricKey: DRILLDOWN_METRICS.collected_month_principal,
-					key: 'ic-p',
-				},
-				{
-					label: 'Interest',
-					value: formatCurrency(s.collected_month_interest),
-					metricKey: DRILLDOWN_METRICS.collected_month_interest,
-					key: 'ic-i',
-				},
-				{
-					label: 'Total (P+I)',
-					value: formatCurrency(s.collected_month_total),
-					metricKey: DRILLDOWN_METRICS.collected_month_total,
-					key: 'ic-t',
-				},
-			],
-		},
-		{
-			id: 'outstanding_principal',
-			title: 'Outstanding Principal',
-			value: formatCurrency(s.outstanding_principal),
-			icon: Landmark,
-			shell: OFFICER_CARD_SHELLS[6],
-			progressPct: pct(s.outstanding_principal, s.outstanding_total),
-			subItems: [
-				{
-					label: 'Principal',
-					value: formatCurrency(s.outstanding_principal),
-					metricKey: DRILLDOWN_METRICS.outstanding_principal,
-					key: 'op-p',
-				},
-				{
-					label: 'Interest',
-					value: formatCurrency(s.outstanding_interest),
-					metricKey: DRILLDOWN_METRICS.outstanding_interest,
-					key: 'op-i',
-				},
-				{
-					label: 'Total (P+I)',
-					value: formatCurrency(s.outstanding_total),
-					metricKey: DRILLDOWN_METRICS.outstanding_total,
-					key: 'op-t',
-				},
-			],
-		},
-		{
-			id: 'outstanding_interest',
-			title: 'Outstanding Interest',
-			value: formatCurrency(s.outstanding_interest),
-			icon: Wallet,
-			shell: OFFICER_CARD_SHELLS[7],
-			progressPct: pct(s.outstanding_interest, s.outstanding_total),
-			subItems: [
-				{
-					label: 'Principal',
-					value: formatCurrency(s.outstanding_principal),
-					metricKey: DRILLDOWN_METRICS.outstanding_principal,
-					key: 'oi-p',
-				},
-				{
-					label: 'Interest',
-					value: formatCurrency(s.outstanding_interest),
-					metricKey: DRILLDOWN_METRICS.outstanding_interest,
-					key: 'oi-i',
-				},
-				{
-					label: 'Total (P+I)',
-					value: formatCurrency(s.outstanding_total),
-					metricKey: DRILLDOWN_METRICS.outstanding_total,
-					key: 'oi-t',
-				},
-			],
-		},
-		{
-			id: 'defaulted_principal',
-			title: 'Defaulted Principal',
-			value: formatCurrency(s.default_disbursed_principal),
-			icon: AlertTriangle,
-			shell: OFFICER_CARD_SHELLS[8],
-			progressPct: pct(s.default_disbursed_principal, s.default_total_amount),
-			subItems: [
-				{
-					label: 'Disbursed principal',
-					value: formatCurrency(s.default_disbursed_principal),
-					metricKey: DRILLDOWN_METRICS.default_disbursed,
-					key: 'df-p',
-				},
-				{
-					label: 'Interest amount',
-					value: formatCurrency(s.default_interest_amount),
-					metricKey: DRILLDOWN_METRICS.default_interest,
-					key: 'df-i',
-				},
-				{
-					label: 'Total amount',
-					value: formatCurrency(s.default_total_amount),
-					metricKey: DRILLDOWN_METRICS.default_total,
-					key: 'df-t',
-				},
-			],
-		},
-		{
-			id: 'defaulted_interest',
-			title: 'Defaulted Interest',
-			value: formatCurrency(s.default_interest_amount),
-			icon: AlertTriangle,
-			shell: OFFICER_CARD_SHELLS[9],
-			progressPct: pct(s.default_interest_amount, s.default_total_amount),
-			subItems: [
-				{
-					label: 'Disbursed principal',
-					value: formatCurrency(s.default_disbursed_principal),
-					metricKey: DRILLDOWN_METRICS.default_disbursed,
-					key: 'di-p',
-				},
-				{
-					label: 'Interest amount',
-					value: formatCurrency(s.default_interest_amount),
-					metricKey: DRILLDOWN_METRICS.default_interest,
-					key: 'di-i',
-				},
-				{
-					label: 'Total amount',
-					value: formatCurrency(s.default_total_amount),
-					metricKey: DRILLDOWN_METRICS.default_total,
-					key: 'di-t',
-				},
-			],
-		},
-		{
-			id: 'expected_today',
-			title: 'Expected Today',
-			value: formatCurrency(s.expected_today ?? 0),
-			icon: CalendarClock,
-			shell: OFFICER_CARD_SHELLS[10],
-			progressPct: pct(s.expected_today, s.collected_month_total),
-			subItems: [
-				{
-					label: 'Due today (installments)',
-					value: formatCurrency(s.expected_today ?? 0),
-					metricKey: DRILLDOWN_METRICS.expected_today,
-					key: 'ex-t',
-				},
-				{
-					label: 'Repayments this month',
-					value: formatCurrency(s.collected_month_total),
-					metricKey: DRILLDOWN_METRICS.collected_month_total,
-					key: 'ex-r',
-				},
-			],
-		},
-		{
-			id: 'disbursed_month',
-			title: 'Disbursed This Month',
-			value: formatCurrency(s.disbursed_monthly),
-			icon: CalendarDays,
-			shell: OFFICER_CARD_SHELLS[11],
-			progressPct: pct(s.disbursed_monthly, s.disbursed_overall),
-			subItems: [
-				{
-					label: 'Monthly',
-					value: formatCurrency(s.disbursed_monthly),
-					metricKey: DRILLDOWN_METRICS.disbursed_monthly,
-					key: 'dm-m',
-				},
-				{
-					label: 'Yearly',
-					value: formatCurrency(s.disbursed_yearly),
-					metricKey: DRILLDOWN_METRICS.disbursed_yearly,
-					key: 'dm-y',
-				},
-				{
-					label: 'Overall',
-					value: formatCurrency(s.disbursed_overall),
-					metricKey: DRILLDOWN_METRICS.disbursed_overall,
-					key: 'dm-o',
 				},
 			],
 		},
@@ -590,7 +445,64 @@ const LoanOfficerDashboard = () => {
 					</div>
 				) : (
 					<>
-						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+						<div className="space-y-2">
+							<h3 className="font-display text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+								Today&apos;s focus
+							</h3>
+							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+								{dailyFocusCards.map((c) => {
+									const Icon = c.icon;
+									return (
+										<AdminExpandableMetricCard
+											key={c.id}
+											cardId={c.id}
+											expandedId={expandedCardId}
+											onToggle={toggleCard}
+											title={c.title}
+											value={c.value}
+											icon={Icon}
+											shellClass={c.shell}
+											progressPct={c.progressPct}
+											subItems={c.subItems}
+											onDrillMetric={openMetric}
+											onNavigatePath={navigatePath}
+										/>
+									);
+								})}
+							</div>
+						</div>
+
+						<div className="space-y-2">
+							<h3 className="font-display text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+								Arrears &amp; defaulters
+							</h3>
+							<p className="text-xs text-neutral-500 dark:text-neutral-400">
+								Portfolio balance (delinquent / defaulted). KPI % is share of your live loan book. Expand for deep links.
+							</p>
+							<div className="grid gap-3 sm:grid-cols-2">
+								{riskCards.map((c) => {
+									const Icon = c.icon;
+									return (
+										<AdminExpandableMetricCard
+											key={c.id}
+											cardId={c.id}
+											expandedId={expandedCardId}
+											onToggle={toggleCard}
+											title={c.title}
+											value={c.value}
+											icon={Icon}
+											shellClass={c.shell}
+											progressPct={c.progressPct}
+											subItems={c.subItems}
+											onDrillMetric={openMetric}
+											onNavigatePath={navigatePath}
+										/>
+									);
+								})}
+							</div>
+						</div>
+
+						<div className="grid max-w-md grid-cols-1 gap-3">
 							{metricCards.map((c) => (
 								<AdminExpandableMetricCard
 									key={c.id}
@@ -610,8 +522,8 @@ const LoanOfficerDashboard = () => {
 						</div>
 
 						<div>
-							<h3 className="mb-4 font-display text-lg font-bold text-neutral-900 dark:text-neutral-100">Quick actions</h3>
-							<div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+							<h3 className="mb-2 font-display text-base font-bold text-neutral-900 dark:text-neutral-100">Quick actions</h3>
+							<div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
 								{quickActions.map((action, index) => {
 									const Icon = action.icon;
 									return (
@@ -624,13 +536,15 @@ const LoanOfficerDashboard = () => {
 											className="cursor-pointer"
 										>
 											<Card className={cn('h-full transition', quickActionCardClass(index))}>
-												<CardContent className="flex flex-col items-center p-6 text-center">
-													<div className={quickActionIconWrapClass}>
-														<Icon className="h-7 w-7" />
+												<CardContent className="flex flex-col items-center px-3 py-3 text-center sm:px-4 sm:py-3.5">
+													<div className="mb-2 rounded-lg bg-white/20 p-2 text-white shadow-inner ring-1 ring-white/25 backdrop-blur-sm">
+														<Icon className="h-5 w-5" />
 													</div>
-													<CardTitle className="text-base">{action.title}</CardTitle>
-													<CardDescription className="mt-1">{action.description}</CardDescription>
-													<Button variant="outline" size="sm" className="mt-4">
+													<CardTitle className="text-sm font-semibold leading-tight">{action.title}</CardTitle>
+													<CardDescription className="mt-0.5 line-clamp-2 text-center text-xs text-white/85">
+														{action.description}
+													</CardDescription>
+													<Button variant="outline" size="sm" className="mt-2 h-8 px-3 text-xs">
 														Open
 													</Button>
 												</CardContent>
