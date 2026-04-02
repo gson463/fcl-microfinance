@@ -14,7 +14,7 @@ export async function geoLabelFromIp(ip: string | null): Promise<string | null> 
   if (!ip) return null;
   try {
     const r = await fetch(`https://ipapi.co/${encodeURIComponent(ip)}/json/`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(3000),
     });
     const j = await r.json() as Record<string, unknown>;
     if (j.error) return null;

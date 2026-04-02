@@ -14,6 +14,10 @@ import { exportObjectsToCsv } from '@/lib/tableExport';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useDate } from '@/contexts/DateContext';
+import {
+  getInstallmentUnitFromSchedule,
+  roundToValidRepaymentAmount,
+} from '@/lib/repaymentInstallmentUnit.js';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -165,6 +169,22 @@ const ArrearsManagement = () => {
             return false;
         }
 
+        const payStr = formatTZ(currentDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
+        const { data: dueRaw, error: dueErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+            p_schedule: loan.schedule ?? null,
+            p_payment_date: payStr,
+        });
+        if (dueErr) {
+            toast({ title: 'Error', description: dueErr.message, variant: 'destructive' });
+            return false;
+        }
+        const due = Number(dueRaw ?? 0);
+        const unit = getInstallmentUnitFromSchedule(loan.schedule);
+        let payAmount = loan.arrearsAmount;
+        if (unit != null) {
+            payAmount = roundToValidRepaymentAmount(Math.max(loan.arrearsAmount, due), due, unit);
+        }
+
         setClearingLoanId(loan.id);
         try {
             const { error } = await invokeEdgeFunction(
@@ -172,9 +192,9 @@ const ArrearsManagement = () => {
                 {
                     body: {
                         loan_id: loan.id,
-                        amount: loan.arrearsAmount,
+                        amount: payAmount,
                         officer_id: user.id,
-                        actual_payment_date: formatTZ(currentDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
+                        actual_payment_date: payStr,
                     },
                 },
                 session?.access_token,
@@ -343,7 +363,8 @@ const ArrearsManagement = () => {
                                                     <AlertDialogHeader>
                                                         <AlertDialogTitle>Confirm Arrears Clearance</AlertDialogTitle>
                                                         <AlertDialogDescription>
-                                                            This will record a payment of {currency} {loan.arrearsAmount.toLocaleString()} for loan {loan.loan_id}. Are you sure?
+                                                            This will record a repayment covering arrears for loan {loan.loan_id}. The amount may be rounded up to the next
+                                                            valid multiple of the installment size. Are you sure?
                                                         </AlertDialogDescription>
                                                     </AlertDialogHeader>
                                                     <AlertDialogFooter>

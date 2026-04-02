@@ -23,8 +23,10 @@ import { Eye, Briefcase, DollarSign, AlertTriangle, Calendar as CalendarIconLuci
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
+import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
+const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
@@ -60,6 +62,10 @@ const AdminLoanManagement = () => {
     const [statusFilter, setStatusFilter] = useState('all');
     const [productFilter, setProductFilter] = useState('all');
     const [officerFilter, setOfficerFilter] = useState('all');
+    const [centerFilter, setCenterFilter] = useState('all');
+    const [groupFilter, setGroupFilter] = useState('all');
+    const [centers, setCenters] = useState([]);
+    const [groups, setGroups] = useState([]);
     const [dateRange, setDateRange] = useState({ from: undefined, to: undefined });
     const [page, setPage] = useState(1);
 
@@ -96,7 +102,7 @@ const AdminLoanManagement = () => {
         const { data: loansData, error: loansError } = await supabase
             .from('loans')
             .select(
-                `*, borrowers(*, groups(name), branches(name)), loan_products(name), officer:users!officer_id ( id, full_name, branch_id )`
+                `${LOAN_BORROWER_SELECT}, officer:users!officer_id ( id, full_name, branch_id )`
             );
 
         // Fetch Products
@@ -130,6 +136,45 @@ const AdminLoanManagement = () => {
         }
     }, [branchFilter, officerFilter, officers]);
 
+    useEffect(() => {
+        if (officerFilter === 'all') {
+            setCenterFilter('all');
+            setGroupFilter('all');
+        }
+    }, [officerFilter]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (officerFilter === 'all') {
+            setCenters([]);
+            return;
+        }
+        (async () => {
+            let q = supabase.from('centers').select('id, name').eq('loan_officer_id', officerFilter).order('name');
+            if (branchFilter !== 'all') q = q.eq('branch_id', branchFilter);
+            const { data } = await q;
+            if (!cancelled) setCenters(data || []);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [officerFilter, branchFilter]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (centerFilter === 'all') {
+            setGroups([]);
+            return;
+        }
+        (async () => {
+            const { data } = await supabase.from('groups').select('id, name').eq('center_id', centerFilter).order('name');
+            if (!cancelled) setGroups(data || []);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [centerFilter]);
+
     const filteredLoans = useMemo(() => {
         return loans.filter(loan => {
             const borrowerName = `${loan.borrowers?.first_name || ''} ${loan.borrowers?.surname || ''}`.toLowerCase();
@@ -139,6 +184,8 @@ const AdminLoanManagement = () => {
             const matchesProduct = productFilter === 'all' || loan.product_id === productFilter;
             const matchesOfficer = officerFilter === 'all' || loan.officer_id === officerFilter;
             const matchesBranch = branchFilter === 'all' || loan.officer?.branch_id === branchFilter;
+            const matchesCenter = borrowerMatchesCenter(loan.borrowers, centerFilter);
+            const matchesGroup = borrowerMatchesGroup(loan.borrowers, groupFilter);
             
             let matchesDate = true;
             if (dateRange.from && dateRange.to) {
@@ -148,13 +195,13 @@ const AdminLoanManagement = () => {
                 matchesDate = toZonedTime(new Date(loan.disbursement_date), EAT_TIMEZONE) >= toZonedTime(dateRange.from, EAT_TIMEZONE);
             }
 
-            return matchesSearch && matchesStatus && matchesProduct && matchesOfficer && matchesBranch && matchesDate;
+            return matchesSearch && matchesStatus && matchesProduct && matchesOfficer && matchesBranch && matchesCenter && matchesGroup && matchesDate;
         });
-    }, [loans, searchQuery, statusFilter, productFilter, officerFilter, branchFilter, dateRange]);
+    }, [loans, searchQuery, statusFilter, productFilter, officerFilter, branchFilter, centerFilter, groupFilter, dateRange]);
 
     useEffect(() => {
         setPage(1);
-    }, [searchQuery, statusFilter, productFilter, officerFilter, branchFilter, dateRange]);
+    }, [searchQuery, statusFilter, productFilter, officerFilter, branchFilter, centerFilter, groupFilter, dateRange]);
 
     const pagedLoans = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
@@ -198,7 +245,7 @@ const AdminLoanManagement = () => {
             
             const { data: latestLoanData, error } = await supabase
                 .from('loans')
-                .select(`*, borrowers(*, groups(name), branches(name)), loan_products(name)`)
+                .select(`${LOAN_BORROWER_SELECT}`)
                 .eq('id', loan.id)
                 .single();
                 
@@ -260,10 +307,18 @@ const AdminLoanManagement = () => {
                     <CardHeader>
                         <div className="flex flex-col gap-4">
                             <CardTitle>Loans List</CardTitle>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4">
                                 <Input placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                                 
-                                <Select value={branchFilter} onValueChange={setBranchFilter}>
+                                <Select
+                                    value={branchFilter}
+                                    onValueChange={(v) => {
+                                        setBranchFilter(v);
+                                        setOfficerFilter('all');
+                                        setCenterFilter('all');
+                                        setGroupFilter('all');
+                                    }}
+                                >
                                     <SelectTrigger><SelectValue placeholder="Filter by Branch" /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="all">All Branches</SelectItem>
@@ -271,11 +326,49 @@ const AdminLoanManagement = () => {
                                     </SelectContent>
                                 </Select>
 
-                                <Select value={officerFilter} onValueChange={setOfficerFilter}>
+                                <Select
+                                    value={officerFilter}
+                                    onValueChange={(v) => {
+                                        setOfficerFilter(v);
+                                        setCenterFilter('all');
+                                        setGroupFilter('all');
+                                    }}
+                                >
                                     <SelectTrigger><SelectValue placeholder="Filter by Officer" /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="all">All Officers</SelectItem>
                                         {filteredOfficers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}
+                                    </SelectContent>
+                                </Select>
+
+                                <Select
+                                    value={centerFilter}
+                                    onValueChange={(v) => {
+                                        setCenterFilter(v);
+                                        setGroupFilter('all');
+                                    }}
+                                    disabled={officerFilter === 'all'}
+                                >
+                                    <SelectTrigger><SelectValue placeholder={officerFilter === 'all' ? 'Select officer first' : 'Center'} /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All centers</SelectItem>
+                                        {centers.map((c) => (
+                                            <SelectItem key={c.id} value={c.id}>
+                                                {c.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+
+                                <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
+                                    <SelectTrigger><SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All groups</SelectItem>
+                                        {groups.map((g) => (
+                                            <SelectItem key={g.id} value={g.id}>
+                                                {g.name}
+                                            </SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                                 

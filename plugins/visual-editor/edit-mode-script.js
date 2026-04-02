@@ -1,5 +1,6 @@
+// Absolute path: this script is injected inline, so relative imports resolve from the page URL (e.g. /officer/...) and 404.
 // eslint-disable-next-line import/no-unresolved
-import { POPUP_STYLES } from "./plugins/visual-editor/visual-editor-config.js";
+import { POPUP_STYLES } from "/plugins/visual-editor/visual-editor-config.js";
 
 const PLUGIN_APPLY_EDIT_API_URL = "/api/apply-edit";
 

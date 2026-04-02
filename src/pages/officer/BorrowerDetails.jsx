@@ -121,8 +121,8 @@ const BorrowerDetails = () => {
         ["ID Type:", idTypeMap[borrower.identification_type]],
         ["ID Number:", borrower.identification_number],
         ...(borrower.centers?.name ? [["Centre:", borrower.centers.name]] : []),
-        ...(borrower.guarantor_name ? [["Mdhamini / Guarantor:", borrower.guarantor_name]] : []),
-        ...(borrower.guarantor_phone ? [["Simu ya mdhamini:", borrower.guarantor_phone]] : []),
+        ...(borrower.guarantor_name ? [['Guarantor:', borrower.guarantor_name]] : []),
+        ...(borrower.guarantor_phone ? [['Guarantor phone:', borrower.guarantor_phone]] : []),
         ["Report Date:", new Date(serverDate).toLocaleDateString()],
     ];
 
@@ -191,8 +191,8 @@ const BorrowerDetails = () => {
         ["ID Type", idTypeMap[borrower.identification_type]],
         ["ID Number", borrower.identification_number],
         ...(borrower.centers?.name ? [["Centre", borrower.centers.name]] : []),
-        ...(borrower.guarantor_name ? [["Mdhamini / Guarantor", borrower.guarantor_name]] : []),
-        ...(borrower.guarantor_phone ? [["Simu ya mdhamini", borrower.guarantor_phone]] : []),
+        ...(borrower.guarantor_name ? [['Guarantor', borrower.guarantor_name]] : []),
+        ...(borrower.guarantor_phone ? [['Guarantor phone', borrower.guarantor_phone]] : []),
         ["Report Date", new Date(serverDate).toLocaleDateString()],
     ];
     const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);

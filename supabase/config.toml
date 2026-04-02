@@ -19,8 +19,9 @@ verify_jwt = false
 [functions.delete-all-other-users]
 verify_jwt = false
 
+# Gateway JWT check can false-negative (valid session still 401); function uses service role for DB.
 [functions.record-repayment]
-verify_jwt = true
+verify_jwt = false
 
 [functions.log-audit]
 verify_jwt = true

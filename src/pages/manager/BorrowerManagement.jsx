@@ -114,8 +114,8 @@ const ManagerBorrowerManagement = () => {
     const selectedIds = borrowers.filter((b) => bulk.isSelected(b.id) && b.status === 'paid_up').map((b) => b.id);
     if (selectedIds.length === 0) {
       toast({
-        title: 'Hakuna wateja wa kuchagua',
-        description: 'Chagua wadaiwa walio katika hali ya \"Paid Up\" tu ndio waweze kuwekwa Eligible.',
+        title: 'No eligible selection',
+        description: 'Select borrowers whose status is “Paid Up” only — they can be marked Eligible.',
         variant: 'destructive',
       });
       return;
@@ -145,7 +145,7 @@ const ManagerBorrowerManagement = () => {
   const getStatusText = (status) => {
     const statusTextMap = {
       eligible: 'Eligible',
-      pending: 'Pending',
+      pending: 'Pending — re-loan approval',
       active: 'Active',
       active_loan: 'Active Loan',
       defaulted: 'Defaulted',
@@ -219,7 +219,7 @@ const ManagerBorrowerManagement = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
                   <SelectItem value="eligible">Eligible</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="active_loan">Active Loan</SelectItem>
@@ -320,7 +320,7 @@ const ManagerBorrowerManagement = () => {
           <DialogHeader>
             <DialogTitle>Update borrower status</DialogTitle>
             <DialogDescription>
-              Only managers should set <strong>Eligible</strong> for new loans. Loan officers register borrowers as Pending.
+              New registrations are <strong>eligible</strong> immediately. Use <strong>Eligible</strong> here when an officer has requested a new loan after default (status was pending) — only then can the officer disburse.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -338,7 +338,7 @@ const ManagerBorrowerManagement = () => {
                   <SelectValue placeholder="Select a status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
                   <SelectItem value="eligible">Eligible</SelectItem>
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="active_loan">Active Loan</SelectItem>

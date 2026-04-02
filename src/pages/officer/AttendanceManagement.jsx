@@ -399,8 +399,8 @@ const AttendanceManagement = () => {
   const runPrintCompiledPdf = async () => {
     if (!compileMeetingIds.length) {
       toast({
-        title: 'Chagua mikutano',
-        description: 'Weka alama kwenye angalau mkutano mmoja.',
+        title: 'Select meetings',
+        description: 'Tick at least one meeting.',
         variant: 'destructive',
       });
       return;
@@ -474,7 +474,7 @@ const AttendanceManagement = () => {
       });
       toast({
         title: 'PDF ready',
-        description: 'Ripoti ya mikutano iliyochaguliwa imepakuliwa (data iliyohifadhiwa).',
+        description: 'Download started for the selected meetings (saved data).',
       });
     } catch (e) {
       toast({ title: 'PDF error', description: e?.message || 'Could not generate PDF.', variant: 'destructive' });
@@ -730,22 +730,22 @@ const AttendanceManagement = () => {
               <CardHeader>
                 <CardTitle>Compile &amp; print (multiple meetings)</CardTitle>
                 <CardDescription>
-                  Chagua mikutano mingi (hata kutoka vituo tofauti). PDF moja ina jedwali: kila tarehe = P (present), A (absent), R (ruhusa),
-                  au — (hakuna rekodi). Σ P = idadi ya mikutano aliyohudhuria (present pekee; ruhusa haihesabiwi).
+                  Select multiple meetings (even across centres). One PDF: each date = P (present), A (absent), R (leave), or — (no
+                  record). Σ P = meetings attended as present only (leave does not count).
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={compileSelectAllMeetings} disabled={!meetings.length}>
-                    Chagua yote
+                    Select all
                   </Button>
                   <Button type="button" variant="ghost" size="sm" onClick={compileClearSelection} disabled={!compileMeetingIds.length}>
-                    Futa uteuzi
+                    Clear selection
                   </Button>
                 </div>
                 <div className="max-h-56 overflow-y-auto rounded-md border p-3 space-y-2">
                   {meetings.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Hakuna mikutano bado.</p>
+                    <p className="text-sm text-muted-foreground">No meetings yet.</p>
                   ) : (
                     meetings.map((m) => (
                       <label key={m.id} className="flex items-center gap-2 text-sm cursor-pointer">

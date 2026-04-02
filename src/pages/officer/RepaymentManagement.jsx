@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { format, parseISO, startOfDay, endOfDay, isAfter, isBefore, isSunday } from 'date-fns';
-import { format as formatTZ, toZonedTime } from 'date-fns-tz';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
+import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
@@ -24,9 +24,36 @@ import { Edit, Trash2, Calendar as CalendarIcon, FileDown, Download, Eye, Loader
 import * as XLSX from 'xlsx';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
+import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
+import {
+    getInstallmentUnitFromSchedule,
+    isValidRepaymentAmount,
+    repaymentAmountValidationMessage,
+    roundToValidRepaymentAmount,
+} from '@/lib/repaymentInstallmentUnit.js';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
+
+/** Calendar “today” in Nairobi for date inputs and validation (avoids timezone off-by-one). */
+function getTodayEATDateForForm() {
+    const s = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
+function isSundayInTimeZone(date, timeZone) {
+    const w = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(date);
+    return w === 'Sunday';
+}
+
+/** Minimum allowed repayment: scheduled due for the date, or a token positive if nothing is due (prepayment-only). */
+function minimumRepaymentForDue(scheduledDue) {
+    const d = Number(scheduledDue);
+    if (!Number.isFinite(d) || d < 0) return 0.01;
+    return d > 0 ? d : 0.01;
+}
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -46,6 +73,7 @@ const RepaymentManagement = () => {
     const [repayments, setRepayments] = useState([]);
     const [loans, setLoans] = useState([]);
     const [groups, setGroups] = useState([]);
+    const [centers, setCenters] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currency, setCurrency] = useState('TZS');
@@ -56,21 +84,34 @@ const RepaymentManagement = () => {
     const [isRefreshingSchedule, setIsRefreshingSchedule] = useState(false);
     const [currentRepayment, setCurrentRepayment] = useState(null);
     const [editForm, setEditForm] = useState({ amount: '', payment_date: '' });
-    const [repaymentFormData, setRepaymentFormData] = useState({ loanId: '', amount: '', payment_date: new Date() });
+    const [repaymentFormData, setRepaymentFormData] = useState(() => ({
+        loanId: '',
+        amount: '',
+        payment_date: getTodayEATDateForForm(),
+    }));
+    const [pickerCenterFilter, setPickerCenterFilter] = useState('all');
+    const [pickerGroupFilter, setPickerGroupFilter] = useState('all');
     const [loanPickerSearch, setLoanPickerSearch] = useState('');
+    /** Unpaid amount for installments due exactly on the payment date (auto-fill). */
+    const [pickerDueOnSelectedDate, setPickerDueOnSelectedDate] = useState(null);
+    /** Full unpaid amount due on or before payment date (minimum payment / prepayment split in backend). */
+    const [pickerTotalDueOnOrBefore, setPickerTotalDueOnOrBefore] = useState(null);
+    const prevPickerDueKeyRef = useRef('');
     const [selectedRepayments, setSelectedRepayments] = useState([]);
     const [pendingDeleteRepaymentIds, setPendingDeleteRepaymentIds] = useState(() => new Set());
 
     // Filters
-    const [borrowerFilter, setBorrowerFilter] = useState('all');
     const [groupFilter, setGroupFilter] = useState('all');
+    const [centerFilter, setCenterFilter] = useState('all');
+    const [borrowerStatusFilter, setBorrowerStatusFilter] = useState('all');
     const [dateRangeFilter, setDateRangeFilter] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(1);
 
     const resetFilters = () => {
-        setBorrowerFilter('all');
         setGroupFilter('all');
+        setCenterFilter('all');
+        setBorrowerStatusFilter('all');
         setDateRangeFilter(null);
         setSearchTerm('');
         setSelectedRepayments([]);
@@ -78,8 +119,13 @@ const RepaymentManagement = () => {
     };
     
     const resetRepaymentForm = () => {
-        setRepaymentFormData({ loanId: '', amount: '', payment_date: new Date() });
+        setPickerCenterFilter('all');
+        setPickerGroupFilter('all');
+        setRepaymentFormData({ loanId: '', amount: '', payment_date: getTodayEATDateForForm() });
         setLoanPickerSearch('');
+        setPickerDueOnSelectedDate(null);
+        setPickerTotalDueOnOrBefore(null);
+        prevPickerDueKeyRef.current = '';
     };
 
     const fetchData = useCallback(async () => {
@@ -117,6 +163,14 @@ const RepaymentManagement = () => {
             if (groupsError) throw groupsError;
             setGroups(groupsData || []);
 
+            let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
+            if (user.user_metadata?.branch_id) {
+                centersQuery = centersQuery.eq('branch_id', user.user_metadata.branch_id);
+            }
+            const { data: centersData, error: centersError } = await centersQuery;
+            if (centersError) throw centersError;
+            setCenters(centersData || []);
+
         } catch (error) {
             toast({ title: 'Error fetching data', description: error.message, variant: 'destructive' });
         } finally {
@@ -128,10 +182,111 @@ const RepaymentManagement = () => {
         fetchData();
     }, [fetchData]);
 
+    useEffect(() => {
+        if (centerFilter === 'all') {
+            setGroupFilter('all');
+        }
+    }, [centerFilter]);
+
+    useEffect(() => {
+        if (pickerCenterFilter === 'all') {
+            setPickerGroupFilter('all');
+        }
+    }, [pickerCenterFilter]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const id = repaymentFormData.loanId;
+        const payDate = formatInTimeZone(repaymentFormData.payment_date, EAT_TIMEZONE, 'yyyy-MM-dd');
+        const key = `${id}|${payDate}`;
+
+        if (!id) {
+            setPickerDueOnSelectedDate(null);
+            setPickerTotalDueOnOrBefore(null);
+            prevPickerDueKeyRef.current = '';
+            return;
+        }
+
+        const loan = loans.find((l) => l.id === id);
+        if (!loan) {
+            setPickerDueOnSelectedDate(null);
+            setPickerTotalDueOnOrBefore(null);
+            return;
+        }
+
+        (async () => {
+            const [onDateRes, totalRes] = await Promise.all([
+                supabase.rpc('scheduled_due_on_date_only', {
+                    p_schedule: loan.schedule ?? null,
+                    p_payment_date: payDate,
+                }),
+                supabase.rpc('scheduled_due_for_payment_date', {
+                    p_schedule: loan.schedule ?? null,
+                    p_payment_date: payDate,
+                }),
+            ]);
+            if (cancelled) return;
+            if (onDateRes.error) {
+                console.error(onDateRes.error);
+                setPickerDueOnSelectedDate(null);
+            } else {
+                setPickerDueOnSelectedDate(Number(onDateRes.data ?? 0));
+            }
+            if (totalRes.error) {
+                console.error(totalRes.error);
+                setPickerTotalDueOnOrBefore(null);
+            } else {
+                setPickerTotalDueOnOrBefore(Number(totalRes.data ?? 0));
+            }
+            if (onDateRes.error && totalRes.error) {
+                return;
+            }
+
+            const onDate = Number(onDateRes.data ?? 0);
+            const totalDue = Number(totalRes.data ?? 0);
+            const unit = getInstallmentUnitFromSchedule(loan.schedule);
+            const shouldAutoFill = prevPickerDueKeyRef.current !== key;
+            prevPickerDueKeyRef.current = key;
+            if (shouldAutoFill) {
+                if (unit == null) {
+                    if (onDate > 0) {
+                        setRepaymentFormData((prev) =>
+                            prev.loanId === id ? { ...prev, amount: onDate.toFixed(2) } : prev
+                        );
+                    } else {
+                        setRepaymentFormData((prev) => (prev.loanId === id ? { ...prev, amount: '' } : prev));
+                    }
+                } else {
+                    const dueForMin = Math.max(totalDue, onDate);
+                    if (dueForMin <= 0) {
+                        setRepaymentFormData((prev) => (prev.loanId === id ? { ...prev, amount: '' } : prev));
+                    } else {
+                        // Default to one installment.
+                        setRepaymentFormData((prev) =>
+                            prev.loanId === id ? { ...prev, amount: unit.toFixed(2) } : prev
+                        );
+                    }
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [repaymentFormData.loanId, repaymentFormData.payment_date, loans]);
+
+    const groupsForFilter = useMemo(() => {
+        if (centerFilter === 'all') return [];
+        return groups.filter((g) => g.center_id === centerFilter);
+    }, [groups, centerFilter]);
+
     const filteredRepayments = useMemo(() => {
         return repayments.filter(r => {
-            const borrowerMatch = borrowerFilter === 'all' || r.borrower_id === borrowerFilter;
-            const groupMatch = groupFilter === 'all' || r.loans?.borrowers?.group_id === groupFilter;
+            const borrowerRow = r.loans?.borrowers;
+            const centerMatch = borrowerMatchesCenter(borrowerRow, centerFilter);
+            const groupMatch = borrowerMatchesGroup(borrowerRow, groupFilter);
+            const statusMatch =
+                borrowerStatusFilter === 'all' || borrowerRow?.status === borrowerStatusFilter;
             const dateMatch = !dateRangeFilter?.from || (
                 new Date(r.actual_payment_date) >= startOfDay(dateRangeFilter.from) &&
                 new Date(r.actual_payment_date) <= endOfDay(dateRangeFilter.to || dateRangeFilter.from)
@@ -149,13 +304,13 @@ const RepaymentManagement = () => {
                 borrowerName.includes(searchLower) ||
                 borrowerId.includes(searchLower);
 
-            return borrowerMatch && groupMatch && dateMatch && searchMatch;
+            return centerMatch && groupMatch && statusMatch && dateMatch && searchMatch;
         });
-    }, [repayments, borrowerFilter, groupFilter, dateRangeFilter, searchTerm]);
+    }, [repayments, centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
 
     useEffect(() => {
         setPage(1);
-    }, [borrowerFilter, groupFilter, dateRangeFilter, searchTerm]);
+    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
 
     const pagedRepayments = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
@@ -179,9 +334,12 @@ const RepaymentManagement = () => {
         // Simplified approach: Calculate outstanding principal for all loans that match the current filters
         
         const relevantLoans = loans.filter(l => {
-            const borrowerMatch = borrowerFilter === 'all' || l.borrower_id === borrowerFilter;
-            const groupMatch = groupFilter === 'all' || l.borrowers?.group_id === groupFilter;
-            
+            const b = l.borrowers;
+            const centerMatch = borrowerMatchesCenter(b, centerFilter);
+            const groupMatch = borrowerMatchesGroup(b, groupFilter);
+            const statusMatch =
+                borrowerStatusFilter === 'all' || b?.status === borrowerStatusFilter;
+
             const searchLower = searchTerm.toLowerCase();
             const loanId = l.loan_id?.toLowerCase() || '';
             const fName = l.borrowers?.first_name?.toLowerCase() || '';
@@ -194,7 +352,7 @@ const RepaymentManagement = () => {
                 borrowerName.includes(searchLower) ||
                 borrowerId.includes(searchLower);
 
-            return borrowerMatch && groupMatch && searchMatch; // Date range applies to repayments, not loans generally, so we exclude it here for portfolio health context
+            return centerMatch && groupMatch && statusMatch && searchMatch; // Date range applies to repayments, not loans generally, so we exclude it here for portfolio health context
         });
         
         let totalOutstandingPrincipal = relevantLoans.reduce((sum, loan) => {
@@ -211,7 +369,7 @@ const RepaymentManagement = () => {
             totalPrincipalPaid,
             totalOutstandingPrincipal,
         };
-    }, [filteredRepayments, loans, borrowerFilter, groupFilter, searchTerm]);
+    }, [filteredRepayments, loans, centerFilter, groupFilter, borrowerStatusFilter, searchTerm]);
 
     const handleEdit = (repayment) => {
         setCurrentRepayment(repayment);
@@ -283,12 +441,6 @@ const RepaymentManagement = () => {
             toast({ title: 'Error', description: 'Please select a loan.', variant: 'destructive' });
             return;
         }
-        const raw = String(amount ?? '').trim();
-        const amt = parseFloat(raw.replace(/,/g, ''));
-        if (!Number.isFinite(amt) || amt <= 0) {
-            toast({ title: 'Error', description: 'Enter a repayment amount greater than zero.', variant: 'destructive' });
-            return;
-        }
         if (!payment_date) {
             toast({ title: 'Error', description: 'Please select the payment date.', variant: 'destructive' });
             return;
@@ -297,18 +449,56 @@ const RepaymentManagement = () => {
             toast({ title: 'Error', description: 'You must be signed in to record a repayment.', variant: 'destructive' });
             return;
         }
-        const payDay = startOfDay(payment_date);
-        const today = startOfDay(new Date());
-        if (isBefore(payDay, today)) {
-            toast({ title: 'Invalid date', description: 'Payment date cannot be in the past.', variant: 'destructive' });
+        const payStr = formatInTimeZone(payment_date, EAT_TIMEZONE, 'yyyy-MM-dd');
+        const todayStr = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+        if (payStr !== todayStr) {
+            toast({
+                title: 'Invalid date',
+                description: 'Payment date must be today (Africa/Nairobi).',
+                variant: 'destructive',
+            });
             return;
         }
-        if (isAfter(payDay, today)) {
-            toast({ title: 'Invalid date', description: 'Payment date cannot be in the future.', variant: 'destructive' });
-            return;
-        }
-        if (isSunday(payment_date)) {
+        if (isSundayInTimeZone(payment_date, EAT_TIMEZONE)) {
             toast({ title: 'Invalid date', description: 'Repayments are not recorded on Sundays.', variant: 'destructive' });
+            return;
+        }
+
+        const raw = String(amount ?? '').trim();
+        const amt = parseFloat(raw.replace(/,/g, ''));
+        if (!Number.isFinite(amt) || amt <= 0) {
+            toast({ title: 'Error', description: 'Enter a repayment amount greater than zero.', variant: 'destructive' });
+            return;
+        }
+
+        const loan = loans.find((l) => l.id === loanId);
+        if (!loan) {
+            toast({ title: 'Error', description: 'Loan not found. Refresh and try again.', variant: 'destructive' });
+            return;
+        }
+
+        const { data: dueRaw, error: dueErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+            p_schedule: loan.schedule ?? null,
+            p_payment_date: payStr,
+        });
+        if (dueErr) {
+            toast({
+                title: 'Could not verify scheduled due',
+                description: dueErr.message || 'Try again.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const due = Number(dueRaw ?? 0);
+        const unit = getInstallmentUnitFromSchedule(loan.schedule);
+        if (!isValidRepaymentAmount(amt, due, unit)) {
+            toast({
+                title: 'Kiasi si halali',
+                description:
+                    repaymentAmountValidationMessage(amt, due, unit, currency) ||
+                    `Ingiza multiple ya kiasi cha installment (chini: installment moja).`,
+                variant: 'destructive',
+            });
             return;
         }
 
@@ -536,35 +726,53 @@ const RepaymentManagement = () => {
         XLSX.writeFile(wb, fileName);
     };
 
-    const borrowerOptions = useMemo(() => (
-        [...new Map(loans.map(l => [l.borrower_id, l.borrowers])).values()]
-        .filter(b => b)
-        .map(b => ({
-            value: b.id,
-            label: `${b.first_name} ${b.surname} (${b.borrower_id})`
-        }))
-    ), [loans]);
-    
-    const loanOptionsForCombobox = useMemo(
-      () =>
-        loans
-          .filter((l) => l.borrowers && (l.status === 'active' || l.status === 'delinquent'))
-          .map((l) => ({
-            value: l.id,
-            label: `${l.borrowers.first_name} ${l.borrowers.surname} — ${l.loan_id}`,
-          })),
-      [loans]
+    const groupsForRecordPicker = useMemo(() => {
+        if (pickerCenterFilter === 'all') return [];
+        return groups.filter((g) => g.center_id === pickerCenterFilter);
+    }, [groups, pickerCenterFilter]);
+
+    const loansForRecordPicker = useMemo(() => {
+        return loans.filter((l) => {
+            if (!l.borrowers) return false;
+            if (l.status !== 'active' && l.status !== 'delinquent') return false;
+            if (!borrowerMatchesCenter(l.borrowers, pickerCenterFilter)) return false;
+            if (!borrowerMatchesGroup(l.borrowers, pickerGroupFilter)) return false;
+            return true;
+        });
+    }, [loans, pickerCenterFilter, pickerGroupFilter]);
+
+    const loanOptionsForRecordPicker = useMemo(
+        () =>
+            loansForRecordPicker.map((l) => ({
+                value: l.id,
+                label: `${l.borrowers.first_name} ${l.borrowers.surname} — ${l.loan_id}`,
+            })),
+        [loansForRecordPicker]
     );
 
     const filteredLoanPickerOptions = useMemo(() => {
-      const q = loanPickerSearch.trim().toLowerCase();
-      if (!q) return loanOptionsForCombobox;
-      return loanOptionsForCombobox.filter(
-        (o) =>
-          o.label.toLowerCase().includes(q) ||
-          String(o.value).toLowerCase().includes(q)
-      );
-    }, [loanOptionsForCombobox, loanPickerSearch]);
+        const q = loanPickerSearch.trim().toLowerCase();
+        if (!q) return loanOptionsForRecordPicker;
+        return loanOptionsForRecordPicker.filter(
+            (o) =>
+                o.label.toLowerCase().includes(q) ||
+                String(o.value).toLowerCase().includes(q)
+        );
+    }, [loanOptionsForRecordPicker, loanPickerSearch]);
+
+    const todayStrEAT = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+
+    const pickerInstallmentUnit = useMemo(() => {
+        const loan = loans.find((l) => l.id === repaymentFormData.loanId);
+        return loan ? getInstallmentUnitFromSchedule(loan.schedule) : null;
+    }, [repaymentFormData.loanId, loans]);
+
+    const minAmountForRecordInput =
+        repaymentFormData.loanId && pickerInstallmentUnit != null
+            ? pickerInstallmentUnit
+            : repaymentFormData.loanId && pickerTotalDueOnOrBefore != null
+              ? minimumRepaymentForDue(pickerTotalDueOnOrBefore)
+              : 0.01;
 
     const handleSelectAll = (checked) => {
         const pageIds = pagedRepayments.map(r => r.id);
@@ -589,20 +797,79 @@ const RepaymentManagement = () => {
         <DashboardLayout title="Repayment Management">
             <div className="space-y-6">
                  <div className="flex justify-end">
-                    <Dialog open={repaymentDialogOpen} onOpenChange={setRepaymentDialogOpen}>
+                    <Dialog
+                        open={repaymentDialogOpen}
+                        onOpenChange={(open) => {
+                            setRepaymentDialogOpen(open);
+                            if (open) resetRepaymentForm();
+                        }}
+                    >
                         <DialogTrigger asChild>
-                            <Button onClick={resetRepaymentForm}>
+                            <Button type="button">
                                 <PlusCircle className="mr-2 h-4 w-4" /> Record Repayment
                             </Button>
                         </DialogTrigger>
-                        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+                        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
                             <DialogHeader>
                                 <DialogTitle>Record New Repayment</DialogTitle>
                                 <DialogDescription>
-                                    Search and tap a loan, enter amount, then choose the payment date.
+                                    Filter by center and group (optional), search for a loan, enter amount. Payment date is
+                                    today (Africa/Nairobi).
                                 </DialogDescription>
                             </DialogHeader>
                             <div className="space-y-4 py-2">
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="record-center">Center</Label>
+                                        <Select
+                                            value={pickerCenterFilter}
+                                            onValueChange={(v) => {
+                                                setPickerCenterFilter(v);
+                                                setPickerGroupFilter('all');
+                                                setRepaymentFormData((prev) => ({ ...prev, loanId: '' }));
+                                            }}
+                                        >
+                                            <SelectTrigger id="record-center">
+                                                <SelectValue placeholder="All centers" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All centers</SelectItem>
+                                                {centers.map((c) => (
+                                                    <SelectItem key={c.id} value={c.id}>
+                                                        {c.name}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="record-group">Group</Label>
+                                        <Select
+                                            value={pickerGroupFilter}
+                                            disabled={pickerCenterFilter === 'all'}
+                                            onValueChange={(v) => {
+                                                setPickerGroupFilter(v);
+                                                setRepaymentFormData((prev) => ({ ...prev, loanId: '' }));
+                                            }}
+                                        >
+                                            <SelectTrigger id="record-group">
+                                                <SelectValue
+                                                    placeholder={
+                                                        pickerCenterFilter === 'all' ? 'Pick center first' : 'All groups'
+                                                    }
+                                                />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="all">All groups</SelectItem>
+                                                {groupsForRecordPicker.map((g) => (
+                                                    <SelectItem key={g.id} value={g.id}>
+                                                        {g.name}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="loan-search">Loan</Label>
                                     <div className="relative">
@@ -623,8 +890,8 @@ const RepaymentManagement = () => {
                                     >
                                         {filteredLoanPickerOptions.length === 0 ? (
                                             <p className="py-6 text-center text-sm text-muted-foreground">
-                                                {loanOptionsForCombobox.length === 0
-                                                    ? 'No active or delinquent loans.'
+                                                {loanOptionsForRecordPicker.length === 0
+                                                    ? 'No active or delinquent loans for this center/group. Adjust filters or disburse a loan first.'
                                                     : 'No loans match your search.'}
                                             </p>
                                         ) : (
@@ -650,7 +917,7 @@ const RepaymentManagement = () => {
                                     {repaymentFormData.loanId && (
                                         <p className="text-xs text-muted-foreground">
                                             <span className="font-medium text-foreground">Selected:</span>{' '}
-                                            {loanOptionsForCombobox.find((o) => o.value === repaymentFormData.loanId)?.label ??
+                                            {loanOptionsForRecordPicker.find((o) => o.value === repaymentFormData.loanId)?.label ??
                                                 repaymentFormData.loanId}
                                         </p>
                                     )}
@@ -661,13 +928,78 @@ const RepaymentManagement = () => {
                                         id="repayment-amount"
                                         type="number"
                                         step="0.01"
-                                        min="0"
+                                        min={minAmountForRecordInput}
                                         value={repaymentFormData.amount}
                                         onChange={(e) =>
                                             setRepaymentFormData({ ...repaymentFormData, amount: e.target.value })
                                         }
-                                        placeholder="Enter amount"
+                                        onBlur={() => {
+                                            if (!repaymentFormData.loanId || pickerTotalDueOnOrBefore == null) return;
+                                            const v = parseFloat(String(repaymentFormData.amount ?? '').replace(/,/g, ''));
+                                            if (!Number.isFinite(v) || v <= 0) return;
+                                            if (pickerInstallmentUnit != null) {
+                                                const snapped = roundToValidRepaymentAmount(
+                                                    v,
+                                                    pickerTotalDueOnOrBefore,
+                                                    pickerInstallmentUnit
+                                                );
+                                                setRepaymentFormData((prev) => ({ ...prev, amount: snapped.toFixed(2) }));
+                                            } else {
+                                                const floor = minimumRepaymentForDue(pickerTotalDueOnOrBefore);
+                                                if (v + 1e-8 < floor) {
+                                                    setRepaymentFormData((prev) => ({ ...prev, amount: floor.toFixed(2) }));
+                                                }
+                                            }
+                                        }}
+                                        placeholder="Fills with amount due on this date; add more for arrears or prepayment"
                                     />
+                                    {repaymentFormData.loanId &&
+                                        pickerDueOnSelectedDate != null &&
+                                        pickerTotalDueOnOrBefore != null && (
+                                        <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                                            {pickerTotalDueOnOrBefore <= 0 && pickerDueOnSelectedDate <= 0 ? (
+                                                <p>
+                                                    No scheduled amount due — for a prepayment, enter a multiple of the
+                                                    installment amount
+                                                    {pickerInstallmentUnit != null
+                                                        ? ` (minimum ${currency} ${pickerInstallmentUnit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                                        : '.'}
+                                                </p>
+                                            ) : (
+                                                <>
+                                                    <p>
+                                                        Due on this payment date (installments only):{' '}
+                                                        <span className="font-medium text-foreground">
+                                                            {currency}{' '}
+                                                            {pickerDueOnSelectedDate.toLocaleString(undefined, {
+                                                                minimumFractionDigits: 2,
+                                                                maximumFractionDigits: 2,
+                                                            })}
+                                                        </span>
+                                                    </p>
+                                                    {pickerTotalDueOnOrBefore > pickerDueOnSelectedDate + 1e-8 && (
+                                                        <p>
+                                                            Total due on/before this date (incl. arrears) — minimum
+                                                            payment:{' '}
+                                                            <span className="font-medium text-foreground">
+                                                                {currency}{' '}
+                                                                {pickerTotalDueOnOrBefore.toLocaleString(undefined, {
+                                                                    minimumFractionDigits: 2,
+                                                                    maximumFractionDigits: 2,
+                                                                })}
+                                                            </span>
+                                                        </p>
+                                                    )}
+                                                    {pickerTotalDueOnOrBefore > 0 && (
+                                                        <p className="text-[11px]">
+                                                            Amount must be a multiple of the installment size; minimum is one
+                                                            installment.
+                                                        </p>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                                 <div>
                                     <Label htmlFor="payment-date">Actual payment date</Label>
@@ -675,32 +1007,28 @@ const RepaymentManagement = () => {
                                         id="payment-date"
                                         type="date"
                                         className="font-mono"
-                                        min={format(new Date(), 'yyyy-MM-dd')}
-                                        max={format(new Date(), 'yyyy-MM-dd')}
+                                        min={todayStrEAT}
+                                        max={todayStrEAT}
                                         value={
                                             repaymentFormData.payment_date
-                                                ? format(repaymentFormData.payment_date, 'yyyy-MM-dd')
-                                                : ''
+                                                ? formatInTimeZone(
+                                                      repaymentFormData.payment_date,
+                                                      EAT_TIMEZONE,
+                                                      'yyyy-MM-dd'
+                                                  )
+                                                : todayStrEAT
                                         }
                                         onChange={(e) => {
                                             const v = e.target.value;
-                                            if (!v) return;
-                                            const [y, m, d] = v.split('-').map(Number);
-                                            if (!y || !m || !d) return;
-                                            const picked = new Date(y, m - 1, d);
-                                            const todayOnly = startOfDay(new Date());
-                                            const pickedDay = startOfDay(picked);
-                                            if (isBefore(pickedDay, todayOnly) || isAfter(pickedDay, todayOnly)) {
-                                                return;
-                                            }
+                                            if (!v || v !== todayStrEAT) return;
                                             setRepaymentFormData((prev) => ({
                                                 ...prev,
-                                                payment_date: picked,
+                                                payment_date: getTodayEATDateForForm(),
                                             }));
                                         }}
                                     />
                                     <p className="mt-1 text-xs text-muted-foreground">
-                                        Use today only — past and future dates are blocked. Sundays cannot be saved.
+                                        Today only (calendar date in Africa/Nairobi). Sundays are blocked on submit.
                                     </p>
                                 </div>
                                 <Button type="button" onClick={handleRecordRepayment} className="w-full" disabled={isSubmitting}>
@@ -740,28 +1068,45 @@ const RepaymentManagement = () => {
                         <div className="relative">
                             <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input 
-                                placeholder="Search Loan ID, Name, Borrower ID..." 
+                                placeholder="Search loan ID, borrower name, or borrower ID…" 
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 className="pl-8 w-[280px]"
                             />
                         </div>
-                        <Select value={borrowerFilter} onValueChange={setBorrowerFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Filter by Borrower..." />
+                        <Select value={centerFilter} onValueChange={(v) => { setCenterFilter(v); setGroupFilter('all'); }}>
+                            <SelectTrigger className="w-[220px]">
+                                <SelectValue placeholder="Center" />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="all">All Borrowers</SelectItem>
-                                {borrowerOptions.map(opt => <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>)}
+                                <SelectItem value="all">All centers</SelectItem>
+                                {centers.map((c) => (
+                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                                ))}
                             </SelectContent>
                         </Select>
-                        <Select value={groupFilter} onValueChange={setGroupFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Filter by Group..." />
+                        <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
+                            <SelectTrigger className="w-[220px]">
+                                <SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="all">All Groups</SelectItem>
-                                {groups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                                <SelectItem value="all">All groups</SelectItem>
+                                {groupsForFilter.map((g) => (
+                                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Select value={borrowerStatusFilter} onValueChange={setBorrowerStatusFilter}>
+                            <SelectTrigger className="w-[240px]">
+                                <SelectValue placeholder="Borrower status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All borrower statuses</SelectItem>
+                                <SelectItem value="eligible">Eligible</SelectItem>
+                                <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
+                                <SelectItem value="active_loan">Active loan</SelectItem>
+                                <SelectItem value="defaulted">Defaulted</SelectItem>
+                                <SelectItem value="paid_up">Paid up</SelectItem>
                             </SelectContent>
                         </Select>
                         <Popover>
@@ -820,6 +1165,7 @@ const RepaymentManagement = () => {
                                     </TableHead>
                                     <TableHead>Payment Date</TableHead>
                                     <TableHead>Borrower</TableHead>
+                                    <TableHead>Borrower status</TableHead>
                                     <TableHead>Group</TableHead>
                                     <TableHead>Principal Paid</TableHead>
                                     <TableHead>Interest Paid</TableHead>
@@ -840,6 +1186,15 @@ const RepaymentManagement = () => {
                                         </TableCell>
                                         <TableCell>{formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'MMM dd, yyyy')}</TableCell>
                                         <TableCell>{r.loans?.borrowers?.first_name} {r.loans?.borrowers?.surname} <span className="text-xs text-muted-foreground block">{r.loans?.loan_id}</span></TableCell>
+                                        <TableCell>
+                                            {r.loans?.borrowers?.status ? (
+                                                <Badge variant={borrowerStatusBadgeVariant(r.loans.borrowers.status)} className="font-normal">
+                                                    {borrowerStatusLabel(r.loans.borrowers.status)}
+                                                </Badge>
+                                            ) : (
+                                                '—'
+                                            )}
+                                        </TableCell>
                                         <TableCell>{r.loans?.borrowers?.groups?.name || 'N/A'}</TableCell>
                                         <TableCell>{currency} {(r.principal_paid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                         <TableCell>{currency} {(r.interest_paid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
@@ -884,13 +1239,13 @@ const RepaymentManagement = () => {
                                 ))}
                                 {filteredRepayments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
+                                        <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
                             <TableFooter>
                                 <TableRow>
-                                    <TableCell colSpan={4} className="font-bold text-right">Totals</TableCell>
+                                    <TableCell colSpan={5} className="font-bold text-right">Totals</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>

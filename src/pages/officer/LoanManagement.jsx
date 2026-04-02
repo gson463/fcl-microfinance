@@ -25,13 +25,20 @@ import { Calendar } from '@/components/ui/calendar';
 import { PlusCircle, Eye, Trash2, Download, Upload, Briefcase, DollarSign, AlertTriangle, Edit, Loader2, Calendar as CalendarIcon, Coins as HandCoins, CheckCircle2, User, CreditCard, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateSchedule, getNextWorkingDay } from '@/utils/loanUtils';
+import {
+  getInstallmentUnitFromSchedule,
+  isValidRepaymentAmount,
+  repaymentAmountValidationMessage,
+} from '@/lib/repaymentInstallmentUnit.js';
 import * as XLSX from 'xlsx';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { format as formatDate, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
+const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
@@ -84,6 +91,10 @@ const LoanManagement = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [productFilter, setProductFilter] = useState('all');
+    const [centerFilter, setCenterFilter] = useState('all');
+    const [groupFilter, setGroupFilter] = useState('all');
+    const [centers, setCenters] = useState([]);
+    const [groups, setGroups] = useState([]);
     const [dateRange, setDateRange] = useState({ from: undefined, to: undefined });
     const [page, setPage] = useState(1);
 
@@ -143,7 +154,7 @@ const LoanManagement = () => {
 
         const { data: loansData, error: loansError } = await supabase
             .from('loans')
-            .select(`*, borrowers(*, groups(name), branches(name)), loan_products(name)`)
+            .select(LOAN_BORROWER_SELECT)
             .eq('officer_id', user.id);
         const { data: borrowersData, error: borrowersError } = await supabase.from('borrowers').select('*').eq('loan_officer_id', user.id);
         const { data: productsData, error: productsError } = await supabase.from('loan_products').select('*').eq('status', 'active');
@@ -163,6 +174,38 @@ const LoanManagement = () => {
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!user?.id) {
+            setCenters([]);
+            return;
+        }
+        (async () => {
+            let q = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
+            if (user.user_metadata?.branch_id) q = q.eq('branch_id', user.user_metadata.branch_id);
+            const { data } = await q;
+            if (!cancelled) setCenters(data || []);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.id, user?.user_metadata?.branch_id]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (centerFilter === 'all') {
+            setGroups([]);
+            return;
+        }
+        (async () => {
+            const { data } = await supabase.from('groups').select('id, name').eq('center_id', centerFilter).order('name');
+            if (!cancelled) setGroups(data || []);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [centerFilter]);
     
     useEffect(() => {
        resetFormData();
@@ -200,6 +243,8 @@ const LoanManagement = () => {
             const matchesSearch = loan.loan_id.toLowerCase().includes(query) || borrowerName.includes(query) || loan.principal.toString().includes(query);
             const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
             const matchesProduct = productFilter === 'all' || loan.product_id === productFilter;
+            const matchesCenter = borrowerMatchesCenter(loan.borrowers, centerFilter);
+            const matchesGroup = borrowerMatchesGroup(loan.borrowers, groupFilter);
             
             let matchesDate = true;
             if (dateRange.from && dateRange.to) {
@@ -209,13 +254,13 @@ const LoanManagement = () => {
                 matchesDate = toZonedTime(new Date(loan.disbursement_date), EAT_TIMEZONE) >= toZonedTime(dateRange.from, EAT_TIMEZONE);
             }
 
-            return matchesSearch && matchesStatus && matchesProduct && matchesDate;
+            return matchesSearch && matchesStatus && matchesProduct && matchesCenter && matchesGroup && matchesDate;
         });
-    }, [loans, searchQuery, statusFilter, productFilter, dateRange]);
+    }, [loans, searchQuery, statusFilter, productFilter, centerFilter, groupFilter, dateRange]);
 
     useEffect(() => {
         setPage(1);
-    }, [searchQuery, statusFilter, productFilter, dateRange]);
+    }, [searchQuery, statusFilter, productFilter, centerFilter, groupFilter, dateRange]);
 
     const pagedLoans = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
@@ -282,6 +327,16 @@ const LoanManagement = () => {
             const { data: borrower, error: borrowerError } = await supabase.from('borrowers').select('status').eq('id', borrowerId).single();
             if (borrowerError || !borrower) {
                 throw new Error('Borrower not found');
+            }
+
+            if (borrower.status === 'pending') {
+                toast({
+                    title: 'Cannot disburse yet',
+                    description: 'This borrower is waiting for branch manager approval for a new loan after default. Disburse after they are marked eligible.',
+                    variant: 'destructive',
+                });
+                setIsDisbursingLoan(false);
+                return;
             }
 
             if (borrower.status === 'active_loan' || borrower.status === 'defaulted') {
@@ -531,7 +586,7 @@ const LoanManagement = () => {
             
             const { data: latestLoanData, error } = await supabase
                 .from('loans')
-                .select(`*, borrowers(*, groups(name), branches(name)), loan_products(name)`)
+                .select(LOAN_BORROWER_SELECT)
                 .eq('id', loan.id)
                 .single();
                 
@@ -559,6 +614,33 @@ const LoanManagement = () => {
             toast({ title: 'Error', description: 'Please fill all fields.', variant: 'destructive' });
             return;
         }
+        const amt = parseFloat(String(amount).replace(/,/g, ''));
+        if (!Number.isFinite(amt) || amt <= 0) {
+            toast({ title: 'Error', description: 'Enter a valid repayment amount.', variant: 'destructive' });
+            return;
+        }
+        const payStr = formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
+        const { data: dueRaw, error: dueErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+            p_schedule: repaymentLoan.schedule ?? null,
+            p_payment_date: payStr,
+        });
+        if (dueErr) {
+            toast({ title: 'Error', description: dueErr.message, variant: 'destructive' });
+            return;
+        }
+        const due = Number(dueRaw ?? 0);
+        const unit = getInstallmentUnitFromSchedule(repaymentLoan.schedule);
+        if (!isValidRepaymentAmount(amt, due, unit)) {
+            toast({
+                title: 'Invalid amount',
+                description:
+                    repaymentAmountValidationMessage(amt, due, unit, currency) ||
+                    'Enter a multiple of the installment amount.',
+                variant: 'destructive',
+            });
+            return;
+        }
+
         setIsSubmittingRepayment(true);
 
         const { data, error } = await invokeEdgeFunction(
@@ -566,7 +648,7 @@ const LoanManagement = () => {
             {
                 body: {
                     loan_id: repaymentLoan.id,
-                    amount: parseFloat(amount),
+                    amount: amt,
                     officer_id: user.id,
                     actual_payment_date: formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
                 },
@@ -865,13 +947,45 @@ const LoanManagement = () => {
                     <CardHeader className="bg-gray-50 border-b border-gray-100 pb-4">
                         <div className="flex flex-col gap-4">
                             <CardTitle className="text-xl font-bold text-gray-800">My Loan Portfolio</CardTitle>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                                 <Input 
                                     placeholder="Search by ID, name..." 
                                     value={searchQuery} 
                                     onChange={(e) => setSearchQuery(e.target.value)} 
                                     className="bg-white border-gray-200 focus:ring-blue-100 focus:border-blue-400"
                                 />
+                                <Select
+                                    value={centerFilter}
+                                    onValueChange={(v) => {
+                                        setCenterFilter(v);
+                                        setGroupFilter('all');
+                                    }}
+                                >
+                                    <SelectTrigger className="bg-white border-gray-200">
+                                        <SelectValue placeholder="Center" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All centers</SelectItem>
+                                        {centers.map((c) => (
+                                            <SelectItem key={c.id} value={c.id}>
+                                                {c.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
+                                    <SelectTrigger className="bg-white border-gray-200">
+                                        <SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All groups</SelectItem>
+                                        {groups.map((g) => (
+                                            <SelectItem key={g.id} value={g.id}>
+                                                {g.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
                                 <Select value={statusFilter} onValueChange={setStatusFilter}>
                                     <SelectTrigger className="bg-white border-gray-200"><SelectValue placeholder="Filter by Status" /></SelectTrigger>
                                     <SelectContent>

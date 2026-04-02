@@ -13,6 +13,11 @@ import { Calendar } from '@/components/ui/calendar';
 import { format as formatDate, isSunday, startOfDay, isToday, isBefore, isEqual } from 'date-fns';
 import { format as formatTZ, toZonedTime } from 'date-fns-tz';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+    getInstallmentUnitFromSchedule,
+    smallestMultipleOfUnitAtLeast,
+    repaymentAmountValidationMessage,
+} from '@/lib/repaymentInstallmentUnit.js';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -103,13 +108,24 @@ const GroupRepayment = () => {
         const loansInGroup = loans.filter(l => l.borrowers?.group_id === groupId);
 
         const selectedD = startOfDay(selectedDate);
-        
+        const payStr = formatTZ(selectedDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
+
         const memberPromises = loansInGroup
             .map(async (loan) => {
                 let pastDueAmount = 0;
                 let amountDueToday = 0;
                 let hasAnyDueInstallment = false;
-                
+
+                const { data: dueRaw, error: dueRpcErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+                    p_schedule: loan.schedule ?? null,
+                    p_payment_date: payStr,
+                });
+                if (dueRpcErr) {
+                    console.error(dueRpcErr);
+                }
+                const scheduledDue = Number(dueRaw ?? 0);
+                const installmentUnit = getInstallmentUnitFromSchedule(loan.schedule);
+
                 loan.schedule?.forEach(inst => {
                     const instDueDate = toZonedTime(new Date(inst.dueDate), EAT_TIMEZONE);
                     const instStartOfDay = startOfDay(instDueDate);
@@ -137,6 +153,8 @@ const GroupRepayment = () => {
                     pastDueAmount,
                     amountDueToday,
                     totalDue: pastDueAmount + amountDueToday,
+                    scheduledDue,
+                    installmentUnit,
                 };
             });
             
@@ -145,7 +163,7 @@ const GroupRepayment = () => {
         setGroupMembers(membersWithDueInstallments);
         
         const initialAmounts = {};
-        membersWithDueInstallments.forEach(m => {
+        membersWithDueInstallments.forEach((m) => {
             initialAmounts[m.borrowerId] = '';
         });
         setRepaymentAmounts(initialAmounts);
@@ -197,11 +215,15 @@ const GroupRepayment = () => {
         setRepaymentAmounts(prev => ({ ...prev, [borrowerId]: amount }));
     };
     
-    const handleCopyAmount = (borrowerId, amount) => {
-        setRepaymentAmounts(prev => ({ ...prev, [borrowerId]: amount.toString() }));
+    const handleCopyAmount = (borrowerId, totalDue, installmentUnit) => {
+        const rounded =
+            installmentUnit != null && smallestMultipleOfUnitAtLeast(totalDue, installmentUnit) != null
+                ? smallestMultipleOfUnitAtLeast(totalDue, installmentUnit)
+                : totalDue;
+        setRepaymentAmounts((prev) => ({ ...prev, [borrowerId]: rounded.toString() }));
         toast({
             title: "Amount Copied",
-            description: `Copied ${currency} ${amount.toLocaleString()} to payment field.`,
+            description: `Copied ${currency} ${rounded.toLocaleString()} to the payment field (valid installment multiple).`,
             duration: 1500,
         });
     };
@@ -209,9 +231,14 @@ const GroupRepayment = () => {
     const handleCopyAllAmounts = () => {
         const newAmounts = { ...repaymentAmounts };
         let count = 0;
-        groupMembers.forEach(member => {
+        groupMembers.forEach((member) => {
             if (member.totalDue > 0) {
-                newAmounts[member.borrowerId] = member.totalDue.toString();
+                const rounded =
+                    member.installmentUnit != null &&
+                    smallestMultipleOfUnitAtLeast(member.totalDue, member.installmentUnit) != null
+                        ? smallestMultipleOfUnitAtLeast(member.totalDue, member.installmentUnit)
+                        : member.totalDue;
+                newAmounts[member.borrowerId] = rounded.toString();
                 count++;
             }
         });
@@ -229,15 +256,38 @@ const GroupRepayment = () => {
         }
         setIsSaving(true);
         const actualPaymentDate = formatTZ(selectedDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
-        
+
+        const validationErrors = [];
+        for (const member of groupMembers) {
+            const amount = parseFloat(repaymentAmounts[member.borrowerId]);
+            if (isNaN(amount) || amount <= 0) continue;
+            const msg = repaymentAmountValidationMessage(
+                amount,
+                member.scheduledDue,
+                member.installmentUnit,
+                currency,
+            );
+            if (msg) validationErrors.push(`${member.name}: ${msg}`);
+        }
+        if (validationErrors.length > 0) {
+            toast({
+                title: 'Invalid amount',
+                description: validationErrors[0],
+                variant: 'destructive',
+            });
+            setIsSaving(false);
+            return;
+        }
+
         let successCount = 0;
         let errorCount = 0;
+        const failureLines = [];
 
         const repaymentPromises = groupMembers.map(async (member) => {
             const amount = parseFloat(repaymentAmounts[member.borrowerId]);
             if (isNaN(amount) || amount <= 0) return;
 
-            const { error } = await invokeEdgeFunction(
+            const { data, error } = await invokeEdgeFunction(
                 'record-repayment',
                 {
                     body: {
@@ -250,9 +300,27 @@ const GroupRepayment = () => {
                 session?.access_token,
             );
 
-            if (error) {
-                console.error(`Failed to save repayment for ${member.name}:`, error);
+            const bodyError =
+                data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
+                    ? String(data.error)
+                    : null;
+            const httpMsg =
+                error?.context && typeof error.context === 'object' && error.context.body
+                    ? (() => {
+                          try {
+                              const j = JSON.parse(String(error.context.body));
+                              return j?.error ? String(j.error) : null;
+                          } catch {
+                              return null;
+                          }
+                      })()
+                    : null;
+            const description = bodyError || httpMsg || error?.message || null;
+
+            if (error || bodyError) {
+                console.error(`Failed to save repayment for ${member.name}:`, error || bodyError);
                 errorCount++;
+                if (description) failureLines.push(`${member.name}: ${description}`);
             } else {
                 successCount++;
             }
@@ -260,14 +328,26 @@ const GroupRepayment = () => {
         
         await Promise.all(repaymentPromises);
 
+        const firstErrorMessage = failureLines[0] ?? null;
+
         if (successCount > 0) {
              toast({ title: 'Success', description: `Recorded ${successCount} repayments for ${formatDate(selectedDate, 'PPP')}.` });
         }
         if (errorCount > 0) {
-            toast({ title: 'Errors Occurred', description: `${errorCount} repayments failed to save.`, variant: 'destructive' });
+            toast({
+                title: 'Some repayments failed',
+                description:
+                    firstErrorMessage ||
+                    `${errorCount} repayment(s) could not be saved. Check loan status, amount, and date; ensure you are logged in.`,
+                variant: 'destructive',
+            });
         }
-        if (successCount === 0 && errorCount === 0){
-             toast({ title: 'Info', description: 'No valid repayments were entered.' });
+        if (successCount === 0 && errorCount === 0) {
+            toast({
+                title: 'Nothing to save',
+                description:
+                    'Enter an amount greater than zero for at least one member, or use Copy All Total Due. Empty rows are skipped.',
+            });
         }
 
         setIsSaving(false);
@@ -392,7 +472,10 @@ const GroupRepayment = () => {
                              ) : groupMembers.length > 0 ? (
                                 <>
                                     <div className="flex justify-between items-center mb-4">
-                                        <p className="text-sm text-muted-foreground">Showing due amounts for {formatDate(selectedDate, 'PPP')}.</p>
+                                        <p className="text-sm text-muted-foreground">
+                                            Showing due amounts for {formatDate(selectedDate, 'PPP')}. Payments must be
+                                            multiples of the installment amount; minimum is one installment.
+                                        </p>
                                         <Button size="sm" variant="outline" onClick={handleCopyAllAmounts} className="text-blue-600 border-blue-200 hover:bg-blue-50">
                                             <ArrowDownToLine className="mr-2 h-4 w-4" />
                                             Copy All Total Due
@@ -402,12 +485,16 @@ const GroupRepayment = () => {
                                         <Table>
                                             <TableHeader>
                                                 <TableRow>
-                                                    <TableHead>No.</TableHead> {/* Moved to first position */}
-                                                    <TableHead>Client Name</TableHead>
-                                                    <TableHead>Past Due</TableHead>
-                                                    <TableHead>Due Today</TableHead>
-                                                    <TableHead>Total Due</TableHead>
-                                                    <TableHead className="w-48">Amount Paid</TableHead>
+                                                    {[
+                                                        <TableHead key="no">No.</TableHead>,
+                                                        <TableHead key="name">Client Name</TableHead>,
+                                                        <TableHead key="past">Past Due</TableHead>,
+                                                        <TableHead key="today">Due Today</TableHead>,
+                                                        <TableHead key="total">Total Due</TableHead>,
+                                                        <TableHead key="paid" className="w-48">
+                                                            Amount Paid
+                                                        </TableHead>,
+                                                    ]}
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
@@ -422,7 +509,7 @@ const GroupRepayment = () => {
                                                                 <span>{currency} {member.totalDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                                                 <Tooltip>
                                                                     <TooltipTrigger asChild>
-                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => handleCopyAmount(member.borrowerId, member.totalDue)}>
+                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => handleCopyAmount(member.borrowerId, member.totalDue, member.installmentUnit)}>
                                                                             <Copy className="h-3 w-3" />
                                                                         </Button>
                                                                     </TooltipTrigger>
@@ -431,19 +518,56 @@ const GroupRepayment = () => {
                                                             </div>
                                                         </TableCell>
                                                         <TableCell>
-                                                            <Input type="number" placeholder="0.00" value={repaymentAmounts[member.borrowerId]} onChange={(e) => handleAmountChange(member.borrowerId, e.target.value)} />
+                                                            <Input
+                                                                type="number"
+                                                                step="0.01"
+                                                                min="0.01"
+                                                                placeholder="0.00"
+                                                                value={repaymentAmounts[member.borrowerId] ?? ''}
+                                                                onChange={(e) => handleAmountChange(member.borrowerId, e.target.value)}
+                                                            />
                                                         </TableCell>
                                                     </TableRow>
                                                 ))}
                                             </TableBody>
                                             <TableFooter>
                                                 <TableRow>
-                                                    <TableCell className="font-bold text-lg">Total</TableCell> {/* No. column */}
-                                                    <TableCell className="font-bold text-lg">{groupMembers.length}</TableCell> {/* Total for No. column */}
-                                                    <TableCell className="font-bold text-lg">{currency} {totals.pastDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                    <TableCell className="font-bold text-lg">{currency} {totals.dueToday.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                    <TableCell className="font-bold text-lg">{currency} {totals.totalDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                    <TableCell className="font-bold text-lg">{currency} {totals.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                                    {[
+                                                        <TableCell key="ft1" className="font-bold text-lg">
+                                                            Total
+                                                        </TableCell>,
+                                                        <TableCell key="ft2" className="font-bold text-lg">
+                                                            {groupMembers.length}
+                                                        </TableCell>,
+                                                        <TableCell key="ft3" className="font-bold text-lg">
+                                                            {currency}{' '}
+                                                            {totals.pastDue.toLocaleString(undefined, {
+                                                                minimumFractionDigits: 2,
+                                                                maximumFractionDigits: 2,
+                                                            })}
+                                                        </TableCell>,
+                                                        <TableCell key="ft4" className="font-bold text-lg">
+                                                            {currency}{' '}
+                                                            {totals.dueToday.toLocaleString(undefined, {
+                                                                minimumFractionDigits: 2,
+                                                                maximumFractionDigits: 2,
+                                                            })}
+                                                        </TableCell>,
+                                                        <TableCell key="ft5" className="font-bold text-lg">
+                                                            {currency}{' '}
+                                                            {totals.totalDue.toLocaleString(undefined, {
+                                                                minimumFractionDigits: 2,
+                                                                maximumFractionDigits: 2,
+                                                            })}
+                                                        </TableCell>,
+                                                        <TableCell key="ft6" className="font-bold text-lg">
+                                                            {currency}{' '}
+                                                            {totals.totalPaid.toLocaleString(undefined, {
+                                                                minimumFractionDigits: 2,
+                                                                maximumFractionDigits: 2,
+                                                            })}
+                                                        </TableCell>,
+                                                    ]}
                                                 </TableRow>
                                             </TableFooter>
                                         </Table>

@@ -36,6 +36,7 @@ import {
     isVotersIdIdentificationType,
     isDriversLicenseIdentificationType,
 } from '@/lib/borrowerIdValidation';
+import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 
 const PAGE_SIZE = 25;
 
@@ -109,9 +110,11 @@ const BorrowerManagement = () => {
 
     const [selectedBorrowers, setSelectedBorrowers] = useState(new Set());
     const [searchQuery, setSearchQuery] = useState('');
+    const [centerFilter, setCenterFilter] = useState('all');
     const [groupFilter, setGroupFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('all');
     const [page, setPage] = useState(1);
+    const [requestingApprovalId, setRequestingApprovalId] = useState(null);
 
     const defaultFormState = {
         first_name: '',
@@ -153,7 +156,7 @@ const BorrowerManagement = () => {
 
         const { data: borrowersData, error: borrowersError } = await supabase
             .from('borrowers')
-            .select('*')
+            .select('*, groups(id, center_id)')
             .eq('loan_officer_id', user.id);
 
         const { data: groupsData, error: groupsError } = await supabase
@@ -161,11 +164,11 @@ const BorrowerManagement = () => {
             .select('*')
             .eq('loan_officer_id', user.id);
 
-        const { data: centersData, error: centersError } = await supabase
-            .from('centers')
-            .select('id, name')
-            .eq('loan_officer_id', user.id)
-            .order('name');
+        let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
+        if (user.user_metadata?.branch_id) {
+            centersQuery = centersQuery.eq('branch_id', user.user_metadata.branch_id);
+        }
+        const { data: centersData, error: centersError } = await centersQuery;
 
         const { data: productsData, error: productsError } = await supabase
             .from('loan_products').select('name').eq('status', 'active');
@@ -184,10 +187,51 @@ const BorrowerManagement = () => {
         }
         setLoading(false);
     }, [user, toast]);
+
+    const handleRequestReloanApproval = useCallback(
+        async (borrowerId) => {
+            setRequestingApprovalId(borrowerId);
+            try {
+                const { error } = await supabase
+                    .from('borrowers')
+                    .update({ status: 'pending' })
+                    .eq('id', borrowerId)
+                    .eq('loan_officer_id', user.id)
+                    .eq('status', 'defaulted');
+                if (error) throw error;
+                toast({
+                    title: 'Request sent',
+                    description: 'Your branch manager will review this borrower for a new loan before you can disburse.',
+                });
+                fetchData();
+            } catch (error) {
+                console.error(error);
+                toast({
+                    title: 'Could not submit request',
+                    description: error.message || 'Try again or contact support.',
+                    variant: 'destructive',
+                });
+            } finally {
+                setRequestingApprovalId(null);
+            }
+        },
+        [user?.id, toast, fetchData]
+    );
     
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    useEffect(() => {
+        if (centerFilter === 'all') {
+            setGroupFilter('all');
+        }
+    }, [centerFilter]);
+
+    const groupsForListFilter = useMemo(() => {
+        if (centerFilter === 'all') return [];
+        return groups.filter((g) => g.center_id === centerFilter);
+    }, [groups, centerFilter]);
 
     const filteredBorrowers = useMemo(() => {
         return borrowers.filter(b => {
@@ -200,15 +244,16 @@ const BorrowerManagement = () => {
                 (b.identification_number && b.identification_number.includes(query)) ||
                 (b.guarantor_name && b.guarantor_name.toLowerCase().includes(query)) ||
                 (b.guarantor_phone && String(b.guarantor_phone).includes(query));
-            const matchesGroup = groupFilter === 'all' || b.group_id === groupFilter;
+            const matchesCenter = borrowerMatchesCenter(b, centerFilter);
+            const matchesGroup = borrowerMatchesGroup(b, groupFilter);
             const matchesStatus = statusFilter === 'all' || b.status === statusFilter;
-            return matchesSearch && matchesGroup && matchesStatus;
+            return matchesSearch && matchesCenter && matchesGroup && matchesStatus;
         });
-    }, [borrowers, searchQuery, groupFilter, statusFilter]);
+    }, [borrowers, searchQuery, centerFilter, groupFilter, statusFilter]);
 
     useEffect(() => {
         setPage(1);
-    }, [searchQuery, groupFilter, statusFilter]);
+    }, [searchQuery, centerFilter, groupFilter, statusFilter]);
 
     const pagedBorrowers = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
@@ -728,7 +773,7 @@ const BorrowerManagement = () => {
     const getStatusText = (status) => {
         const statusTextMap = {
             'eligible': 'Eligible',
-            'pending': 'Pending (manager)',
+            'pending': 'Pending — re-loan approval',
             'active_loan': 'Active Loan',
             'defaulted': 'Defaulted',
             'paid_up': 'Paid Up',
@@ -917,7 +962,7 @@ const BorrowerManagement = () => {
                     <StatCard title="Total Borrowers" value={stats.total} icon={Users} color="text-blue-600" />
                     <StatCard title="Active Loans" value={stats.active} icon={UserCheck} color="text-yellow-600" />
                     <StatCard title="Eligible" value={stats.eligible} icon={UserPlusIcon} color="text-green-600" />
-                    <StatCard title="Pending approval" value={stats.pending} icon={Clock} color="text-slate-500" />
+                    <StatCard title="Pending re-loan approval" value={stats.pending} icon={Clock} color="text-slate-500" />
                     <StatCard title="Defaulted" value={stats.defaulted} icon={UserX} color="text-red-600" />
                 </div>
 
@@ -925,13 +970,38 @@ const BorrowerManagement = () => {
                     <CardHeader>
                         <div className="flex flex-col md:flex-row justify-between gap-4">
                             <CardTitle>My Borrowers</CardTitle>
-                             <div className="flex items-center gap-2">
-                                <Input placeholder="Search ID, name, phone, guarantor..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full md:w-64" />
-                                <Select value={groupFilter} onValueChange={setGroupFilter}>
-                                    <SelectTrigger className="w-full md:w-[180px]"><SelectValue placeholder="Filter by Group" /></SelectTrigger>
+                             <div className="flex flex-wrap items-center gap-2">
+                                <Input placeholder="Search ID, name, phone, guarantor..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full min-w-[200px] md:w-64" />
+                                <Select
+                                    value={centerFilter}
+                                    onValueChange={(v) => {
+                                        setCenterFilter(v);
+                                        setGroupFilter('all');
+                                    }}
+                                >
+                                    <SelectTrigger className="w-full min-w-[160px] md:w-[180px]"><SelectValue placeholder="Center" /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="all">All Groups</SelectItem>
-                                        {groups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}
+                                        <SelectItem value="all">All centers</SelectItem>
+                                        {centers.map((c) => (
+                                            <SelectItem key={c.id} value={c.id}>
+                                                {c.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                                <Select
+                                    value={groupFilter}
+                                    onValueChange={setGroupFilter}
+                                    disabled={centerFilter === 'all'}
+                                >
+                                    <SelectTrigger className="w-full min-w-[160px] md:w-[180px]"><SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All groups</SelectItem>
+                                        {groupsForListFilter.map((g) => (
+                                            <SelectItem key={g.id} value={g.id}>
+                                                {g.name}
+                                            </SelectItem>
+                                        ))}
                                     </SelectContent>
                                 </Select>
                                 <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -939,7 +1009,7 @@ const BorrowerManagement = () => {
                                     <SelectContent>
                                         <SelectItem value="all">All Statuses</SelectItem>
                                         <SelectItem value="eligible">Eligible</SelectItem>
-                                        <SelectItem value="pending">Pending (manager)</SelectItem>
+                                        <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
                                         <SelectItem value="active_loan">Active Loan</SelectItem>
                                         <SelectItem value="defaulted">Defaulted</SelectItem>
                                         <SelectItem value="paid_up">Paid Up</SelectItem>
@@ -1002,6 +1072,22 @@ const BorrowerManagement = () => {
                                         <TableCell>{b.borrower_type === 'group' ? getGroupName(b.group_id) : 'Individual'}</TableCell>
                                         <TableCell><Badge variant={getLoanStatusBadge(b.status)}>{getStatusText(b.status)}</Badge></TableCell>
                                         <TableCell className="space-x-2">
+                                            {b.status === 'defaulted' && (
+                                                <Button
+                                                    type="button"
+                                                    variant="secondary"
+                                                    size="sm"
+                                                    className="mr-1 h-8"
+                                                    disabled={requestingApprovalId === b.id}
+                                                    onClick={() => handleRequestReloanApproval(b.id)}
+                                                >
+                                                    {requestingApprovalId === b.id ? (
+                                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                    ) : (
+                                                        'Request re-loan approval'
+                                                    )}
+                                                </Button>
+                                            )}
                                             <Button variant="outline" size="icon" onClick={() => navigate(`/officer/borrowers/${b.id}`)}><Eye className="h-4 w-4" /></Button>
                                             <Button variant="outline" size="icon" onClick={() => handleEdit(b)}><Edit className="h-4 w-4" /></Button>
                                             <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="icon"><Trash2 className="h-4 w-4" /></Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will delete the borrower and related records.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(b.id)}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>

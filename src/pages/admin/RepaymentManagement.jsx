@@ -16,13 +16,16 @@ import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
+import { borrowerMatchesCenter } from '@/lib/loanBorrowerLocationFilter';
+import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -43,6 +46,7 @@ const AdminRepaymentManagement = () => {
     const { toast } = useToast();
     const [repayments, setRepayments] = useState([]);
     const [branches, setBranches] = useState([]);
+    const [centers, setCenters] = useState([]);
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
     const [currency, setCurrency] = useState('TZS');
@@ -50,6 +54,9 @@ const AdminRepaymentManagement = () => {
     // Filters
     const [branchFilter, setBranchFilter] = useState('all');
     const [officerFilter, setOfficerFilter] = useState('all');
+    const [centerFilter, setCenterFilter] = useState('all');
+    const [borrowerStatusFilter, setBorrowerStatusFilter] = useState('all');
+    const [searchTerm, setSearchTerm] = useState('');
     const [dateRangeFilter, setDateRangeFilter] = useState(null);
     const [page, setPage] = useState(1);
 
@@ -59,6 +66,9 @@ const AdminRepaymentManagement = () => {
     const resetFilters = () => {
         setBranchFilter('all');
         setOfficerFilter('all');
+        setCenterFilter('all');
+        setBorrowerStatusFilter('all');
+        setSearchTerm('');
         setDateRangeFilter(null);
         setPage(1);
     };
@@ -77,6 +87,13 @@ const AdminRepaymentManagement = () => {
             const { data: usersData, error: usersError } = await supabase.from('users').select('id, full_name, branch_id, role');
             if (usersError) throw usersError;
             setUsers(usersData || []);
+
+            const { data: centersData, error: centersError } = await supabase
+                .from('centers')
+                .select('id, name, branch_id')
+                .order('name');
+            if (centersError) throw centersError;
+            setCenters(centersData || []);
 
             let { data: repaymentsData, error: repaymentsError } = await supabase
                 .from('repayments')
@@ -102,22 +119,44 @@ const AdminRepaymentManagement = () => {
         return officers.filter(u => u.branch_id === branchFilter);
     }, [users, branchFilter]);
 
+    const centersForFilter = useMemo(() => {
+        if (branchFilter === 'all') return centers;
+        return centers.filter((c) => c.branch_id === branchFilter);
+    }, [centers, branchFilter]);
+
     const filteredRepayments = useMemo(() => {
         return repayments.filter(r => {
             const officer = users.find(u => u.id === r.officer_id);
+            const borrowerRow = r.loans?.borrowers;
             const branchMatch = branchFilter === 'all' || officer?.branch_id === branchFilter;
             const officerMatch = officerFilter === 'all' || r.officer_id === officerFilter;
+            const centerMatch = borrowerMatchesCenter(borrowerRow, centerFilter);
+            const statusMatch =
+                borrowerStatusFilter === 'all' || borrowerRow?.status === borrowerStatusFilter;
             const dateMatch = !dateRangeFilter?.from || (
                 new Date(r.actual_payment_date) >= startOfDay(dateRangeFilter.from) &&
                 new Date(r.actual_payment_date) <= endOfDay(dateRangeFilter.to || dateRangeFilter.from)
             );
-            return branchMatch && officerMatch && dateMatch;
+
+            const searchLower = searchTerm.toLowerCase();
+            const loanId = r.loans?.loan_id?.toLowerCase() || '';
+            const fName = borrowerRow?.first_name?.toLowerCase() || '';
+            const sName = borrowerRow?.surname?.toLowerCase() || '';
+            const borrowerName = `${fName} ${sName}`;
+            const borrowerId = borrowerRow?.borrower_id?.toLowerCase() || '';
+            const searchMatch =
+                !searchTerm ||
+                loanId.includes(searchLower) ||
+                borrowerName.includes(searchLower) ||
+                borrowerId.includes(searchLower);
+
+            return branchMatch && officerMatch && centerMatch && statusMatch && dateMatch && searchMatch;
         });
-    }, [repayments, users, branchFilter, officerFilter, dateRangeFilter]);
+    }, [repayments, users, branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
 
     useEffect(() => {
         setPage(1);
-    }, [branchFilter, officerFilter, dateRangeFilter]);
+    }, [branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
 
     const pagedRepayments = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
@@ -230,7 +269,23 @@ const AdminRepaymentManagement = () => {
                         <CardTitle>Filters</CardTitle>
                     </CardHeader>
                     <CardContent className="flex flex-wrap items-center gap-4">
-                        <Select value={branchFilter} onValueChange={value => { setBranchFilter(value); setOfficerFilter('all'); }}>
+                        <div className="relative">
+                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="Search loan ID, borrower name, borrower ID…"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="pl-8 w-[280px]"
+                            />
+                        </div>
+                        <Select
+                            value={branchFilter}
+                            onValueChange={(value) => {
+                                setBranchFilter(value);
+                                setOfficerFilter('all');
+                                setCenterFilter('all');
+                            }}
+                        >
                             <SelectTrigger className="w-[240px]">
                                 <SelectValue placeholder="Filter by Branch..." />
                             </SelectTrigger>
@@ -246,6 +301,32 @@ const AdminRepaymentManagement = () => {
                             <SelectContent>
                                 <SelectItem value="all">All Users</SelectItem>
                                 {filteredOfficers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                        <Select value={centerFilter} onValueChange={setCenterFilter}>
+                            <SelectTrigger className="w-[220px]">
+                                <SelectValue placeholder="Center" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All centers</SelectItem>
+                                {centersForFilter.map((c) => (
+                                    <SelectItem key={c.id} value={c.id}>
+                                        {branchFilter === 'all' ? `${c.name} (${branches.find((b) => b.id === c.branch_id)?.name ?? '—'})` : c.name}
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                        <Select value={borrowerStatusFilter} onValueChange={setBorrowerStatusFilter}>
+                            <SelectTrigger className="w-[240px]">
+                                <SelectValue placeholder="Borrower status" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="all">All borrower statuses</SelectItem>
+                                <SelectItem value="eligible">Eligible</SelectItem>
+                                <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
+                                <SelectItem value="active_loan">Active loan</SelectItem>
+                                <SelectItem value="defaulted">Defaulted</SelectItem>
+                                <SelectItem value="paid_up">Paid up</SelectItem>
                             </SelectContent>
                         </Select>
                         <Popover>
@@ -286,6 +367,7 @@ const AdminRepaymentManagement = () => {
                                     </TableHead>
                                     <TableHead>Payment Date</TableHead>
                                     <TableHead>Borrower</TableHead>
+                                    <TableHead>Borrower status</TableHead>
                                     <TableHead>Branch</TableHead>
                                     <TableHead>Loan Officer</TableHead>
                                     <TableHead>Principal Paid</TableHead>
@@ -309,6 +391,15 @@ const AdminRepaymentManagement = () => {
                                         </TableCell>
                                         <TableCell>{formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'MMM dd, yyyy')}</TableCell>
                                         <TableCell>{r.loans?.borrowers?.first_name} {r.loans?.borrowers?.surname}</TableCell>
+                                        <TableCell>
+                                            {r.loans?.borrowers?.status ? (
+                                                <Badge variant={borrowerStatusBadgeVariant(r.loans.borrowers.status)} className="font-normal">
+                                                    {borrowerStatusLabel(r.loans.borrowers.status)}
+                                                </Badge>
+                                            ) : (
+                                                '—'
+                                            )}
+                                        </TableCell>
                                         <TableCell>{branch?.name || 'N/A'}</TableCell>
                                         <TableCell>{officer?.full_name || 'N/A'}</TableCell>
                                         <TableCell>{currency} {(r.principal_paid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
@@ -321,13 +412,13 @@ const AdminRepaymentManagement = () => {
                                 )})}
                                 {filteredRepayments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
+                                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
                             <TableFooter>
                                 <TableRow>
-                                    <TableCell colSpan={5} className="font-bold text-right">Totals</TableCell>
+                                    <TableCell colSpan={6} className="font-bold text-right">Totals</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                     <TableCell className="font-bold" colSpan={2}>{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
