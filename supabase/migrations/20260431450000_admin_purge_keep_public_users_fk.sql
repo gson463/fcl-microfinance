@@ -1,4 +1,5 @@
--- Destructive reset: admin-only RPC. Truncates all application tables; optionally removes non-admin users from public + auth.
+-- Fix: TRUNCATE ... branches CASCADE also truncated public.users (FK users.branch_id -> branches).
+-- Drop that FK before truncate, then re-add after branches is empty.
 
 CREATE OR REPLACE FUNCTION public.admin_purge_all_data(p_mode text)
 RETURNS jsonb
@@ -24,7 +25,6 @@ BEGIN
     RAISE EXCEPTION 'Invalid mode (use keep_all_users or keep_admins_only)';
   END IF;
 
-  -- Clear FK refs; TRUNCATE branches CASCADE would otherwise truncate public.users (users.branch_id -> branches)
   ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_branch_id_fkey;
   UPDATE public.users SET branch_id = NULL WHERE branch_id IS NOT NULL;
 
@@ -54,7 +54,6 @@ BEGIN
   ALTER TABLE public.users
     ADD CONSTRAINT users_branch_id_fkey FOREIGN KEY (branch_id) REFERENCES public.branches (id);
 
-  -- Minimal config so the app can load after purge
   INSERT INTO public.system_config (key, value) VALUES
     ('currency', 'TZS'),
     ('systemName', 'Microfinance'),
@@ -71,7 +70,6 @@ BEGIN
     );
   END IF;
 
-  -- keep_admins_only: remove managers and officers from public.users and auth.users
   SELECT COALESCE(array_agg(id), ARRAY[]::uuid[]) INTO v_ids
   FROM public.users
   WHERE role IS DISTINCT FROM 'admin';
@@ -99,6 +97,6 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.admin_purge_all_data(text) IS
-  'Admin only. Truncates all business tables and re-seeds minimal system_config. keep_all_users: keeps all public/auth users. keep_admins_only: deletes non-admin users from public.users and auth.users.';
+  'Admin only. Truncates business tables; preserves public.users during branch truncate by dropping FK first.';
 
 GRANT EXECUTE ON FUNCTION public.admin_purge_all_data(text) TO authenticated;

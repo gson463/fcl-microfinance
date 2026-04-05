@@ -9,12 +9,12 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
-import { PlusCircle, Edit, Trash2, RotateCw, ShieldAlert, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, RotateCw, ShieldAlert, ChevronLeft, ChevronRight, Building2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,6 +46,9 @@ const UserManagement = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
+  const [bulkAssignBranchId, setBulkAssignBranchId] = useState('');
+  const [bulkAssigning, setBulkAssigning] = useState(false);
   const { toast } = useToast();
 
   const [filterRole, setFilterRole] = useState('all');
@@ -298,6 +301,53 @@ const UserManagement = () => {
     toast({ title: 'Exported', description: `${rows.length} user(s) to CSV.` });
   };
 
+  const selectedUserRows = useMemo(
+    () => users.filter((u) => bulk.selectedIds.includes(u.id)),
+    [users, bulk.selectedIds],
+  );
+  const bulkAssignableRows = useMemo(
+    () => selectedUserRows.filter((u) => u.role === 'manager' || u.role === 'officer'),
+    [selectedUserRows],
+  );
+  const bulkSkippedAdmins = useMemo(
+    () => selectedUserRows.filter((u) => u.role === 'admin').length,
+    [selectedUserRows],
+  );
+
+  const handleBulkAssignBranch = async () => {
+    if (!bulkAssignBranchId) {
+      toast({ title: 'Select a branch', description: 'Choose which branch to assign.', variant: 'destructive' });
+      return;
+    }
+    if (bulkAssignableRows.length === 0) {
+      toast({
+        title: 'No assignable users',
+        description:
+          bulkSkippedAdmins > 0
+            ? 'Only managers and officers can be assigned to a branch. Admin accounts are skipped.'
+            : 'Select at least one manager or officer.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setBulkAssigning(true);
+    const ids = bulkAssignableRows.map((u) => u.id);
+    const { error } = await supabase.from('users').update({ branch_id: bulkAssignBranchId }).in('id', ids);
+    setBulkAssigning(false);
+    if (error) {
+      toast({ title: 'Could not assign branch', description: error.message, variant: 'destructive' });
+      return;
+    }
+    const branchName = branches.find((b) => b.id === bulkAssignBranchId)?.name ?? 'branch';
+    const parts = [`${ids.length} user(s) assigned to ${branchName}.`];
+    if (bulkSkippedAdmins > 0) parts.push(`${bulkSkippedAdmins} admin account(s) skipped.`);
+    toast({ title: 'Branch assigned', description: parts.join(' ') });
+    bulk.clear();
+    setBulkAssignOpen(false);
+    setBulkAssignBranchId('');
+    fetchData();
+  };
+
   const getRoleBadgeVariant = (role) => {
     switch (role) {
       case 'admin': return 'destructive';
@@ -512,7 +562,74 @@ const UserManagement = () => {
                 selectedCount={bulk.count}
                 onClear={bulk.clear}
                 onExportCsv={exportSelectedCsv}
-              />
+                disabled={bulkAssigning}
+              >
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={bulkAssigning || branches.length === 0}
+                  onClick={() => {
+                    setBulkAssignBranchId('');
+                    setBulkAssignOpen(true);
+                  }}
+                  className="gap-1.5"
+                >
+                  <Building2 className="h-3.5 w-3.5" />
+                  Assign to branch
+                </Button>
+              </BulkDataTableToolbar>
+              <Dialog
+                open={bulkAssignOpen}
+                onOpenChange={(open) => {
+                  setBulkAssignOpen(open);
+                  if (!open) setBulkAssignBranchId('');
+                }}
+              >
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle>Bulk assign branch</DialogTitle>
+                    <DialogDescription>
+                      Sets <span className="font-medium text-foreground">branch</span> for selected managers and officers.
+                      Admin accounts are not changed.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-3 py-2">
+                    <p className="text-sm text-muted-foreground">
+                      {bulkAssignableRows.length} will be updated
+                      {bulkSkippedAdmins > 0 ? ` · ${bulkSkippedAdmins} admin(s) skipped` : ''}.
+                    </p>
+                    <div className="space-y-2">
+                      <Label htmlFor="bulk-branch">Branch</Label>
+                      <SearchableSelect
+                        id="bulk-branch"
+                        value={bulkAssignBranchId}
+                        onValueChange={setBulkAssignBranchId}
+                        options={userFormBranchOpts}
+                        placeholder="Select a branch"
+                        searchPlaceholder="Search branches…"
+                        emptyText="No branch found."
+                        triggerClassName="w-full"
+                      />
+                    </div>
+                  </div>
+                  <DialogFooter className="gap-2 sm:gap-0">
+                    <Button type="button" variant="outline" onClick={() => setBulkAssignOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="button" onClick={handleBulkAssignBranch} disabled={bulkAssigning || !bulkAssignBranchId}>
+                      {bulkAssigning ? (
+                        <>
+                          <RotateCw className="mr-2 h-4 w-4 animate-spin" />
+                          Assigning…
+                        </>
+                      ) : (
+                        'Assign branch'
+                      )}
+                    </Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
               <Table>
                 <TableHeader>
                   <TableRow>
