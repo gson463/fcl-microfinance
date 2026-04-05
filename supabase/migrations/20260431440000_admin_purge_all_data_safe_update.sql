@@ -1,4 +1,5 @@
--- Destructive reset: admin-only RPC. Truncates all application tables; optionally removes non-admin users from public + auth.
+-- Fix: unrestricted UPDATE is rejected when DB enforces "UPDATE requires a WHERE clause".
+-- Replaces admin_purge_all_data with UPDATE ... WHERE branch_id IS NOT NULL (same effect).
 
 CREATE OR REPLACE FUNCTION public.admin_purge_all_data(p_mode text)
 RETURNS jsonb
@@ -24,7 +25,6 @@ BEGIN
     RAISE EXCEPTION 'Invalid mode (use keep_all_users or keep_admins_only)';
   END IF;
 
-  -- Allow truncating branches while keeping user rows (WHERE required for safe-update / Supabase)
   UPDATE public.users SET branch_id = NULL WHERE branch_id IS NOT NULL;
 
   TRUNCATE TABLE
@@ -50,7 +50,6 @@ BEGIN
     public.branches
   RESTART IDENTITY CASCADE;
 
-  -- Minimal config so the app can load after purge
   INSERT INTO public.system_config (key, value) VALUES
     ('currency', 'TZS'),
     ('systemName', 'Microfinance'),
@@ -67,7 +66,6 @@ BEGIN
     );
   END IF;
 
-  -- keep_admins_only: remove managers and officers from public.users and auth.users
   SELECT COALESCE(array_agg(id), ARRAY[]::uuid[]) INTO v_ids
   FROM public.users
   WHERE role IS DISTINCT FROM 'admin';
