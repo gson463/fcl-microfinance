@@ -601,16 +601,21 @@ const UserManagement = () => {
                     </p>
                     <div className="space-y-2">
                       <Label htmlFor="bulk-branch">Branch</Label>
-                      <SearchableSelect
-                        id="bulk-branch"
-                        value={bulkAssignBranchId}
-                        onValueChange={setBulkAssignBranchId}
-                        options={userFormBranchOpts}
-                        placeholder="Select a branch"
-                        searchPlaceholder="Search branches…"
-                        emptyText="No branch found."
-                        triggerClassName="w-full"
-                      />
+                      <Select
+                        value={bulkAssignBranchId || undefined}
+                        onValueChange={(v) => setBulkAssignBranchId(v)}
+                      >
+                        <SelectTrigger id="bulk-branch" className="w-full">
+                          <SelectValue placeholder="Select a branch" />
+                        </SelectTrigger>
+                        <SelectContent className="z-[300] max-h-[min(280px,50vh)]">
+                          {branches.map((b) => (
+                            <SelectItem key={b.id} value={b.id}>
+                              {b.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
                   <DialogFooter className="gap-2 sm:gap-0">
