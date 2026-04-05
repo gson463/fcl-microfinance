@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { format, parseISO, startOfDay, endOfDay } from 'date-fns';
+import { format, parseISO, startOfDay, endOfDay, subDays } from 'date-fns';
 import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
@@ -15,7 +15,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Badge } from '@/components/ui/badge';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
@@ -30,11 +30,23 @@ import {
     getInstallmentUnitFromSchedule,
     isValidRepaymentAmount,
     repaymentAmountValidationMessage,
+    REPAYMENT_AMOUNT_INVALID_FALLBACK,
     roundToValidRepaymentAmount,
 } from '@/lib/repaymentInstallmentUnit.js';
+import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
+/** How far back officers may set actual payment date (collections / prepayment). */
+const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
+
+const BORROWER_STATUS_FILTER_OPTIONS = [
+	{ value: 'eligible', label: 'Eligible' },
+	{ value: 'pending', label: 'Pending re-loan (manager)' },
+	{ value: 'active_loan', label: 'Active loan' },
+	{ value: 'defaulted', label: 'Defaulted' },
+	{ value: 'paid_up', label: 'Paid up' },
+];
 
 /** Calendar “today” in Nairobi for date inputs and validation (avoids timezone off-by-one). */
 function getTodayEATDateForForm() {
@@ -99,6 +111,7 @@ const RepaymentManagement = () => {
     const prevPickerDueKeyRef = useRef('');
     const [selectedRepayments, setSelectedRepayments] = useState([]);
     const [pendingDeleteRepaymentIds, setPendingDeleteRepaymentIds] = useState(() => new Set());
+    const [holidays, setHolidays] = useState([]);
 
     // Filters
     const [groupFilter, setGroupFilter] = useState('all');
@@ -170,6 +183,9 @@ const RepaymentManagement = () => {
             const { data: centersData, error: centersError } = await centersQuery;
             if (centersError) throw centersError;
             setCenters(centersData || []);
+
+            const { data: holidaysData } = await supabase.from('holidays').select('date');
+            setHolidays(holidaysData || []);
 
         } catch (error) {
             toast({ title: 'Error fetching data', description: error.message, variant: 'destructive' });
@@ -280,6 +296,9 @@ const RepaymentManagement = () => {
         return groups.filter((g) => g.center_id === centerFilter);
     }, [groups, centerFilter]);
 
+    const officerRepCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const officerRepGroupFilterOpts = useMemo(() => groupsForFilter.map((g) => ({ value: g.id, label: g.name })), [groupsForFilter]);
+
     const filteredRepayments = useMemo(() => {
         return repayments.filter(r => {
             const borrowerRow = r.loans?.borrowers;
@@ -372,6 +391,14 @@ const RepaymentManagement = () => {
     }, [filteredRepayments, loans, centerFilter, groupFilter, borrowerStatusFilter, searchTerm]);
 
     const handleEdit = (repayment) => {
+        if (!isWorkingDayEAT(todayYyyyMmDdEAT(), holidays)) {
+            toast({
+                title: 'Non-working day',
+                description: 'Editing collections is not available on Sundays or public holidays.',
+                variant: 'destructive',
+            });
+            return;
+        }
         setCurrentRepayment(repayment);
         setEditForm({
             amount: repayment.amount,
@@ -451,16 +478,30 @@ const RepaymentManagement = () => {
         }
         const payStr = formatInTimeZone(payment_date, EAT_TIMEZONE, 'yyyy-MM-dd');
         const todayStr = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
-        if (payStr !== todayStr) {
+        const todayEAT = getTodayEATDateForForm();
+        const minStr = formatInTimeZone(subDays(todayEAT, PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS), EAT_TIMEZONE, 'yyyy-MM-dd');
+        if (payStr > todayStr) {
             toast({
                 title: 'Invalid date',
-                description: 'Payment date must be today (Africa/Nairobi).',
+                description: 'Actual payment date cannot be in the future.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (payStr < minStr) {
+            toast({
+                title: 'Invalid date',
+                description: `Actual payment date cannot be more than ${PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} days ago.`,
                 variant: 'destructive',
             });
             return;
         }
         if (isSundayInTimeZone(payment_date, EAT_TIMEZONE)) {
             toast({ title: 'Invalid date', description: 'Repayments are not recorded on Sundays.', variant: 'destructive' });
+            return;
+        }
+        if (holidays.some((h) => h.date === payStr)) {
+            toast({ title: 'Invalid date', description: 'Repayments are not recorded on public holidays.', variant: 'destructive' });
             return;
         }
 
@@ -493,10 +534,10 @@ const RepaymentManagement = () => {
         const unit = getInstallmentUnitFromSchedule(loan.schedule);
         if (!isValidRepaymentAmount(amt, due, unit)) {
             toast({
-                title: 'Kiasi si halali',
+                title: 'Invalid amount',
                 description:
                     repaymentAmountValidationMessage(amt, due, unit, currency) ||
-                    `Ingiza multiple ya kiasi cha installment (chini: installment moja).`,
+                    REPAYMENT_AMOUNT_INVALID_FALLBACK,
                 variant: 'destructive',
             });
             return;
@@ -541,7 +582,7 @@ const RepaymentManagement = () => {
                 return;
             }
 
-            toast({ title: 'Success', description: 'Repayment recorded successfully!' });
+            toast({ title: 'Success', description: 'Collection recorded successfully!' });
             setRepaymentDialogOpen(false);
             resetRepaymentForm();
             await fetchData();
@@ -731,6 +772,11 @@ const RepaymentManagement = () => {
         return groups.filter((g) => g.center_id === pickerCenterFilter);
     }, [groups, pickerCenterFilter]);
 
+    const recordPickerGroupOpts = useMemo(
+        () => groupsForRecordPicker.map((g) => ({ value: g.id, label: g.name })),
+        [groupsForRecordPicker],
+    );
+
     const loansForRecordPicker = useMemo(() => {
         return loans.filter((l) => {
             if (!l.borrowers) return false;
@@ -761,6 +807,11 @@ const RepaymentManagement = () => {
     }, [loanOptionsForRecordPicker, loanPickerSearch]);
 
     const todayStrEAT = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+    const minPaymentDateStrEAT = formatInTimeZone(
+        subDays(getTodayEATDateForForm(), PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS),
+        EAT_TIMEZONE,
+        'yyyy-MM-dd'
+    );
 
     const pickerInstallmentUnit = useMemo(() => {
         const loan = loans.find((l) => l.id === repaymentFormData.loanId);
@@ -773,6 +824,28 @@ const RepaymentManagement = () => {
             : repaymentFormData.loanId && pickerTotalDueOnOrBefore != null
               ? minimumRepaymentForDue(pickerTotalDueOnOrBefore)
               : 0.01;
+
+    /** Inline English message when the typed amount does not pass installment rules (blocks submit). */
+    const recordRepaymentAmountError = useMemo(() => {
+        if (!repaymentFormData.loanId || !String(repaymentFormData.amount ?? '').trim()) return '';
+        const loan = loans.find((l) => l.id === repaymentFormData.loanId);
+        if (!loan || pickerInstallmentUnit == null || pickerTotalDueOnOrBefore == null) return '';
+        const amt = parseFloat(String(repaymentFormData.amount ?? '').replace(/,/g, ''));
+        if (!Number.isFinite(amt) || amt <= 0) return '';
+        const due = Number(pickerTotalDueOnOrBefore ?? 0);
+        if (isValidRepaymentAmount(amt, due, pickerInstallmentUnit)) return '';
+        return (
+            repaymentAmountValidationMessage(amt, due, pickerInstallmentUnit, currency) ||
+            REPAYMENT_AMOUNT_INVALID_FALLBACK
+        );
+    }, [
+        repaymentFormData.loanId,
+        repaymentFormData.amount,
+        loans,
+        pickerInstallmentUnit,
+        pickerTotalDueOnOrBefore,
+        currency,
+    ]);
 
     const handleSelectAll = (checked) => {
         const pageIds = pagedRepayments.map(r => r.id);
@@ -791,27 +864,38 @@ const RepaymentManagement = () => {
         }
     };
 
-    if (loading) return <DashboardLayout><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
+    if (loading) return <DashboardLayout title="Collections"><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
 
     return (
-        <DashboardLayout title="Repayment Management">
+        <DashboardLayout title="Collections">
             <div className="space-y-6">
                  <div className="flex justify-end">
                     <Dialog
                         open={repaymentDialogOpen}
                         onOpenChange={(open) => {
+                            if (open) {
+                                if (!isWorkingDayEAT(todayYyyyMmDdEAT(), holidays)) {
+                                    toast({
+                                        title: 'Non-working day',
+                                        description:
+                                            'Recording collections is not available on Sundays or public holidays.',
+                                        variant: 'destructive',
+                                    });
+                                    return;
+                                }
+                                resetRepaymentForm();
+                            }
                             setRepaymentDialogOpen(open);
-                            if (open) resetRepaymentForm();
                         }}
                     >
                         <DialogTrigger asChild>
                             <Button type="button">
-                                <PlusCircle className="mr-2 h-4 w-4" /> Record Repayment
+                                <PlusCircle className="mr-2 h-4 w-4" /> Record Collection
                             </Button>
                         </DialogTrigger>
                         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
                             <DialogHeader>
-                                <DialogTitle>Record New Repayment</DialogTitle>
+                                <DialogTitle>Record New Collection</DialogTitle>
                                 <DialogDescription>
                                     Filter by center and group (optional), search for a loan, enter amount. Payment date is
                                     today (Africa/Nairobi).
@@ -821,53 +905,43 @@ const RepaymentManagement = () => {
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <div className="space-y-2">
                                         <Label htmlFor="record-center">Center</Label>
-                                        <Select
+                                        <SearchableSelect
+                                            id="record-center"
                                             value={pickerCenterFilter}
                                             onValueChange={(v) => {
                                                 setPickerCenterFilter(v);
                                                 setPickerGroupFilter('all');
                                                 setRepaymentFormData((prev) => ({ ...prev, loanId: '' }));
                                             }}
-                                        >
-                                            <SelectTrigger id="record-center">
-                                                <SelectValue placeholder="All centers" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all">All centers</SelectItem>
-                                                {centers.map((c) => (
-                                                    <SelectItem key={c.id} value={c.id}>
-                                                        {c.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                                            options={officerRepCenterOpts}
+                                            allLabel="All centers"
+                                            allValue="all"
+                                            placeholder="All centers"
+                                            searchPlaceholder="Search centers…"
+                                            emptyText="No center found."
+                                            triggerClassName="w-full"
+                                        />
                                     </div>
                                     <div className="space-y-2">
                                         <Label htmlFor="record-group">Group</Label>
-                                        <Select
+                                        <SearchableSelect
+                                            id="record-group"
                                             value={pickerGroupFilter}
                                             disabled={pickerCenterFilter === 'all'}
                                             onValueChange={(v) => {
                                                 setPickerGroupFilter(v);
                                                 setRepaymentFormData((prev) => ({ ...prev, loanId: '' }));
                                             }}
-                                        >
-                                            <SelectTrigger id="record-group">
-                                                <SelectValue
-                                                    placeholder={
-                                                        pickerCenterFilter === 'all' ? 'Pick center first' : 'All groups'
-                                                    }
-                                                />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                                <SelectItem value="all">All groups</SelectItem>
-                                                {groupsForRecordPicker.map((g) => (
-                                                    <SelectItem key={g.id} value={g.id}>
-                                                        {g.name}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
+                                            options={recordPickerGroupOpts}
+                                            allLabel="All groups"
+                                            allValue="all"
+                                            placeholder={
+                                                pickerCenterFilter === 'all' ? 'Pick center first' : 'All groups'
+                                            }
+                                            searchPlaceholder="Search groups…"
+                                            emptyText="No group found."
+                                            triggerClassName="w-full"
+                                        />
                                     </div>
                                 </div>
                                 <div className="space-y-2">
@@ -923,13 +997,15 @@ const RepaymentManagement = () => {
                                     )}
                                 </div>
                                 <div>
-                                    <Label htmlFor="repayment-amount">Repayment amount ({currency})</Label>
+                                    <Label htmlFor="repayment-amount">Collection amount ({currency})</Label>
                                     <Input
                                         id="repayment-amount"
                                         type="number"
                                         step="0.01"
                                         min={minAmountForRecordInput}
                                         value={repaymentFormData.amount}
+                                        aria-invalid={recordRepaymentAmountError ? true : undefined}
+                                        className={cn(recordRepaymentAmountError && 'border-destructive')}
                                         onChange={(e) =>
                                             setRepaymentFormData({ ...repaymentFormData, amount: e.target.value })
                                         }
@@ -953,6 +1029,11 @@ const RepaymentManagement = () => {
                                         }}
                                         placeholder="Fills with amount due on this date; add more for arrears or prepayment"
                                     />
+                                    {recordRepaymentAmountError && (
+                                        <p className="mt-1 text-sm text-destructive" role="alert">
+                                            {recordRepaymentAmountError}
+                                        </p>
+                                    )}
                                     {repaymentFormData.loanId &&
                                         pickerDueOnSelectedDate != null &&
                                         pickerTotalDueOnOrBefore != null && (
@@ -1007,7 +1088,7 @@ const RepaymentManagement = () => {
                                         id="payment-date"
                                         type="date"
                                         className="font-mono"
-                                        min={todayStrEAT}
+                                        min={minPaymentDateStrEAT}
                                         max={todayStrEAT}
                                         value={
                                             repaymentFormData.payment_date
@@ -1020,15 +1101,19 @@ const RepaymentManagement = () => {
                                         }
                                         onChange={(e) => {
                                             const v = e.target.value;
-                                            if (!v || v !== todayStrEAT) return;
+                                            if (!v) return;
+                                            const [y, m, d] = v.split('-').map(Number);
+                                            if (!y || !m || !d) return;
                                             setRepaymentFormData((prev) => ({
                                                 ...prev,
-                                                payment_date: getTodayEATDateForForm(),
+                                                payment_date: new Date(y, m - 1, d),
                                             }));
                                         }}
                                     />
                                     <p className="mt-1 text-xs text-muted-foreground">
-                                        Today only (calendar date in Africa/Nairobi). Sundays are blocked on submit.
+                                        The date you choose is saved as <strong>actual payment date</strong> and drives scheduled
+                                        vs prepayment (due on/before that day). Last {PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} working
+                                        days in Africa/Nairobi; Sundays and holidays blocked on submit.
                                     </p>
                                 </div>
                                 <Button type="button" onClick={handleRecordRepayment} className="w-full" disabled={isSubmitting}>
@@ -1037,7 +1122,7 @@ const RepaymentManagement = () => {
                                     ) : (
                                         <HandCoins className="mr-2 h-4 w-4" />
                                     )}
-                                    Record payment
+                                    Record Collection
                                 </Button>
                             </div>
                         </DialogContent>
@@ -1074,41 +1159,43 @@ const RepaymentManagement = () => {
                                 className="pl-8 w-[280px]"
                             />
                         </div>
-                        <Select value={centerFilter} onValueChange={(v) => { setCenterFilter(v); setGroupFilter('all'); }}>
-                            <SelectTrigger className="w-[220px]">
-                                <SelectValue placeholder="Center" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All centers</SelectItem>
-                                {centers.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
-                            <SelectTrigger className="w-[220px]">
-                                <SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All groups</SelectItem>
-                                {groupsForFilter.map((g) => (
-                                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={borrowerStatusFilter} onValueChange={setBorrowerStatusFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Borrower status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All borrower statuses</SelectItem>
-                                <SelectItem value="eligible">Eligible</SelectItem>
-                                <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
-                                <SelectItem value="active_loan">Active loan</SelectItem>
-                                <SelectItem value="defaulted">Defaulted</SelectItem>
-                                <SelectItem value="paid_up">Paid up</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <SearchableSelect
+                            value={centerFilter}
+                            onValueChange={(v) => {
+                                setCenterFilter(v);
+                                setGroupFilter('all');
+                            }}
+                            options={officerRepCenterOpts}
+                            allLabel="All centers"
+                            allValue="all"
+                            placeholder="Center"
+                            searchPlaceholder="Search centers…"
+                            emptyText="No center found."
+                            triggerClassName="w-[220px]"
+                        />
+                        <SearchableSelect
+                            value={groupFilter}
+                            onValueChange={setGroupFilter}
+                            disabled={centerFilter === 'all'}
+                            options={officerRepGroupFilterOpts}
+                            allLabel="All groups"
+                            allValue="all"
+                            placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
+                            searchPlaceholder="Search groups…"
+                            emptyText="No group found."
+                            triggerClassName="w-[220px]"
+                        />
+                        <SearchableSelect
+                            value={borrowerStatusFilter}
+                            onValueChange={setBorrowerStatusFilter}
+                            options={BORROWER_STATUS_FILTER_OPTIONS}
+                            allLabel="All borrower statuses"
+                            allValue="all"
+                            placeholder="Borrower status"
+                            searchPlaceholder="Search status…"
+                            emptyText="No match."
+                            triggerClassName="w-[240px]"
+                        />
                         <Popover>
                             <PopoverTrigger asChild>
                                 <Button variant="outline" className="w-[280px] justify-start text-left font-normal">

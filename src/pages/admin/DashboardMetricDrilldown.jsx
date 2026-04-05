@@ -20,7 +20,7 @@ import { DRILLDOWN_METRICS, METRIC_TITLES } from '@/lib/dashboardMetrics';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { defaultDashboardRange } from '@/components/dashboard/DashboardMetricShell';
 import {
 	orderDrilldownKeys,
@@ -275,6 +275,19 @@ const DashboardMetricDrilldown = () => {
 		return officers.filter((o) => o.branch_id === filterBranchId);
 	}, [officers, filterBranchId]);
 
+	const drillBranchOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
+	const drillOfficerOptsAdmin = useMemo(
+		() => officersForBranch.map((o) => ({ value: o.id, label: o.full_name })),
+		[officersForBranch]
+	);
+	const drillOfficerOptsMgr = useMemo(() => officers.map((o) => ({ value: o.id, label: o.full_name })), [officers]);
+	const drillCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+	const drillGroupOpts = useMemo(() => groups.map((g) => ({ value: g.id, label: g.name })), [groups]);
+	const nearingDayOpts = useMemo(
+		() => [3, 7, 10, 14, 21, 30, 45, 60, 90].map((d) => ({ value: String(d), label: `${d} days` })),
+		[]
+	);
+
 	useEffect(() => {
 		if (!isAdminRoute) return;
 		if (!filterOfficerId || !filterBranchId) return;
@@ -525,25 +538,19 @@ const DashboardMetricDrilldown = () => {
 						{metricKey === DRILLDOWN_METRICS.nearing_completion && (
 							<div className="w-full min-w-[200px] sm:w-[220px]">
 								<p className="mb-1.5 text-xs font-medium text-neutral-500">Final payment within</p>
-								<Select
+								<SearchableSelect
 									value={String(nearingDays)}
 									onValueChange={(v) => {
 										const n = Math.min(365, Math.max(1, parseInt(v, 10) || 14));
 										setNearingDays(n);
 										persistQuery({ days: n });
 									}}
-								>
-									<SelectTrigger>
-										<SelectValue placeholder="Days" />
-									</SelectTrigger>
-									<SelectContent>
-										{[3, 7, 10, 14, 21, 30, 45, 60, 90].map((d) => (
-											<SelectItem key={d} value={String(d)}>
-												{d} days
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+									options={nearingDayOpts}
+									placeholder="Days"
+									searchPlaceholder="Search days…"
+									emptyText="No match."
+									triggerClassName="w-full"
+								/>
 							</div>
 						)}
 
@@ -551,7 +558,7 @@ const DashboardMetricDrilldown = () => {
 							<>
 								<div className="w-full min-w-[200px] sm:w-[220px]">
 									<p className="mb-1.5 text-xs font-medium text-neutral-500">Branch</p>
-									<Select
+									<SearchableSelect
 										value={filterBranchId || 'all'}
 										onValueChange={(v) => {
 											const next = v === 'all' ? '' : v;
@@ -561,23 +568,18 @@ const DashboardMetricDrilldown = () => {
 											setFilterGroupId('');
 											persistQuery({ branchId: next, officerId: '', centerId: '', groupId: '' });
 										}}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder="All branches" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="all">All branches</SelectItem>
-											{branches.map((br) => (
-												<SelectItem key={br.id} value={br.id}>
-													{br.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={drillBranchOpts}
+										allLabel="All branches"
+										allValue="all"
+										placeholder="All branches"
+										searchPlaceholder="Search branches…"
+										emptyText="No branch found."
+										triggerClassName="w-full"
+									/>
 								</div>
 								<div className="w-full min-w-[200px] sm:w-[220px]">
 									<p className="mb-1.5 text-xs font-medium text-neutral-500">Loan officer</p>
-									<Select
+									<SearchableSelect
 										value={filterOfficerId || 'all'}
 										onValueChange={(v) => {
 											const next = v === 'all' ? '' : v;
@@ -586,25 +588,20 @@ const DashboardMetricDrilldown = () => {
 											setFilterGroupId('');
 											persistQuery({ officerId: next, centerId: '', groupId: '' });
 										}}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder="All officers" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="all">All officers</SelectItem>
-											{officersForBranch.map((o) => (
-												<SelectItem key={o.id} value={o.id}>
-													{o.full_name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={drillOfficerOptsAdmin}
+										allLabel="All officers"
+										allValue="all"
+										placeholder="All officers"
+										searchPlaceholder="Search officers…"
+										emptyText="No officer found."
+										triggerClassName="w-full"
+									/>
 								</div>
 								{filterOfficerId && (
 									<>
 										<div className="w-full min-w-[200px] sm:w-[220px]">
 											<p className="mb-1.5 text-xs font-medium text-neutral-500">Center</p>
-											<Select
+											<SearchableSelect
 												value={filterCenterId || 'all'}
 												onValueChange={(v) => {
 													const next = v === 'all' ? '' : v;
@@ -612,23 +609,18 @@ const DashboardMetricDrilldown = () => {
 													setFilterGroupId('');
 													persistQuery({ centerId: next, groupId: '' });
 												}}
-											>
-												<SelectTrigger>
-													<SelectValue placeholder="All centers" />
-												</SelectTrigger>
-												<SelectContent>
-													<SelectItem value="all">All centers</SelectItem>
-													{centers.map((c) => (
-														<SelectItem key={c.id} value={c.id}>
-															{c.name}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+												options={drillCenterOpts}
+												allLabel="All centers"
+												allValue="all"
+												placeholder="All centers"
+												searchPlaceholder="Search centers…"
+												emptyText="No center found."
+												triggerClassName="w-full"
+											/>
 										</div>
 										<div className="w-full min-w-[200px] sm:w-[220px]">
 											<p className="mb-1.5 text-xs font-medium text-neutral-500">Group</p>
-											<Select
+											<SearchableSelect
 												value={filterGroupId || 'all'}
 												disabled={!filterCenterId}
 												onValueChange={(v) => {
@@ -636,19 +628,14 @@ const DashboardMetricDrilldown = () => {
 													setFilterGroupId(next);
 													persistQuery({ groupId: next });
 												}}
-											>
-												<SelectTrigger>
-													<SelectValue placeholder={filterCenterId ? 'All groups' : 'Pick a center first'} />
-												</SelectTrigger>
-												<SelectContent>
-													<SelectItem value="all">All groups</SelectItem>
-													{groups.map((g) => (
-														<SelectItem key={g.id} value={g.id}>
-															{g.name}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+												options={drillGroupOpts}
+												allLabel="All groups"
+												allValue="all"
+												placeholder={filterCenterId ? 'All groups' : 'Pick a center first'}
+												searchPlaceholder="Search groups…"
+												emptyText="No group found."
+												triggerClassName="w-full"
+											/>
 										</div>
 									</>
 								)}
@@ -682,7 +669,7 @@ const DashboardMetricDrilldown = () => {
 								</div>
 								<div className="w-full min-w-[200px] sm:w-[220px]">
 									<p className="mb-1.5 text-xs font-medium text-neutral-500">Loan officer</p>
-									<Select
+									<SearchableSelect
 										value={filterOfficerId || 'all'}
 										onValueChange={(v) => {
 											const next = v === 'all' ? '' : v;
@@ -691,25 +678,20 @@ const DashboardMetricDrilldown = () => {
 											setFilterGroupId('');
 											persistQuery({ officerId: next, centerId: '', groupId: '' });
 										}}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder="All officers" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="all">All officers</SelectItem>
-											{officers.map((o) => (
-												<SelectItem key={o.id} value={o.id}>
-													{o.full_name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={drillOfficerOptsMgr}
+										allLabel="All officers"
+										allValue="all"
+										placeholder="All officers"
+										searchPlaceholder="Search officers…"
+										emptyText="No officer found."
+										triggerClassName="w-full"
+									/>
 								</div>
 								{filterOfficerId && (
 									<>
 										<div className="w-full min-w-[200px] sm:w-[220px]">
 											<p className="mb-1.5 text-xs font-medium text-neutral-500">Center</p>
-											<Select
+											<SearchableSelect
 												value={filterCenterId || 'all'}
 												onValueChange={(v) => {
 													const next = v === 'all' ? '' : v;
@@ -717,23 +699,18 @@ const DashboardMetricDrilldown = () => {
 													setFilterGroupId('');
 													persistQuery({ centerId: next, groupId: '' });
 												}}
-											>
-												<SelectTrigger>
-													<SelectValue placeholder="All centers" />
-												</SelectTrigger>
-												<SelectContent>
-													<SelectItem value="all">All centers</SelectItem>
-													{centers.map((c) => (
-														<SelectItem key={c.id} value={c.id}>
-															{c.name}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+												options={drillCenterOpts}
+												allLabel="All centers"
+												allValue="all"
+												placeholder="All centers"
+												searchPlaceholder="Search centers…"
+												emptyText="No center found."
+												triggerClassName="w-full"
+											/>
 										</div>
 										<div className="w-full min-w-[200px] sm:w-[220px]">
 											<p className="mb-1.5 text-xs font-medium text-neutral-500">Group</p>
-											<Select
+											<SearchableSelect
 												value={filterGroupId || 'all'}
 												disabled={!filterCenterId}
 												onValueChange={(v) => {
@@ -741,19 +718,14 @@ const DashboardMetricDrilldown = () => {
 													setFilterGroupId(next);
 													persistQuery({ groupId: next });
 												}}
-											>
-												<SelectTrigger>
-													<SelectValue placeholder={filterCenterId ? 'All groups' : 'Pick a center first'} />
-												</SelectTrigger>
-												<SelectContent>
-													<SelectItem value="all">All groups</SelectItem>
-													{groups.map((g) => (
-														<SelectItem key={g.id} value={g.id}>
-															{g.name}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
+												options={drillGroupOpts}
+												allLabel="All groups"
+												allValue="all"
+												placeholder={filterCenterId ? 'All groups' : 'Pick a center first'}
+												searchPlaceholder="Search groups…"
+												emptyText="No group found."
+												triggerClassName="w-full"
+											/>
 										</div>
 									</>
 								)}
@@ -780,7 +752,7 @@ const DashboardMetricDrilldown = () => {
 							<>
 								<div className="w-full min-w-[200px] sm:w-[220px]">
 									<p className="mb-1.5 text-xs font-medium text-neutral-500">Center</p>
-									<Select
+									<SearchableSelect
 										value={filterCenterId || 'all'}
 										onValueChange={(v) => {
 											const next = v === 'all' ? '' : v;
@@ -788,23 +760,18 @@ const DashboardMetricDrilldown = () => {
 											setFilterGroupId('');
 											persistQuery({ centerId: next, groupId: '' });
 										}}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder="All centers" />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="all">All centers</SelectItem>
-											{centers.map((c) => (
-												<SelectItem key={c.id} value={c.id}>
-													{c.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={drillCenterOpts}
+										allLabel="All centers"
+										allValue="all"
+										placeholder="All centers"
+										searchPlaceholder="Search centers…"
+										emptyText="No center found."
+										triggerClassName="w-full"
+									/>
 								</div>
 								<div className="w-full min-w-[200px] sm:w-[220px]">
 									<p className="mb-1.5 text-xs font-medium text-neutral-500">Group</p>
-									<Select
+									<SearchableSelect
 										value={filterGroupId || 'all'}
 										disabled={!filterCenterId}
 										onValueChange={(v) => {
@@ -812,19 +779,14 @@ const DashboardMetricDrilldown = () => {
 											setFilterGroupId(next);
 											persistQuery({ groupId: next });
 										}}
-									>
-										<SelectTrigger>
-											<SelectValue placeholder={filterCenterId ? 'All groups' : 'Pick a center first'} />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="all">All groups</SelectItem>
-											{groups.map((g) => (
-												<SelectItem key={g.id} value={g.id}>
-													{g.name}
-												</SelectItem>
-											))}
-										</SelectContent>
-									</Select>
+										options={drillGroupOpts}
+										allLabel="All groups"
+										allValue="all"
+										placeholder={filterCenterId ? 'All groups' : 'Pick a center first'}
+										searchPlaceholder="Search groups…"
+										emptyText="No group found."
+										triggerClassName="w-full"
+									/>
 								</div>
 								{(filterCenterId || filterGroupId) && (
 									<Button

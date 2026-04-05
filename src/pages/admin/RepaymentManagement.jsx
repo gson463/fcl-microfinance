@@ -15,7 +15,7 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Input } from '@/components/ui/input';
 import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -29,6 +29,14 @@ import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerS
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
+
+const BORROWER_STATUS_FILTER_OPTIONS = [
+	{ value: 'eligible', label: 'Eligible' },
+	{ value: 'pending', label: 'Pending re-loan (manager)' },
+	{ value: 'active_loan', label: 'Active loan' },
+	{ value: 'defaulted', label: 'Defaulted' },
+	{ value: 'paid_up', label: 'Paid up' },
+];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -123,6 +131,20 @@ const AdminRepaymentManagement = () => {
         if (branchFilter === 'all') return centers;
         return centers.filter((c) => c.branch_id === branchFilter);
     }, [centers, branchFilter]);
+
+    const repBranchOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
+    const repOfficerOpts = useMemo(() => filteredOfficers.map((o) => ({ value: o.id, label: o.full_name })), [filteredOfficers]);
+    const repCenterOpts = useMemo(
+        () =>
+            centersForFilter.map((c) => ({
+                value: c.id,
+                label:
+                    branchFilter === 'all'
+                        ? `${c.name} (${branches.find((b) => b.id === c.branch_id)?.name ?? '—'})`
+                        : c.name,
+            })),
+        [centersForFilter, branchFilter, branches],
+    );
 
     const filteredRepayments = useMemo(() => {
         return repayments.filter(r => {
@@ -245,10 +267,10 @@ const AdminRepaymentManagement = () => {
         XLSX.writeFile(wb, 'repayment_history_full.xlsx');
     };
 
-    if (loading) return <DashboardLayout><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
+    if (loading) return <DashboardLayout title="Collections"><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
 
     return (
-        <DashboardLayout title="Repayment Management">
+        <DashboardLayout title="Collections">
             <div className="space-y-6">
                 <Card>
                     <CardHeader>
@@ -278,57 +300,54 @@ const AdminRepaymentManagement = () => {
                                 className="pl-8 w-[280px]"
                             />
                         </div>
-                        <Select
+                        <SearchableSelect
                             value={branchFilter}
                             onValueChange={(value) => {
                                 setBranchFilter(value);
                                 setOfficerFilter('all');
                                 setCenterFilter('all');
                             }}
-                        >
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Filter by Branch..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Branches</SelectItem>
-                                {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <Select value={officerFilter} onValueChange={setOfficerFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Filter by User..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Users</SelectItem>
-                                {filteredOfficers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <Select value={centerFilter} onValueChange={setCenterFilter}>
-                            <SelectTrigger className="w-[220px]">
-                                <SelectValue placeholder="Center" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All centers</SelectItem>
-                                {centersForFilter.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>
-                                        {branchFilter === 'all' ? `${c.name} (${branches.find((b) => b.id === c.branch_id)?.name ?? '—'})` : c.name}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={borrowerStatusFilter} onValueChange={setBorrowerStatusFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Borrower status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All borrower statuses</SelectItem>
-                                <SelectItem value="eligible">Eligible</SelectItem>
-                                <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
-                                <SelectItem value="active_loan">Active loan</SelectItem>
-                                <SelectItem value="defaulted">Defaulted</SelectItem>
-                                <SelectItem value="paid_up">Paid up</SelectItem>
-                            </SelectContent>
-                        </Select>
+                            options={repBranchOpts}
+                            allLabel="All Branches"
+                            allValue="all"
+                            placeholder="Filter by Branch..."
+                            searchPlaceholder="Search branches…"
+                            emptyText="No branch found."
+                            triggerClassName="w-[240px]"
+                        />
+                        <SearchableSelect
+                            value={officerFilter}
+                            onValueChange={setOfficerFilter}
+                            options={repOfficerOpts}
+                            allLabel="All Users"
+                            allValue="all"
+                            placeholder="Filter by User..."
+                            searchPlaceholder="Search officers…"
+                            emptyText="No officer found."
+                            triggerClassName="w-[240px]"
+                        />
+                        <SearchableSelect
+                            value={centerFilter}
+                            onValueChange={setCenterFilter}
+                            options={repCenterOpts}
+                            allLabel="All centers"
+                            allValue="all"
+                            placeholder="Center"
+                            searchPlaceholder="Search centers…"
+                            emptyText="No center found."
+                            triggerClassName="w-[220px]"
+                        />
+                        <SearchableSelect
+                            value={borrowerStatusFilter}
+                            onValueChange={setBorrowerStatusFilter}
+                            options={BORROWER_STATUS_FILTER_OPTIONS}
+                            allLabel="All borrower statuses"
+                            allValue="all"
+                            placeholder="Borrower status"
+                            searchPlaceholder="Search status…"
+                            emptyText="No match."
+                            triggerClassName="w-[240px]"
+                        />
                         <Popover>
                             <PopoverTrigger asChild>
                                 <Button variant="outline" className="w-[280px] justify-start text-left font-normal">

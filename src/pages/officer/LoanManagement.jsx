@@ -2,9 +2,10 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { supabase } from '@/lib/customSupabaseClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -19,27 +20,44 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Combobox } from '@/components/ui/combobox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { PlusCircle, Eye, Trash2, Download, Upload, Briefcase, DollarSign, AlertTriangle, Edit, Loader2, Calendar as CalendarIcon, Coins as HandCoins, CheckCircle2, User, CreditCard, CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PlusCircle, Eye, Trash2, Download, Upload, Briefcase, DollarSign, AlertTriangle, Edit, Loader2, Calendar as CalendarIcon, CheckCircle2, User, CreditCard, CalendarDays, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { generateSchedule, getNextWorkingDay } from '@/utils/loanUtils';
-import {
-  getInstallmentUnitFromSchedule,
-  isValidRepaymentAmount,
-  repaymentAmountValidationMessage,
-} from '@/lib/repaymentInstallmentUnit.js';
 import * as XLSX from 'xlsx';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { format as formatDate, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import { checkDisbursementAgainstFieldWallet } from '@/lib/officerFieldWalletDisburse';
+import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
+
+const OFFICER_LOAN_STATUS_FILTER_OPTIONS = [
+	{ value: 'active', label: 'Active' },
+	{ value: 'paid', label: 'Paid' },
+	{ value: 'delinquent', label: 'Delinquent' },
+	{ value: 'defaulted', label: 'Defaulted' },
+	{ value: 'edit_requested', label: 'Edit Requested' },
+	{ value: 'delete_requested', label: 'Delete Requested' },
+];
+
+/** True if borrower still has any loan not fully settled (blocks new disbursement in UI). */
+function borrowerHasOutstandingLoan(loans, borrowerId) {
+    if (!borrowerId || !Array.isArray(loans)) return false;
+    return loans.some(
+        (l) =>
+            l.borrower_id === borrowerId &&
+            (l.status !== 'paid' || Number(l.balance) > 0.01),
+    );
+}
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card className="overflow-hidden border-none shadow-md hover:shadow-lg transition-all duration-300">
@@ -68,7 +86,7 @@ function excelSerialDateToYYYYMMDD(serial) {
 }
 
 const LoanManagement = () => {
-    const { user, session } = useAuth();
+    const { user } = useAuth();
     const { toast } = useToast();
     const [loans, setLoans] = useState([]);
     const [borrowers, setBorrowers] = useState([]);
@@ -80,13 +98,10 @@ const LoanManagement = () => {
     const [dialogOpen, setDialogOpen] = useState(false);
     const [editDialogOpen, setEditDialogOpen] = useState(false);
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
-    const [repaymentDialogOpen, setRepaymentDialogOpen] = useState(false);
     const [selectedLoan, setSelectedLoan] = useState(null);
     const [isRefreshingSchedule, setIsRefreshingSchedule] = useState(false);
     const [editingLoan, setEditingLoan] = useState(null);
-    const [repaymentLoan, setRepaymentLoan] = useState(null);
     const [currency, setCurrency] = useState('TZS');
-    const [isSubmittingRepayment, setIsSubmittingRepayment] = useState(false);
     
     const [searchQuery, setSearchQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
@@ -95,6 +110,11 @@ const LoanManagement = () => {
     const [groupFilter, setGroupFilter] = useState('all');
     const [centers, setCenters] = useState([]);
     const [groups, setGroups] = useState([]);
+    /** All groups for this officer — used by disburse dialog center → group filters */
+    const [disbursementGroups, setDisbursementGroups] = useState([]);
+    const [disbursePickerCenterFilter, setDisbursePickerCenterFilter] = useState('all');
+    const [disbursePickerGroupFilter, setDisbursePickerGroupFilter] = useState('all');
+    const [disburseBorrowerSearch, setDisburseBorrowerSearch] = useState('');
     const [dateRange, setDateRange] = useState({ from: undefined, to: undefined });
     const [page, setPage] = useState(1);
 
@@ -109,10 +129,11 @@ const LoanManagement = () => {
     const [editFormData, setEditFormData] = useState({ principal: '', productId: '', disbursementDate: null, repaymentStartDate: null });
     const [newSchedulePreview, setNewSchedulePreview] = useState([]);
     
-    const [repaymentFormData, setRepaymentFormData] = useState({ amount: '', payment_date: new Date() });
     const importFileRef = useRef(null);
     const [increaseEligibility, setIncreaseEligibility] = useState(null);
     const [increaseEligibilityLoading, setIncreaseEligibilityLoading] = useState(false);
+    const [attendanceExceptionNotes, setAttendanceExceptionNotes] = useState('');
+    const [submittingAttendanceException, setSubmittingAttendanceException] = useState(false);
     
     // Updated disabledDays to block past dates while allowing today
     const disabledDays = useMemo(() => {
@@ -140,6 +161,10 @@ const LoanManagement = () => {
             disbursementDate: nextWorkingDayStr,
             repaymentStartDate: nextWorkingDayStr 
         });
+        setAttendanceExceptionNotes('');
+        setDisbursePickerCenterFilter('all');
+        setDisbursePickerGroupFilter('all');
+        setDisburseBorrowerSearch('');
     }, [holidays]);
     
     const fetchData = useCallback(async () => {
@@ -156,15 +181,34 @@ const LoanManagement = () => {
             .from('loans')
             .select(LOAN_BORROWER_SELECT)
             .eq('officer_id', user.id);
-        const { data: borrowersData, error: borrowersError } = await supabase.from('borrowers').select('*').eq('loan_officer_id', user.id);
+        const { data: borrowersData, error: borrowersError } = await supabase
+            .from('borrowers')
+            .select('*, groups(id, name, center_id)')
+            .eq('loan_officer_id', user.id);
+        const { data: allGroupsData, error: allGroupsError } = await supabase
+            .from('groups')
+            .select('id, name, center_id')
+            .eq('loan_officer_id', user.id)
+            .order('name');
         const { data: productsData, error: productsError } = await supabase.from('loan_products').select('*').eq('status', 'active');
         const { data: holidaysData, error: holidaysError } = await supabase.from('holidays').select('*');
         
-        if (loansError || borrowersError || productsError || holidaysError) {
-            toast({ title: 'Error fetching data', description: loansError?.message || borrowersError?.message || productsError?.message || holidaysError?.message, variant: 'destructive' });
+        if (loansError || borrowersError || allGroupsError || productsError || holidaysError) {
+            toast({
+                title: 'Error fetching data',
+                description:
+                    loansError?.message ||
+                    borrowersError?.message ||
+                    allGroupsError?.message ||
+                    productsError?.message ||
+                    holidaysError?.message,
+                variant: 'destructive',
+            });
+            setDisbursementGroups([]);
         } else {
             setLoans(loansData || []);
             setBorrowers(borrowersData || []);
+            setDisbursementGroups(allGroupsData || []);
             setLoanProducts(productsData || []);
             setHolidays(holidaysData || []);
         }
@@ -206,10 +250,20 @@ const LoanManagement = () => {
             cancelled = true;
         };
     }, [centerFilter]);
-    
+
+    const officerListCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const officerListGroupOpts = useMemo(() => groups.map((g) => ({ value: g.id, label: g.name })), [groups]);
+    const officerListProductOpts = useMemo(() => loanProducts.map((p) => ({ value: p.id, label: p.name })), [loanProducts]);
+
     useEffect(() => {
        resetFormData();
     }, [resetFormData]);
+
+    useEffect(() => {
+        if (disbursePickerCenterFilter === 'all') {
+            setDisbursePickerGroupFilter('all');
+        }
+    }, [disbursePickerCenterFilter]);
 
     useEffect(() => {
         if (!formData.borrowerId) {
@@ -345,6 +399,30 @@ const LoanManagement = () => {
                 return;
             }
 
+            const { data: elCheck, error: elErr } = await supabase.rpc('borrower_loan_increase_eligibility', {
+                p_borrower_id: borrowerId,
+            });
+            if (elErr) {
+                toast({
+                    title: 'Eligibility check failed',
+                    description: elErr.message,
+                    variant: 'destructive',
+                });
+                setIsDisbursingLoan(false);
+                return;
+            }
+            if (elCheck && elCheck.may_disburse_new_loan === false) {
+                toast({
+                    title: 'Cannot disburse yet',
+                    description:
+                        elCheck.summary ||
+                        'Loan increase rules are not met. Submit an attendance exception for manager approval if applicable.',
+                    variant: 'destructive',
+                });
+                setIsDisbursingLoan(false);
+                return;
+            }
+
             const product = loanProducts.find(p => p.id === productId);
             if (!product) {
                 throw new Error('Loan product not found');
@@ -354,6 +432,40 @@ const LoanManagement = () => {
 
             if (principalAmount < product.min_amount || principalAmount > product.max_amount) {
                 toast({ title: 'Validation Error', description: `Principal amount must be between ${currency} ${product.min_amount.toLocaleString()} and ${currency} ${product.max_amount.toLocaleString()}.`, variant: 'destructive' });
+                setIsDisbursingLoan(false);
+                return;
+            }
+
+            const { data: feeRow } = await supabase
+                .from('system_config')
+                .select('value')
+                .eq('key', 'applicationFeePerDisbursement')
+                .maybeSingle();
+            const feePer = parseFloat(feeRow?.value) || 0;
+            const walletCheck = await checkDisbursementAgainstFieldWallet({
+                officerId: user.id,
+                disbursementDateYyyyMmDd: disbursementDate,
+                principalAmount,
+                applicationFeePerDisbursement: feePer,
+            });
+            if (walletCheck.error) {
+                toast({
+                    title: 'Wallet check failed',
+                    description: walletCheck.error.message,
+                    variant: 'destructive',
+                });
+                setIsDisbursingLoan(false);
+                return;
+            }
+            if (!walletCheck.ok) {
+                toast({
+                    title: 'Insufficient field wallet',
+                    description: `For ${disbursementDate}, field wallet after this disbursement would be ${walletCheck.projectedAfter.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                    })} (need ≥ 0). Add taken or collect repayments before disbursing this principal.`,
+                    variant: 'destructive',
+                });
                 setIsDisbursingLoan(false);
                 return;
             }
@@ -383,10 +495,17 @@ const LoanManagement = () => {
                 schedule: schedule,
             };
 
-            const { error: loanInsertError } = await supabase.from('loans').insert(newLoan);
+            const { data: insertedLoan, error: loanInsertError } = await supabase.from('loans').insert(newLoan).select('id').single();
 
             if (loanInsertError) {
                 throw loanInsertError;
+            }
+
+            if (insertedLoan?.id) {
+                await supabase.rpc('consume_loan_increase_approval_for_borrower', {
+                    p_borrower_id: borrowerId,
+                    p_loan_id: insertedLoan.id,
+                });
             }
 
             await supabase.from('borrowers').update({ status: 'active_loan' }).eq('id', borrowerId);
@@ -494,7 +613,13 @@ const LoanManagement = () => {
             ['repayment_start_date', 'Date repayments begin. Format: YYYY-MM-DD. Must be a working day.', '2025-12-10']
         ];
         const instructionsSheet = XLSX.utils.aoa_to_sheet(instructions);
-        const validBorrowers = borrowers.filter(b => b.status === 'eligible' || b.status === 'paid_up').map(b => ({ 'Borrower ID': b.borrower_id, 'Name': `${b.first_name} ${b.surname}` }));
+        const validBorrowers = borrowers
+            .filter(
+                (b) =>
+                    (b.status === 'eligible' || b.status === 'paid_up') &&
+                    !borrowerHasOutstandingLoan(loans, b.id),
+            )
+            .map((b) => ({ 'Borrower ID': b.borrower_id, 'Name': `${b.first_name} ${b.surname}` }));
         const borrowersSheet = XLSX.utils.json_to_sheet(validBorrowers);
         const validProducts = loanProducts.map(p => ({ 'Product Name': p.name }));
         const productsSheet = XLSX.utils.json_to_sheet(validProducts);
@@ -506,13 +631,7 @@ const LoanManagement = () => {
         XLSX.writeFile(workbook, 'Loans_Import_Template.xlsx');
     };
     
-    const isWorkingDay = (dateStr) => {
-        const date = toZonedTime(new Date(dateStr), EAT_TIMEZONE);
-        if (date.getDay() === 0) return false;
-        const isHoliday = holidays.some(h => formatTZ(toZonedTime(new Date(h.date), EAT_TIMEZONE), 'yyyy-MM-dd') === dateStr);
-        if (isHoliday) return false;
-        return true;
-    };
+    const isWorkingDay = (dateStr) => isWorkingDayEAT(dateStr, holidays);
     
     const handleImport = (event) => {
         const file = event.target.files[0];
@@ -521,6 +640,14 @@ const LoanManagement = () => {
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
+                if (!isWorkingDayEAT(todayYyyyMmDdEAT(), holidays)) {
+                    toast({
+                        title: 'Non-working day',
+                        description: 'Loan import is not available on Sundays or public holidays.',
+                        variant: 'destructive',
+                    });
+                    return;
+                }
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
                 const sheetName = workbook.SheetNames[0];
@@ -528,6 +655,14 @@ const LoanManagement = () => {
                 const importedLoans = XLSX.utils.sheet_to_json(worksheet, { raw: true });
                 const borrowersMap = new Map(borrowers.map(b => [b.borrower_id, b]));
                 const productsMap = new Map(loanProducts.map(p => [p.name.toLowerCase(), p]));
+                const { data: importFeeRow } = await supabase
+                    .from('system_config')
+                    .select('value')
+                    .eq('key', 'applicationFeePerDisbursement')
+                    .maybeSingle();
+                const importFeePer = parseFloat(importFeeRow?.value) || 0;
+                /** Per disbursement date: running balance after each planned row (same-day batch order). */
+                const importRunningBalanceByDate = new Map();
                 const newLoans = [];
                 const skippedLoans = [];
                 for (const row of importedLoans) {
@@ -548,7 +683,43 @@ const LoanManagement = () => {
                         skippedLoans.push({ ...row, reason: `Borrower has an ${borrower.status.replace('_',' ')} loan` });
                         continue;
                     }
+                    const { data: importEligibility, error: importElErr } = await supabase.rpc('borrower_loan_increase_eligibility', {
+                        p_borrower_id: borrower.id,
+                    });
+                    if (importElErr || (importEligibility && importEligibility.may_disburse_new_loan === false)) {
+                        skippedLoans.push({
+                            ...row,
+                            reason: importEligibility?.summary || importElErr?.message || 'Loan increase not approved by manager',
+                        });
+                        continue;
+                    }
                     const principalAmount = parseFloat(row.principal);
+                    let balanceBeforeImport;
+                    if (importRunningBalanceByDate.has(disbursementDate)) {
+                        balanceBeforeImport = importRunningBalanceByDate.get(disbursementDate);
+                    } else {
+                        const { data: wbData, error: wbErr } = await supabase.rpc('officer_wallet_balance_for_period', {
+                            p_officer_id: user.id,
+                            p_from: disbursementDate,
+                            p_to: disbursementDate,
+                        });
+                        if (wbErr) {
+                            skippedLoans.push({ ...row, reason: `Wallet check: ${wbErr.message}` });
+                            continue;
+                        }
+                        balanceBeforeImport = Number(wbData) || 0;
+                    }
+                    const projectedAfterImport = Number(
+                        (balanceBeforeImport + importFeePer - principalAmount).toFixed(2),
+                    );
+                    if (projectedAfterImport < 0) {
+                        skippedLoans.push({
+                            ...row,
+                            reason: `Insufficient field wallet for ${disbursementDate} (after this principal would be ${projectedAfterImport.toFixed(2)})`,
+                        });
+                        continue;
+                    }
+                    importRunningBalanceByDate.set(disbursementDate, projectedAfterImport);
                     const interest = principalAmount * (parseFloat(product.interest_rate) / 100);
                     const totalPayable = principalAmount + interest;
                     const schedule = generateSchedule(principalAmount, product.interest_rate, totalPayable, product.loan_period, product.loan_period_unit, product.repayment_frequency, repaymentStartDate, holidays);
@@ -557,8 +728,14 @@ const LoanManagement = () => {
                     });
                 }
                 if (newLoans.length > 0) {
-                    const { error } = await supabase.from('loans').insert(newLoans);
+                    const { data: insertedRows, error } = await supabase.from('loans').insert(newLoans).select('id, borrower_id');
                     if (error) throw error;
+                    for (const row of insertedRows || []) {
+                        await supabase.rpc('consume_loan_increase_approval_for_borrower', {
+                            p_borrower_id: row.borrower_id,
+                            p_loan_id: row.id,
+                        });
+                    }
                     const borrowerIdsToUpdate = newLoans.map(l => l.borrower_id);
                     await supabase.from('borrowers').update({ status: 'active_loan' }).in('id', borrowerIdsToUpdate);
                 }
@@ -602,86 +779,120 @@ const LoanManagement = () => {
         }
     };
 
-    const handleOpenRepaymentDialog = (loan) => {
-        setRepaymentLoan(loan);
-        setRepaymentFormData({ amount: '', payment_date: new Date() });
-        setRepaymentDialogOpen(true);
-    };
-
-    const handleRecordRepayment = async () => {
-        const { amount, payment_date } = repaymentFormData;
-        if (!amount || !payment_date || !repaymentLoan) {
-            toast({ title: 'Error', description: 'Please fill all fields.', variant: 'destructive' });
-            return;
-        }
-        const amt = parseFloat(String(amount).replace(/,/g, ''));
-        if (!Number.isFinite(amt) || amt <= 0) {
-            toast({ title: 'Error', description: 'Enter a valid repayment amount.', variant: 'destructive' });
-            return;
-        }
-        const payStr = formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
-        const { data: dueRaw, error: dueErr } = await supabase.rpc('scheduled_due_for_payment_date', {
-            p_schedule: repaymentLoan.schedule ?? null,
-            p_payment_date: payStr,
-        });
-        if (dueErr) {
-            toast({ title: 'Error', description: dueErr.message, variant: 'destructive' });
-            return;
-        }
-        const due = Number(dueRaw ?? 0);
-        const unit = getInstallmentUnitFromSchedule(repaymentLoan.schedule);
-        if (!isValidRepaymentAmount(amt, due, unit)) {
-            toast({
-                title: 'Invalid amount',
-                description:
-                    repaymentAmountValidationMessage(amt, due, unit, currency) ||
-                    'Enter a multiple of the installment amount.',
-                variant: 'destructive',
-            });
-            return;
-        }
-
-        setIsSubmittingRepayment(true);
-
-        const { data, error } = await invokeEdgeFunction(
-            'record-repayment',
-            {
-                body: {
-                    loan_id: repaymentLoan.id,
-                    amount: amt,
-                    officer_id: user.id,
-                    actual_payment_date: formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
-                },
-            },
-            session?.access_token,
-        );
-
-        if (error) {
-            toast({ title: 'Repayment Failed', description: error.message, variant: 'destructive' });
-        } else {
-            toast({ title: 'Success', description: data.message || 'Repayment recorded successfully!' });
-            fetchData();
-            setRepaymentDialogOpen(false);
-        }
-        setIsSubmittingRepayment(false);
-    };
-
     const getStatusBadge = (status) => ({ active: 'success', paid: 'default', delinquent: 'warning', defaulted: 'destructive', delete_requested: 'secondary', edit_requested: 'secondary' }[status] || 'secondary');
     
-    // Filter borrowers for selection (only eligible ones)
-    const eligibleBorrowers = useMemo(() => 
-        borrowers.filter(b => b.status === 'eligible' || b.status === 'paid_up'),
-        [borrowers]
+    // Disbursement: only borrowers marked eligible/paid_up and with no unsettled loan (active/delinquent/etc.)
+    const eligibleBorrowers = useMemo(
+        () =>
+            borrowers.filter(
+                (b) =>
+                    (b.status === 'eligible' || b.status === 'paid_up') &&
+                    !borrowerHasOutstandingLoan(loans, b.id),
+            ),
+        [borrowers, loans],
     );
+
+    const groupsForDisbursePicker = useMemo(() => {
+        if (disbursePickerCenterFilter === 'all') return [];
+        return disbursementGroups.filter((g) => g.center_id === disbursePickerCenterFilter);
+    }, [disbursementGroups, disbursePickerCenterFilter]);
+
+    const disburseCenterPickerOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const disburseGroupPickerOpts = useMemo(
+        () => groupsForDisbursePicker.map((g) => ({ value: g.id, label: g.name })),
+        [groupsForDisbursePicker],
+    );
+
+    const eligibleBorrowersForDisburse = useMemo(() => {
+        return eligibleBorrowers.filter((b) => {
+            if (!borrowerMatchesCenter(b, disbursePickerCenterFilter)) return false;
+            if (!borrowerMatchesGroup(b, disbursePickerGroupFilter)) return false;
+            return true;
+        });
+    }, [eligibleBorrowers, disbursePickerCenterFilter, disbursePickerGroupFilter]);
+
+    const filteredBorrowersForDisburse = useMemo(() => {
+        const q = disburseBorrowerSearch.trim().toLowerCase();
+        if (!q) return eligibleBorrowersForDisburse;
+        return eligibleBorrowersForDisburse.filter((b) => {
+            const name = `${b.first_name || ''} ${b.surname || ''}`.toLowerCase();
+            const id = String(b.borrower_id || '').toLowerCase();
+            return name.includes(q) || id.includes(q);
+        });
+    }, [eligibleBorrowersForDisburse, disburseBorrowerSearch]);
 
     const selectedProduct = useMemo(() => {
         return loanProducts.find(p => p.id === formData.productId);
     }, [formData.productId, loanProducts]);
 
-    if (loading) return <DashboardLayout title="Loan Management"><div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin" /></div></DashboardLayout>;
+    useEffect(() => {
+        setAttendanceExceptionNotes('');
+    }, [formData.borrowerId]);
+
+    const canConfirmDisburse = useMemo(() => {
+        if (increaseEligibilityLoading) return false;
+        if (!increaseEligibility) return false;
+        return increaseEligibility.may_disburse_new_loan !== false;
+    }, [increaseEligibilityLoading, increaseEligibility]);
+
+    const handleSubmitAttendanceException = useCallback(async () => {
+        if (!formData.borrowerId) return;
+        if (attendanceExceptionNotes.trim().length < 10) {
+            toast({
+                title: 'Notes required',
+                description:
+                    'Add at least 10 characters explaining why this borrower should receive a loan despite low attendance.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        setSubmittingAttendanceException(true);
+        try {
+            const { data, error } = await supabase.rpc('submit_loan_increase_exception_request', {
+                p_borrower_id: formData.borrowerId,
+                p_officer_notes: attendanceExceptionNotes.trim(),
+            });
+            if (error) {
+                toast({ title: 'Request failed', description: error.message, variant: 'destructive' });
+                return;
+            }
+            if (data && data.error) {
+                toast({ title: 'Request failed', description: String(data.error), variant: 'destructive' });
+                return;
+            }
+            toast({
+                title: 'Request submitted',
+                description: 'Your branch manager will review the loan increase approval.',
+            });
+            setAttendanceExceptionNotes('');
+            setIncreaseEligibilityLoading(true);
+            const { data: fresh } = await supabase.rpc('borrower_loan_increase_eligibility', {
+                p_borrower_id: formData.borrowerId,
+            });
+            setIncreaseEligibility(fresh);
+        } finally {
+            setIncreaseEligibilityLoading(false);
+            setSubmittingAttendanceException(false);
+        }
+    }, [formData.borrowerId, attendanceExceptionNotes, toast]);
+
+    const disburseEligibilityCardClass = useMemo(() => {
+        if (increaseEligibilityLoading) return 'border-neutral-200 bg-neutral-50 text-neutral-700';
+        const e = increaseEligibility;
+        if (!e) return 'border-neutral-200 bg-neutral-50 text-neutral-800';
+        if (e.pending_attendance_exception_request_id) return 'border-blue-200 bg-blue-50 text-blue-950';
+        if (e.attendance_exception_approved) return 'border-emerald-200 bg-emerald-50 text-emerald-950';
+        if (e.attendance_below_minimum) return 'border-orange-200 bg-orange-50 text-orange-950';
+        // Informational: attendance/history rules met for increase (manager approval still required to disburse).
+        if (e.eligible_for_auto_loan_increase) return 'border-emerald-200 bg-emerald-50 text-emerald-950';
+        if (e.requires_manager_loan_approval) return 'border-amber-200 bg-amber-50 text-amber-950';
+        return 'border-neutral-200 bg-neutral-50 text-neutral-800';
+    }, [increaseEligibilityLoading, increaseEligibility]);
+
+    if (loading) return <DashboardLayout title="Loans & Disbursements"><div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin" /></div></DashboardLayout>;
 
     return (
-        <DashboardLayout title="Loan Management">
+        <DashboardLayout title="Loans & Disbursements">
             <div className="space-y-8">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                     <div>
@@ -697,8 +908,19 @@ const LoanManagement = () => {
                         <input type="file" ref={importFileRef} className="hidden" accept=".csv, .xlsx" onChange={handleImport} />
                         
                         <Dialog open={dialogOpen} onOpenChange={(open) => {
+                            if (open) {
+                                if (!isWorkingDayEAT(todayYyyyMmDdEAT(), holidays)) {
+                                    toast({
+                                        title: 'Non-working day',
+                                        description:
+                                            'Disbursement is not available on Sundays or public holidays. Open this on a working day.',
+                                        variant: 'destructive',
+                                    });
+                                    return;
+                                }
+                                resetFormData();
+                            }
                             setDialogOpen(open);
-                            if (open) resetFormData();
                         }}>
                             <DialogTrigger asChild>
                                 <Button className="bg-gradient-to-r from-brand-gold via-[#c9a227] to-brand-gold-deep text-neutral-950 font-semibold shadow-gold-glow-sm hover:brightness-105 hover:shadow-md transition-all duration-200 dark:from-brand-gold dark:to-brand-gold-deep">
@@ -712,7 +934,7 @@ const LoanManagement = () => {
                                      <div className="relative z-10">
                                         <DialogTitle className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">Disburse New Loan</DialogTitle>
                                         <DialogDescription className="mt-2 text-sm text-white/85 sm:text-base">
-                                            Follow the steps to disburse a loan to a qualified borrower.
+                                            Filter by centre and group (optional), then choose a qualified borrower.
                                         </DialogDescription>
                                      </div>
                                 </div>
@@ -726,55 +948,123 @@ const LoanManagement = () => {
                                     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
                                         {/* Left Column: Borrower & Product */}
                                         <motion.div className="space-y-5 sm:space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.05 }}>
-                                            <div className="space-y-2">
-                                                <Label className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-                                                    <User className="h-4 w-4 shrink-0 text-brand-gold-deep" />
-                                                    Select Borrower *
-                                                </Label>
-                                                <div className="rounded-xl border border-neutral-200/80 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
-                                                    <Select 
-                                                        value={formData.borrowerId} 
-                                                        onValueChange={e => setFormData({ ...formData, borrowerId: e })}
-                                                    >
-                                                        <SelectTrigger className="h-11 w-full min-w-0 border-0 bg-transparent focus:ring-2 focus:ring-brand-gold/35 focus:ring-offset-0 dark:focus:ring-brand-gold/40">
-                                                            <SelectValue placeholder="Select Borrower..." />
-                                                        </SelectTrigger>
-                                                        <SelectContent className="max-h-[300px]">
-                                                            {eligibleBorrowers.length > 0 ? (
-                                                                eligibleBorrowers.map(b => (
-                                                                    <SelectItem key={b.id} value={b.id} className="py-3 cursor-pointer">
-                                                                        <div className="flex flex-col">
-                                                                            <span className="font-semibold">{b.first_name} {b.surname}</span>
-                                                                            <span className="text-xs text-gray-500">ID: {b.borrower_id}</span>
-                                                                        </div>
-                                                                    </SelectItem>
-                                                                ))
-                                                            ) : (
-                                                                <div className="p-4 text-center text-gray-500 text-sm">No eligible borrowers found.</div>
-                                                            )}
-                                                        </SelectContent>
-                                                    </Select>
+                                            <div className="grid gap-3 sm:grid-cols-2">
+                                                <div className="space-y-2">
+                                                    <Label htmlFor="disburse-center">Centre</Label>
+                                                    <SearchableSelect
+                                                        id="disburse-center"
+                                                        value={disbursePickerCenterFilter}
+                                                        onValueChange={(v) => {
+                                                            setDisbursePickerCenterFilter(v);
+                                                            setDisburseBorrowerSearch('');
+                                                            setFormData((prev) => ({ ...prev, borrowerId: '' }));
+                                                        }}
+                                                        options={disburseCenterPickerOpts}
+                                                        allLabel="All centres"
+                                                        allValue="all"
+                                                        placeholder="All centres"
+                                                        searchPlaceholder="Search centres…"
+                                                        emptyText="No centre found."
+                                                        triggerClassName="h-11 w-full"
+                                                    />
                                                 </div>
+                                                <div className="space-y-2">
+                                                    <Label htmlFor="disburse-group">Group</Label>
+                                                    <SearchableSelect
+                                                        id="disburse-group"
+                                                        value={disbursePickerGroupFilter}
+                                                        disabled={disbursePickerCenterFilter === 'all'}
+                                                        onValueChange={(v) => {
+                                                            setDisbursePickerGroupFilter(v);
+                                                            setDisburseBorrowerSearch('');
+                                                            setFormData((prev) => ({ ...prev, borrowerId: '' }));
+                                                        }}
+                                                        options={disburseGroupPickerOpts}
+                                                        allLabel="All groups"
+                                                        allValue="all"
+                                                        placeholder={
+                                                            disbursePickerCenterFilter === 'all' ? 'Pick centre first' : 'All groups'
+                                                        }
+                                                        searchPlaceholder="Search groups…"
+                                                        emptyText="No group found."
+                                                        triggerClassName="h-11 w-full"
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2">
+                                                <Label
+                                                    htmlFor="disburse-borrower-search"
+                                                    className="flex items-center gap-2 text-sm font-semibold text-neutral-800 dark:text-neutral-200"
+                                                >
+                                                    <User className="h-4 w-4 shrink-0 text-brand-gold-deep" />
+                                                    Borrower *
+                                                </Label>
+                                                <div className="relative">
+                                                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
+                                                    <Input
+                                                        id="disburse-borrower-search"
+                                                        placeholder="Search by name or borrower ID…"
+                                                        value={disburseBorrowerSearch}
+                                                        onChange={(e) => setDisburseBorrowerSearch(e.target.value)}
+                                                        className="h-11 pl-9"
+                                                        autoComplete="off"
+                                                    />
+                                                </div>
+                                                <div
+                                                    className="max-h-[220px] overflow-y-auto rounded-xl border border-neutral-200/80 bg-white shadow-sm dark:border-neutral-700 dark:bg-neutral-900"
+                                                    role="listbox"
+                                                    aria-label="Eligible borrowers"
+                                                >
+                                                    {filteredBorrowersForDisburse.length === 0 ? (
+                                                        <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+                                                            {eligibleBorrowers.length === 0
+                                                                ? 'No borrower eligible for disbursement.'
+                                                                : eligibleBorrowersForDisburse.length === 0
+                                                                  ? 'No eligible borrowers in this centre/group. Adjust filters.'
+                                                                  : 'No borrowers match your search.'}
+                                                        </p>
+                                                    ) : (
+                                                        filteredBorrowersForDisburse.map((b) => (
+                                                            <button
+                                                                key={b.id}
+                                                                type="button"
+                                                                role="option"
+                                                                aria-selected={formData.borrowerId === b.id}
+                                                                onClick={() =>
+                                                                    setFormData((prev) => ({ ...prev, borrowerId: b.id }))
+                                                                }
+                                                                className={cn(
+                                                                    'flex w-full flex-col items-start gap-0.5 border-b border-border/60 px-3 py-2.5 text-left text-sm transition-colors last:border-0 hover:bg-accent',
+                                                                    formData.borrowerId === b.id && 'bg-accent font-medium',
+                                                                )}
+                                                            >
+                                                                <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+                                                                    {b.first_name} {b.surname}
+                                                                </span>
+                                                                <span className="text-xs text-muted-foreground">
+                                                                    ID: {b.borrower_id}
+                                                                </span>
+                                                            </button>
+                                                        ))
+                                                    )}
+                                                </div>
+                                                {formData.borrowerId ? (
+                                                    <p className="text-xs text-muted-foreground">
+                                                        <span className="font-medium text-foreground">Selected:</span>{' '}
+                                                        {(() => {
+                                                            const sel = eligibleBorrowers.find(
+                                                                (x) => x.id === formData.borrowerId,
+                                                            );
+                                                            return sel
+                                                                ? `${sel.first_name} ${sel.surname} — ${sel.borrower_id}`
+                                                                : formData.borrowerId;
+                                                        })()}
+                                                    </p>
+                                                ) : null}
                                             </div>
 
                                             {(increaseEligibilityLoading || increaseEligibility) && (
-                                                <div
-                                                    className={cn(
-                                                        'rounded-lg border p-3 text-sm',
-                                                        increaseEligibilityLoading && 'border-neutral-200 bg-neutral-50 text-neutral-700',
-                                                        !increaseEligibilityLoading &&
-                                                            increaseEligibility?.requires_manager_loan_approval &&
-                                                            'border-amber-200 bg-amber-50 text-amber-950',
-                                                        !increaseEligibilityLoading &&
-                                                            !increaseEligibility?.requires_manager_loan_approval &&
-                                                            increaseEligibility?.eligible_for_auto_loan_increase &&
-                                                            'border-emerald-200 bg-emerald-50 text-emerald-950',
-                                                        !increaseEligibilityLoading &&
-                                                            !increaseEligibility?.requires_manager_loan_approval &&
-                                                            !increaseEligibility?.eligible_for_auto_loan_increase &&
-                                                            'border-neutral-200 bg-neutral-50 text-neutral-800'
-                                                    )}
-                                                >
+                                                <div className={cn('rounded-lg border p-3 text-sm', disburseEligibilityCardClass)}>
                                                     {increaseEligibilityLoading ? (
                                                         <div className="flex items-center gap-2 text-neutral-600">
                                                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -782,7 +1072,7 @@ const LoanManagement = () => {
                                                         </div>
                                                     ) : (
                                                         <>
-                                                            <p className="font-semibold text-[0.8125rem]">Loan increase eligibility</p>
+                                                            <p className="font-semibold text-[0.8125rem]">Loan increase eligibility &amp; branch manager approval</p>
                                                             <p className="mt-1 text-xs leading-relaxed opacity-90">
                                                                 {increaseEligibility?.summary}
                                                             </p>
@@ -793,15 +1083,64 @@ const LoanManagement = () => {
                                                                 </Badge>
                                                                 {increaseEligibility?.requires_manager_loan_approval ? (
                                                                     <Badge variant="outline" className="border-amber-300 bg-white/80 text-amber-900 text-[0.6875rem]">
-                                                                        Manager approval required
+                                                                        Manager approval required before disburse
+                                                                    </Badge>
+                                                                ) : null}
+                                                                {increaseEligibility?.pending_attendance_exception_request_id ? (
+                                                                    <Badge variant="outline" className="border-blue-300 bg-white/80 text-blue-900 text-[0.6875rem]">
+                                                                        Loan increase approval pending
+                                                                    </Badge>
+                                                                ) : null}
+                                                                {increaseEligibility?.attendance_exception_approved ? (
+                                                                    <Badge variant="outline" className="border-emerald-300 bg-white/80 text-emerald-900 text-[0.6875rem]">
+                                                                        Manager approved — you may disburse
                                                                     </Badge>
                                                                 ) : null}
                                                                 {increaseEligibility?.eligible_for_auto_loan_increase ? (
                                                                     <Badge variant="outline" className="border-emerald-300 bg-white/80 text-emerald-900 text-[0.6875rem]">
-                                                                        Eligible for auto increase (rules)
+                                                                        Meets attendance &amp; history rules (increase)
+                                                                    </Badge>
+                                                                ) : null}
+                                                                {increaseEligibility?.may_disburse_new_loan === false ? (
+                                                                    <Badge variant="outline" className="border-red-300 bg-white/80 text-red-900 text-[0.6875rem]">
+                                                                        {increaseEligibility?.has_completed_prior_loan
+                                                                            ? 'Disburse blocked until branch manager approves'
+                                                                            : 'Disburse blocked until rules met'}
                                                                     </Badge>
                                                                 ) : null}
                                                             </div>
+                                                            {(increaseEligibility?.can_submit_loan_increase_approval_request ??
+                                                                increaseEligibility?.can_submit_attendance_exception_request) ? (
+                                                                <div className="mt-3 space-y-2 border-t border-orange-200/80 pt-3 dark:border-orange-900/40">
+                                                                    <Label htmlFor="attendance-exception-notes" className="text-xs font-medium">
+                                                                        Request branch manager approval (required for every loan increase)
+                                                                    </Label>
+                                                                    <Textarea
+                                                                        id="attendance-exception-notes"
+                                                                        placeholder="Explain why this borrower should receive a new loan after completing the previous one (repayment behaviour, attendance, business case, etc.)."
+                                                                        value={attendanceExceptionNotes}
+                                                                        onChange={(e) => setAttendanceExceptionNotes(e.target.value)}
+                                                                        rows={4}
+                                                                        className="resize-y text-sm"
+                                                                    />
+                                                                    <Button
+                                                                        type="button"
+                                                                        variant="secondary"
+                                                                        size="sm"
+                                                                        disabled={submittingAttendanceException}
+                                                                        onClick={handleSubmitAttendanceException}
+                                                                    >
+                                                                        {submittingAttendanceException ? (
+                                                                            <>
+                                                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                                                Submitting…
+                                                                            </>
+                                                                        ) : (
+                                                                            'Submit approval request'
+                                                                        )}
+                                                                    </Button>
+                                                                </div>
+                                                            ) : null}
                                                         </>
                                                     )}
                                                 </div>
@@ -915,7 +1254,7 @@ const LoanManagement = () => {
                                         <Button 
                                             onClick={handleDisburse} 
                                             className="h-11 w-full bg-gradient-to-r from-brand-gold via-[#c9a227] to-brand-gold-deep px-6 font-semibold text-neutral-950 shadow-md transition-all hover:brightness-105 disabled:opacity-60 sm:w-auto sm:min-w-[200px] dark:from-brand-gold dark:to-brand-gold-deep"
-                                            disabled={isDisbursingLoan}
+                                            disabled={isDisbursingLoan || !canConfirmDisburse}
                                         >
                                             {isDisbursingLoan ? (
                                                 <>
@@ -954,57 +1293,54 @@ const LoanManagement = () => {
                                     onChange={(e) => setSearchQuery(e.target.value)} 
                                     className="bg-white border-gray-200 focus:ring-blue-100 focus:border-blue-400"
                                 />
-                                <Select
+                                <SearchableSelect
                                     value={centerFilter}
                                     onValueChange={(v) => {
                                         setCenterFilter(v);
                                         setGroupFilter('all');
                                     }}
-                                >
-                                    <SelectTrigger className="bg-white border-gray-200">
-                                        <SelectValue placeholder="Center" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All centers</SelectItem>
-                                        {centers.map((c) => (
-                                            <SelectItem key={c.id} value={c.id}>
-                                                {c.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
-                                    <SelectTrigger className="bg-white border-gray-200">
-                                        <SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All groups</SelectItem>
-                                        {groups.map((g) => (
-                                            <SelectItem key={g.id} value={g.id}>
-                                                {g.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                                    <SelectTrigger className="bg-white border-gray-200"><SelectValue placeholder="Filter by Status" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Statuses</SelectItem>
-                                        <SelectItem value="active">Active</SelectItem>
-                                        <SelectItem value="paid">Paid</SelectItem>
-                                        <SelectItem value="delinquent">Delinquent</SelectItem>
-                                        <SelectItem value="defaulted">Defaulted</SelectItem>
-                                        <SelectItem value="edit_requested">Edit Requested</SelectItem>
-                                        <SelectItem value="delete_requested">Delete Requested</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                <Select value={productFilter} onValueChange={setProductFilter}>
-                                    <SelectTrigger className="bg-white border-gray-200"><SelectValue placeholder="Filter by Product" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Products</SelectItem>
-                                        {loanProducts.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                    options={officerListCenterOpts}
+                                    allLabel="All centers"
+                                    allValue="all"
+                                    placeholder="Center"
+                                    searchPlaceholder="Search centers…"
+                                    emptyText="No center found."
+                                    triggerClassName="bg-white border-gray-200"
+                                />
+                                <SearchableSelect
+                                    value={groupFilter}
+                                    onValueChange={setGroupFilter}
+                                    disabled={centerFilter === 'all'}
+                                    options={officerListGroupOpts}
+                                    allLabel="All groups"
+                                    allValue="all"
+                                    placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
+                                    searchPlaceholder="Search groups…"
+                                    emptyText="No group found."
+                                    triggerClassName="bg-white border-gray-200"
+                                />
+                                <SearchableSelect
+                                    value={statusFilter}
+                                    onValueChange={setStatusFilter}
+                                    options={OFFICER_LOAN_STATUS_FILTER_OPTIONS}
+                                    allLabel="All Statuses"
+                                    allValue="all"
+                                    placeholder="Filter by Status"
+                                    searchPlaceholder="Search status…"
+                                    emptyText="No match."
+                                    triggerClassName="bg-white border-gray-200"
+                                />
+                                <SearchableSelect
+                                    value={productFilter}
+                                    onValueChange={setProductFilter}
+                                    options={officerListProductOpts}
+                                    allLabel="All Products"
+                                    allValue="all"
+                                    placeholder="Filter by Product"
+                                    searchPlaceholder="Search products…"
+                                    emptyText="No product found."
+                                    triggerClassName="bg-white border-gray-200"
+                                />
                                 <Popover>
                                     <PopoverTrigger asChild>
                                         <Button variant={"outline"} className="justify-start text-left font-normal bg-white border-gray-200">
@@ -1077,9 +1413,6 @@ const LoanManagement = () => {
                                                         <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleRequestDeletion(l.id)}>Yes, Request</AlertDialogAction></AlertDialogFooter>
                                                     </AlertDialogContent>
                                                 </AlertDialog>
-                                                <Button variant="default" size="icon" onClick={() => handleOpenRepaymentDialog(l)} className="bg-green-600 hover:bg-green-700 shadow-sm" disabled={l.status === 'paid'}>
-                                                    <HandCoins className="h-4 w-4" />
-                                                </Button>
                                             </div>
                                         </TableCell>
                                     </TableRow>
@@ -1111,7 +1444,7 @@ const LoanManagement = () => {
                 </Card>
             </div>
             
-            {/* OTHER DIALOGS (Schedule, Edit, Repayment) - kept minimal for brevity, focusing on Disbursement redesign */}
+            {/* OTHER DIALOGS (Schedule, Edit) */}
             <Dialog open={scheduleDialogOpen} onOpenChange={setScheduleDialogOpen}>
                 <DialogContent className={SCHEDULE_DIALOG_CONTENT}>
                     <DialogHeader className="shrink-0">
@@ -1198,51 +1531,6 @@ const LoanManagement = () => {
                              </div>
                         </div>
                     </div>
-                    </div>
-                </DialogContent>
-            </Dialog>
-            <Dialog open={repaymentDialogOpen} onOpenChange={setRepaymentDialogOpen}>
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Record Repayment for {repaymentLoan?.loan_id}</DialogTitle>
-                        <DialogDescription>
-                            Borrower: {repaymentLoan?.borrowers?.first_name} {repaymentLoan?.borrowers?.surname}
-                        </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                        <div>
-                            <Label>Repayment Amount ({currency})</Label>
-                            <Input
-                                type="number"
-                                value={repaymentFormData.amount}
-                                onChange={(e) => setRepaymentFormData({ ...repaymentFormData, amount: e.target.value })}
-                                placeholder="Enter amount"
-                            />
-                        </div>
-                        <div>
-                            <Label>Actual Payment Date</Label>
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button variant={"outline"} className="w-full justify-start text-left font-normal">
-                                        <CalendarIcon className="mr-2 h-4 w-4" />
-                                        {repaymentFormData.payment_date ? formatDate(repaymentFormData.payment_date, "PPP") : <span>Pick a date</span>}
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0">
-                                    <Calendar
-                                        mode="single"
-                                        selected={repaymentFormData.payment_date}
-                                        onSelect={(date) => setRepaymentFormData({ ...repaymentFormData, payment_date: date })}
-                                        disabled={{ after: new Date() }}
-                                        initialFocus
-                                    />
-                                </PopoverContent>
-                            </Popover>
-                        </div>
-                        <Button onClick={handleRecordRepayment} className="w-full" disabled={isSubmittingRepayment}>
-                           {isSubmittingRepayment ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <HandCoins className="mr-2 h-4 w-4" />}
-                           Record Payment
-                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>

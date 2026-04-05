@@ -12,7 +12,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Loader2, ChevronLeft, ChevronRight, ScrollText, Filter, RotateCcw } from 'lucide-react';
 
 const PAGE_SIZE = 50;
@@ -22,6 +22,8 @@ const EMPTY_FILTERS = {
 	to: '',
 	userId: '',
 	branchId: '',
+	centerId: '',
+	groupId: '',
 	userRole: '',
 	action: '',
 	entityType: '',
@@ -66,6 +68,8 @@ function buildRpcArgs(applied, page) {
 		p_location: o(applied.location),
 		p_device: o(applied.device),
 		p_metadata: o(applied.metadata),
+		p_center_id: o(applied.centerId),
+		p_group_id: o(applied.groupId),
 	};
 }
 
@@ -78,19 +82,57 @@ const AuditLogs = () => {
 	const [page, setPage] = useState(1);
 	const [total, setTotal] = useState(0);
 	const [branches, setBranches] = useState([]);
+	const [centers, setCenters] = useState([]);
+	const [groups, setGroups] = useState([]);
 	const [usersList, setUsersList] = useState([]);
 	const [draftFilters, setDraftFilters] = useState(EMPTY_FILTERS);
 	const [appliedFilters, setAppliedFilters] = useState(EMPTY_FILTERS);
 
+	const centersForBranch = useMemo(() => {
+		if (!draftFilters.branchId) return centers;
+		return centers.filter((c) => c.branch_id === draftFilters.branchId);
+	}, [centers, draftFilters.branchId]);
+
+	const groupsForCenter = useMemo(() => {
+		if (!draftFilters.centerId) return [];
+		return groups.filter((g) => g.center_id === draftFilters.centerId);
+	}, [groups, draftFilters.centerId]);
+
+	const branchOptionsAudit = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
+	const centerOptionsAudit = useMemo(
+		() => centersForBranch.map((c) => ({ value: c.id, label: c.name })),
+		[centersForBranch]
+	);
+	const groupOptionsAudit = useMemo(
+		() => groupsForCenter.map((g) => ({ value: g.id, label: g.name })),
+		[groupsForCenter]
+	);
+	const userOptionsAudit = useMemo(
+		() => usersList.map((u) => ({ value: u.id, label: `${u.full_name} (${u.email})` })),
+		[usersList]
+	);
+	const roleOptionsAudit = useMemo(
+		() => [
+			{ value: 'admin', label: 'admin' },
+			{ value: 'manager', label: 'manager' },
+			{ value: 'officer', label: 'officer' },
+		],
+		[]
+	);
+
 	useEffect(() => {
 		let cancelled = false;
 		(async () => {
-			const [brRes, uRes] = await Promise.all([
+			const [brRes, cenRes, grpRes, uRes] = await Promise.all([
 				supabase.from('branches').select('id, name').order('name'),
+				supabase.from('centers').select('id, name, branch_id').order('name'),
+				supabase.from('groups').select('id, name, center_id').order('name'),
 				supabase.from('users').select('id, full_name, email').order('full_name'),
 			]);
 			if (cancelled) return;
 			if (!brRes.error) setBranches(brRes.data || []);
+			if (!cenRes.error) setCenters(cenRes.data || []);
+			if (!grpRes.error) setGroups(grpRes.data || []);
 			if (!uRes.error) setUsersList(uRes.data || []);
 		})();
 		return () => {
@@ -262,49 +304,76 @@ const AuditLogs = () => {
 							</div>
 							<div className="space-y-2">
 								<Label>User</Label>
-								<Select value={draftFilters.userId || '__any__'} onValueChange={(v) => updateDraft('userId', v === '__any__' ? '' : v)}>
-									<SelectTrigger>
-										<SelectValue placeholder="Any user" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="__any__">Any user</SelectItem>
-										{usersList.map((u) => (
-											<SelectItem key={u.id} value={u.id}>
-												{u.full_name} ({u.email})
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<SearchableSelect
+									value={draftFilters.userId}
+									onValueChange={(v) => updateDraft('userId', v)}
+									options={userOptionsAudit}
+									allLabel="Any user"
+									allValue=""
+									placeholder="Any user"
+									searchPlaceholder="Search users…"
+									emptyText="No user found."
+									triggerClassName="w-full"
+								/>
 							</div>
 							<div className="space-y-2">
 								<Label>Branch</Label>
-								<Select value={draftFilters.branchId || '__any__'} onValueChange={(v) => updateDraft('branchId', v === '__any__' ? '' : v)}>
-									<SelectTrigger>
-										<SelectValue placeholder="Any branch" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="__any__">Any branch</SelectItem>
-										{branches.map((b) => (
-											<SelectItem key={b.id} value={b.id}>
-												{b.name}
-											</SelectItem>
-										))}
-									</SelectContent>
-								</Select>
+								<SearchableSelect
+									value={draftFilters.branchId}
+									onValueChange={(v) =>
+										setDraftFilters((prev) => ({ ...prev, branchId: v, centerId: '', groupId: '' }))
+									}
+									options={branchOptionsAudit}
+									allLabel="Any branch"
+									allValue=""
+									placeholder="Any branch"
+									searchPlaceholder="Search branches…"
+									emptyText="No branch found."
+									triggerClassName="w-full"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label>Center</Label>
+								<SearchableSelect
+									value={draftFilters.centerId}
+									onValueChange={(v) => setDraftFilters((prev) => ({ ...prev, centerId: v, groupId: '' }))}
+									options={centerOptionsAudit}
+									allLabel="Any center"
+									allValue=""
+									placeholder="Any center"
+									searchPlaceholder="Search centers…"
+									emptyText="No center found."
+									triggerClassName="w-full"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label>Group</Label>
+								<SearchableSelect
+									value={draftFilters.groupId}
+									onValueChange={(v) => updateDraft('groupId', v)}
+									options={groupOptionsAudit}
+									allLabel="Any group"
+									allValue=""
+									placeholder={draftFilters.centerId ? 'Any group' : 'Pick a center first'}
+									searchPlaceholder="Search groups…"
+									emptyText="No group found."
+									disabled={!draftFilters.centerId}
+									triggerClassName="w-full"
+								/>
 							</div>
 							<div className="space-y-2">
 								<Label>Role</Label>
-								<Select value={draftFilters.userRole || '__any__'} onValueChange={(v) => updateDraft('userRole', v === '__any__' ? '' : v)}>
-									<SelectTrigger>
-										<SelectValue placeholder="Any role" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectItem value="__any__">Any role</SelectItem>
-										<SelectItem value="admin">admin</SelectItem>
-										<SelectItem value="manager">manager</SelectItem>
-										<SelectItem value="officer">officer</SelectItem>
-									</SelectContent>
-								</Select>
+								<SearchableSelect
+									value={draftFilters.userRole}
+									onValueChange={(v) => updateDraft('userRole', v)}
+									options={roleOptionsAudit}
+									allLabel="Any role"
+									allValue=""
+									placeholder="Any role"
+									searchPlaceholder="Search roles…"
+									emptyText="No role found."
+									triggerClassName="w-full"
+								/>
 							</div>
 							<div className="space-y-2">
 								<Label htmlFor="audit-action">Action</Label>

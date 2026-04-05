@@ -172,7 +172,7 @@ export async function downloadFieldWalletPdf({
 
     const t = block.totals;
     body.push([
-      '',
+      fmtMoney(currency, t.amountTaken),
       'TOTAL',
       fmtMoney(currency, t.disbursement),
       t.disbursedClients,

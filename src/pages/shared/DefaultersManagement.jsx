@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useHierarchyFilters } from '@/hooks/useHierarchyFilters';
+import { filterLoanByHierarchy } from '@/lib/hierarchyFilterUtils';
+import { HierarchyFilterBar } from '@/components/filters/HierarchyFilterBar';
 import { useToast } from '@/components/ui/use-toast';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -34,6 +37,8 @@ const StatCard = ({ title, value, icon: Icon }) => (
 const DefaultersManagement = () => {
     const { user } = useAuth();
     const { toast } = useToast();
+    const role = user?.user_metadata?.role;
+    const hf = useHierarchyFilters(user);
     const [defaultedLoans, setDefaultedLoans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [processing, setProcessing] = useState(false);
@@ -70,8 +75,9 @@ const DefaultersManagement = () => {
             if (config) setCurrency(config.value);
 
             let query = supabase.from('loans').select(`
-                id, loan_id, principal, balance, schedule,
-                borrowers!inner(id, first_name, surname, borrower_id)
+                id, loan_id, principal, balance, schedule, disbursement_date,
+                borrowers!inner(id, first_name, surname, borrower_id, branch_id, center_id, group_id),
+                officer:users!officer_id(id, full_name, branch_id)
             `).eq('status', 'defaulted');
 
             if (user.user_metadata.role === 'officer') {
@@ -134,17 +140,29 @@ const DefaultersManagement = () => {
         setSelectedLoans(prev => prev.includes(loanId) ? prev.filter(id => id !== loanId) : [...prev, loanId]);
     };
 
+    const hierarchyFiltered = useMemo(
+        () => defaultedLoans.filter((loan) => filterLoanByHierarchy(loan, hf.filterParams)),
+        [defaultedLoans, hf.filterParams]
+    );
+
     const filteredLoans = useMemo(() => {
-        return defaultedLoans.filter(loan =>
-            loan.borrowers?.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            loan.borrowers?.surname?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            loan.loan_id.toLowerCase().includes(searchTerm.toLowerCase())
-        ).sort((a, b) => b.daysOverdue - a.daysOverdue);
-    }, [defaultedLoans, searchTerm]);
+        return hierarchyFiltered
+            .filter(
+                (loan) =>
+                    loan.borrowers?.first_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    loan.borrowers?.surname?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    loan.loan_id.toLowerCase().includes(searchTerm.toLowerCase())
+            )
+            .sort((a, b) => b.daysOverdue - a.daysOverdue);
+    }, [hierarchyFiltered, searchTerm]);
+
+    useEffect(() => {
+        setSelectedLoans([]);
+    }, [hf.branchId, hf.centerId, hf.groupId, hf.officerId, hf.dateFrom, hf.dateTo]);
 
     useEffect(() => {
         setPage(1);
-    }, [searchTerm, defaultedLoans.length]);
+    }, [searchTerm, filteredLoans.length, hf.branchId, hf.centerId, hf.groupId, hf.officerId, hf.dateFrom, hf.dateTo]);
 
     const pagedLoans = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
@@ -178,27 +196,57 @@ const DefaultersManagement = () => {
     };
 
     const stats = useMemo(() => {
-        const totalDefaultedAmount = defaultedLoans.reduce((sum, loan) => sum + loan.balance, 0);
+        const totalDefaultedAmount = filteredLoans.reduce((sum, loan) => sum + loan.balance, 0);
         return {
-            count: defaultedLoans.length,
+            count: filteredLoans.length,
             totalDefaultedAmount,
         };
-    }, [defaultedLoans]);
+    }, [filteredLoans]);
 
     if (loading) return <DashboardLayout><div className="flex justify-center items-center h-64"><Loader2 className="h-8 w-8 animate-spin" /></div></DashboardLayout>;
 
     return (
         <DashboardLayout title="Defaulted Loans Management">
             <div className="space-y-6">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Filters</CardTitle>
+                        <CardDescription>Branch through group, officer, and disbursement date. Stats and the table match the filters and search.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <HierarchyFilterBar
+                            branches={hf.branches}
+                            centersForBranch={hf.centersForBranch}
+                            groupsForCenter={hf.groupsForCenter}
+                            officersForBranch={hf.officersForBranch}
+                            branchId={hf.branchId}
+                            setBranchId={hf.setBranchId}
+                            centerId={hf.centerId}
+                            setCenterId={hf.setCenterId}
+                            groupId={hf.groupId}
+                            setGroupId={hf.setGroupId}
+                            officerId={hf.officerId}
+                            setOfficerId={hf.setOfficerId}
+                            dateFrom={hf.dateFrom}
+                            setDateFrom={hf.setDateFrom}
+                            dateTo={hf.dateTo}
+                            setDateTo={hf.setDateTo}
+                            onReset={hf.resetFilters}
+                            disableBranch={role === 'manager' || role === 'officer'}
+                            disableOfficer={role === 'officer'}
+                        />
+                    </CardContent>
+                </Card>
+
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
-                    <StatCard title="Total Defaulted Loans" value={stats.count} icon={TrendingDown} />
-                    <StatCard title="Total Outstanding Balance" value={`${currency} ${stats.totalDefaultedAmount.toLocaleString()}`} icon={Scale} />
+                    <StatCard title="Total Defaulted Loans (filtered)" value={stats.count} icon={TrendingDown} />
+                    <StatCard title="Total Outstanding Balance (filtered)" value={`${currency} ${stats.totalDefaultedAmount.toLocaleString()}`} icon={Scale} />
                 </div>
 
                 <Card>
                     <CardHeader>
                         <CardTitle>Defaulted Loans</CardTitle>
-                        <CardDescription>List of all loans with a 'defaulted' status.</CardDescription>
+                        <CardDescription>List of loans with status defaulted, after hierarchy filters.</CardDescription>
                     </CardHeader>
                     <CardContent>
                         <div className="flex items-center gap-4 mb-4">
@@ -252,7 +300,9 @@ const DefaultersManagement = () => {
                                 {pagedLoans.map((loan) => (
                                     <TableRow key={loan.id} data-state={selectedLoans.includes(loan.id) && "selected"}>
                                         <TableCell><Checkbox checked={selectedLoans.includes(loan.id)} onCheckedChange={() => handleSelectLoan(loan.id)} /></TableCell>
-                                        <TableCell>{loan.borrowers.first_name} {loan.borrowers.surname}</TableCell>
+                                        <TableCell>
+                                            {loan.borrowers ? `${loan.borrowers.first_name} ${loan.borrowers.surname}` : '—'}
+                                        </TableCell>
                                         <TableCell className="font-medium">{loan.loan_id}</TableCell>
                                         <TableCell className="text-red-600 font-semibold">{currency} {loan.balance.toLocaleString()}</TableCell>
                                         <TableCell><Badge variant="destructive">{loan.daysOverdue} days</Badge></TableCell>

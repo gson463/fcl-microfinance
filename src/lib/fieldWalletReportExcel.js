@@ -147,7 +147,7 @@ export async function downloadFieldWalletExcel({
     const tr = ws.getRow(r);
     const tvals = [
       '',
-      '',
+      fmt(t.amountTaken, currency),
       'TOTAL',
       fmt(t.disbursement, currency),
       t.disbursedClients,

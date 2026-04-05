@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { useHierarchyFilters } from '@/hooks/useHierarchyFilters';
+import { filterLoanByHierarchy } from '@/lib/hierarchyFilterUtils';
+import { HierarchyFilterBar } from '@/components/filters/HierarchyFilterBar';
 import { useToast } from '@/components/ui/use-toast';
 import { format as formatTZ, toZonedTime } from 'date-fns-tz';
 import { differenceInDays } from 'date-fns';
@@ -25,6 +28,8 @@ const PAGE_SIZE = 25;
 const ArrearsManagement = () => {
     const { user, session } = useAuth();
     const { toast } = useToast();
+    const role = user?.user_metadata?.role;
+    const hf = useHierarchyFilters(user);
     const [loans, setLoans] = useState([]);
     const [loading, setLoading] = useState(true);
     const [clearingLoanId, setClearingLoanId] = useState(null);
@@ -63,7 +68,10 @@ const ArrearsManagement = () => {
         // This ensures the DB status column is as fresh as possible
         await supabase.rpc('update_all_loan_statuses');
 
-        let query = supabase.from('loans').select('*, borrowers(id, first_name, surname)');
+        let query = supabase.from('loans').select(
+            `*, borrowers(id, first_name, surname, branch_id, center_id, group_id),
+             officer:users!officer_id(id, full_name, branch_id)`
+        );
 
         // Role-Based Filtering
         if (user.user_metadata.role === 'officer') {
@@ -152,16 +160,25 @@ const ArrearsManagement = () => {
         };
     }, [fetchArrearsLoans]);
 
+    const filteredLoans = useMemo(
+        () => loans.filter((loan) => filterLoanByHierarchy(loan, hf.filterParams)),
+        [loans, hf.filterParams]
+    );
+
+    useEffect(() => {
+        setSelectedLoans([]);
+    }, [hf.branchId, hf.centerId, hf.groupId, hf.officerId, hf.dateFrom, hf.dateTo]);
+
     useEffect(() => {
         setPage(1);
-    }, [loans.length]);
+    }, [filteredLoans.length, hf.branchId, hf.centerId, hf.groupId, hf.officerId, hf.dateFrom, hf.dateTo]);
 
     const pagedLoans = useMemo(() => {
         const start = (page - 1) * PAGE_SIZE;
-        return loans.slice(start, start + PAGE_SIZE);
-    }, [loans, page]);
+        return filteredLoans.slice(start, start + PAGE_SIZE);
+    }, [filteredLoans, page]);
 
-    const totalPages = Math.max(1, Math.ceil(loans.length / PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(filteredLoans.length / PAGE_SIZE));
 
     const handleClearArrears = async (loan) => {
         if (isHoliday(currentDate)) {
@@ -219,7 +236,7 @@ const ArrearsManagement = () => {
 
         setClearingLoanId('bulk');
         let successCount = 0;
-        const loansToClear = loans.filter(l => selectedLoans.includes(l.id));
+        const loansToClear = filteredLoans.filter(l => selectedLoans.includes(l.id));
 
         for (const loan of loansToClear) {
             const success = await handleClearArrears(loan);
@@ -246,7 +263,7 @@ const ArrearsManagement = () => {
     };
 
     const exportSelectedArrearsCsv = () => {
-        const rows = loans.filter((l) => selectedLoans.includes(l.id));
+        const rows = filteredLoans.filter((l) => selectedLoans.includes(l.id));
         if (rows.length === 0) {
             toast({ title: 'Nothing selected', description: 'Select one or more loans first.', variant: 'destructive' });
             return;
@@ -262,8 +279,11 @@ const ArrearsManagement = () => {
         toast({ title: 'Exported', description: `${rows.length} loan(s) to CSV.` });
     };
 
-    const totalArrears = useMemo(() => loans.reduce((sum, loan) => sum + loan.arrearsAmount, 0), [loans]);
-    const selectedArrearsTotal = useMemo(() => loans.filter(l => selectedLoans.includes(l.id)).reduce((sum, l) => sum + l.arrearsAmount, 0), [loans, selectedLoans]);
+    const totalArrears = useMemo(() => filteredLoans.reduce((sum, loan) => sum + loan.arrearsAmount, 0), [filteredLoans]);
+    const selectedArrearsTotal = useMemo(
+        () => filteredLoans.filter(l => selectedLoans.includes(l.id)).reduce((sum, l) => sum + l.arrearsAmount, 0),
+        [filteredLoans, selectedLoans]
+    );
 
     if (loading) {
         return <DashboardLayout title="Arrears Management"><div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin" /></div></DashboardLayout>;
@@ -274,7 +294,39 @@ const ArrearsManagement = () => {
             <div className="space-y-6">
                 <Card>
                     <CardHeader>
-                        <CardTitle>Total Portfolio in Arrears</CardTitle>
+                        <CardTitle>Filters</CardTitle>
+                        <p className="text-sm text-muted-foreground">
+                            Narrow by branch, center, group, officer, and disbursement date. Totals and the table reflect the current filters.
+                        </p>
+                    </CardHeader>
+                    <CardContent>
+                        <HierarchyFilterBar
+                            branches={hf.branches}
+                            centersForBranch={hf.centersForBranch}
+                            groupsForCenter={hf.groupsForCenter}
+                            officersForBranch={hf.officersForBranch}
+                            branchId={hf.branchId}
+                            setBranchId={hf.setBranchId}
+                            centerId={hf.centerId}
+                            setCenterId={hf.setCenterId}
+                            groupId={hf.groupId}
+                            setGroupId={hf.setGroupId}
+                            officerId={hf.officerId}
+                            setOfficerId={hf.setOfficerId}
+                            dateFrom={hf.dateFrom}
+                            setDateFrom={hf.setDateFrom}
+                            dateTo={hf.dateTo}
+                            setDateTo={hf.setDateTo}
+                            onReset={hf.resetFilters}
+                            disableBranch={role === 'manager' || role === 'officer'}
+                            disableOfficer={role === 'officer'}
+                        />
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Total Portfolio in Arrears (filtered)</CardTitle>
                     </CardHeader>
                     <CardContent>
                         <p className="text-3xl font-bold">{currency} {totalArrears.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -336,13 +388,15 @@ const ArrearsManagement = () => {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {loans.length > 0 ? pagedLoans.map(loan => (
+                                {filteredLoans.length > 0 ? pagedLoans.map(loan => (
                                     <TableRow key={loan.id} data-state={selectedLoans.includes(loan.id) && "selected"}>
                                         <TableCell>
                                             <Checkbox checked={selectedLoans.includes(loan.id)} onCheckedChange={() => handleSelectLoan(loan.id)} aria-label={`Select loan ${loan.loan_id}`} />
                                         </TableCell>
                                         <TableCell>{loan.loan_id}</TableCell>
-                                        <TableCell>{loan.borrowers.first_name} {loan.borrowers.surname}</TableCell>
+                                        <TableCell>
+                                            {loan.borrowers ? `${loan.borrowers.first_name} ${loan.borrowers.surname}` : '—'}
+                                        </TableCell>
                                         <TableCell>{currency} {loan.principal.toLocaleString()}</TableCell>
                                         <TableCell className="font-semibold text-red-600">{currency} {loan.arrearsAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                         <TableCell>{loan.daysInArrears}</TableCell>
@@ -384,10 +438,10 @@ const ArrearsManagement = () => {
                                 )}
                             </TableBody>
                         </Table>
-                        {loans.length > 0 && (
+                        {filteredLoans.length > 0 && (
                             <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t pt-4">
                                 <p className="text-sm text-muted-foreground">
-                                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, loans.length)} of {loans.length}
+                                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredLoans.length)} of {filteredLoans.length}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>

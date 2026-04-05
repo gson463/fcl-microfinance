@@ -297,7 +297,9 @@ const HolidayManagement = () => {
         <Card>
           <CardHeader>
             <CardTitle>Holiday List</CardTitle>
-            <CardDescription>A list of all public holidays recognized by the system.</CardDescription>
+            <CardDescription>
+              Public holidays used when building new schedules and for repayment-day checks. Updating this list does not change existing loans. After a rare change, use Admin → Loans → &quot;Bulk: regenerate schedules&quot; for a branch, or regenerate a single loan from its Schedule dialog.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (

@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase } from '@/lib/customSupabaseClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
@@ -15,19 +15,43 @@ import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid'
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { Eye, Briefcase, DollarSign, AlertTriangle, Calendar as CalendarIconLucide, Loader2, Edit, Save, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Eye, Briefcase, DollarSign, AlertTriangle, Calendar as CalendarIconLucide, Loader2, Edit, Save, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import {
+  regenerateLoanScheduleFromCurrentHolidays,
+  loanStatusAllowsScheduleRegeneration,
+  regenerateSchedulesForBranchLoans,
+  loansEligibleForBranchRegeneration,
+} from '@/lib/loanScheduleRegeneration';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
+
+const LOAN_STATUS_FILTER_OPTIONS = [
+	{ value: 'active', label: 'Active' },
+	{ value: 'paid', label: 'Paid' },
+	{ value: 'delinquent', label: 'Delinquent' },
+	{ value: 'defaulted', label: 'Defaulted' },
+];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -54,6 +78,13 @@ const AdminLoanManagement = () => {
     const [selectedLoan, setSelectedLoan] = useState(null);
     const [newStatus, setNewStatus] = useState('');
     const [isRefreshingSchedule, setIsRefreshingSchedule] = useState(false);
+    const [isRegeneratingCalendar, setIsRegeneratingCalendar] = useState(false);
+    const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+    const [bulkBranchId, setBulkBranchId] = useState('');
+    const [bulkRegenRunning, setBulkRegenRunning] = useState(false);
+    const [bulkRegenProgress, setBulkRegenProgress] = useState(null);
+    const [bulkRegenDialogOpen, setBulkRegenDialogOpen] = useState(false);
+    const [holidays, setHolidays] = useState([]);
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
     const [currency, setCurrency] = useState('TZS');
     
@@ -107,7 +138,15 @@ const AdminLoanManagement = () => {
 
         // Fetch Products
         const { data: productsData, error: productsError } = await supabase.from('loan_products').select('*');
-        
+
+        const { data: holidaysData, error: holidaysError } = await supabase.from('holidays').select('*');
+        if (holidaysError) {
+            console.error(holidaysError);
+            setHolidays([]);
+        } else {
+            setHolidays(holidaysData || []);
+        }
+
         if (loansError || productsError) {
             toast({ title: 'Error fetching data', description: loansError?.message || productsError?.message, variant: 'destructive' });
         } else {
@@ -125,6 +164,13 @@ const AdminLoanManagement = () => {
         if (branchFilter === 'all') return officers;
         return officers.filter(o => o.branch_id === branchFilter);
     }, [officers, branchFilter]);
+
+    const loanListBranchOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
+    const loanListOfficerOpts = useMemo(() => filteredOfficers.map((o) => ({ value: o.id, label: o.full_name })), [filteredOfficers]);
+    const loanListCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const loanListGroupOpts = useMemo(() => groups.map((g) => ({ value: g.id, label: g.name })), [groups]);
+    const loanListProductOpts = useMemo(() => loanProducts.map((p) => ({ value: p.id, label: p.name })), [loanProducts]);
+    const bulkBranchSelectOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
 
     // Reset officer filter if it becomes invalid due to branch change
     useEffect(() => {
@@ -261,6 +307,49 @@ const AdminLoanManagement = () => {
         }
     };
 
+    const handleRegenerateScheduleFromHolidays = async () => {
+        if (!selectedLoan?.id) return;
+        if (!loanStatusAllowsScheduleRegeneration(selectedLoan.status)) {
+            toast({
+                title: 'Not available',
+                description: 'Only active, delinquent, or defaulted loans can be recalendared.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        setIsRegeneratingCalendar(true);
+        try {
+            const { error } = await regenerateLoanScheduleFromCurrentHolidays(supabase, selectedLoan, holidays);
+            if (error) {
+                toast({
+                    title: 'Regeneration failed',
+                    description: error.message || String(error),
+                    variant: 'destructive',
+                });
+                return;
+            }
+            await supabase.rpc('update_all_loan_statuses').catch(() => {});
+            const { data: latestLoanData, error: fetchErr } = await supabase
+                .from('loans')
+                .select(`${LOAN_BORROWER_SELECT}`)
+                .eq('id', selectedLoan.id)
+                .single();
+            if (fetchErr) throw fetchErr;
+            setSelectedLoan(latestLoanData);
+            setRegenConfirmOpen(false);
+            toast({
+                title: 'Schedule updated',
+                description: 'Due dates use the current holiday list; recorded repayments were reapplied.',
+            });
+            fetchData();
+        } catch (e) {
+            console.error(e);
+            toast({ title: 'Error', description: e?.message || 'Could not regenerate schedule.', variant: 'destructive' });
+        } finally {
+            setIsRegeneratingCalendar(false);
+        }
+    };
+
     const openStatusEdit = (loan) => {
         setSelectedLoan(loan);
         setNewStatus(loan.status);
@@ -290,11 +379,55 @@ const AdminLoanManagement = () => {
     };
 
     const getStatusBadge = (status) => ({ active: 'success', paid: 'default', delinquent: 'warning', defaulted: 'destructive', delete_requested: 'secondary', edit_requested: 'secondary' }[status] || 'secondary');
+
+    const eligibleBulkLoans = useMemo(
+        () => loansEligibleForBranchRegeneration(loans, bulkBranchId),
+        [loans, bulkBranchId]
+    );
+
+    const handleBulkBranchRegenerate = async () => {
+        if (!bulkBranchId || eligibleBulkLoans.length === 0) return;
+        setBulkRegenRunning(true);
+        setBulkRegenProgress({ current: 0, total: eligibleBulkLoans.length });
+        try {
+            const result = await regenerateSchedulesForBranchLoans(supabase, loans, bulkBranchId, holidays, {
+                onProgress: ({ current, total }) => setBulkRegenProgress({ current, total }),
+            });
+            await supabase.rpc('update_all_loan_statuses').catch(() => {});
+            setBulkRegenDialogOpen(false);
+            const preview = result.failed
+                .slice(0, 5)
+                .map((f) => f.loan_id)
+                .join(', ');
+            const failSuffix =
+                result.failed.length > 0
+                    ? ` ${result.failed.length} failed${preview ? `: ${preview}${result.failed.length > 5 ? '…' : ''}` : ''}.`
+                    : '';
+            toast({
+                title: 'Bulk regeneration finished',
+                description: `Updated ${result.succeeded} of ${result.total} loan(s).${failSuffix}`,
+            });
+            if (result.failed.length) {
+                console.error('Bulk schedule regeneration failures', result.failed);
+            }
+            fetchData();
+        } catch (e) {
+            console.error(e);
+            toast({
+                title: 'Bulk regeneration failed',
+                description: e?.message || String(e),
+                variant: 'destructive',
+            });
+        } finally {
+            setBulkRegenRunning(false);
+            setBulkRegenProgress(null);
+        }
+    };
     
-    if (loading) return <DashboardLayout title="Admin Loan Management"><div className="flex items-center justify-center h-full">Loading...</div></DashboardLayout>;
+    if (loading) return <DashboardLayout title="Loans & Disbursements"><div className="flex items-center justify-center h-full">Loading...</div></DashboardLayout>;
 
     return (
-        <DashboardLayout title="Admin Loan Management">
+        <DashboardLayout title="Loans & Disbursements">
             <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard title="Total Loans" value={stats.totalLoans} icon={Briefcase} color="text-blue-600" />
@@ -305,12 +438,88 @@ const AdminLoanManagement = () => {
 
                 <Card>
                     <CardHeader>
+                        <CardTitle>Bulk: regenerate schedules (current holidays)</CardTitle>
+                        <CardDescription>
+                            Same logic as a single loan: rebuild due dates from each loan’s terms and repayment start date using the{' '}
+                            <strong>current</strong> holiday list, then reapply repayments. Only <strong>active</strong>,{' '}
+                            <strong>delinquent</strong>, and <strong>defaulted</strong> loans whose officer is in the selected branch are included.
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="min-w-0 max-w-md space-y-2">
+                            <Label htmlFor="bulk-branch-regen">Branch</Label>
+                            <SearchableSelect
+                                id="bulk-branch-regen"
+                                value={bulkBranchId}
+                                onValueChange={setBulkBranchId}
+                                options={bulkBranchSelectOpts}
+                                placeholder="Select branch"
+                                searchPlaceholder="Search branches…"
+                                emptyText="No branch found."
+                                triggerClassName="w-full sm:w-[280px]"
+                            />
+                            <p className="text-sm text-muted-foreground">
+                                {bulkBranchId
+                                    ? `${eligibleBulkLoans.length} eligible loan(s) in this branch.`
+                                    : 'Select a branch to see how many loans will be processed.'}
+                            </p>
+                        </div>
+                        <div className="flex flex-col items-stretch gap-2 sm:items-end">
+                            {bulkRegenProgress && (
+                                <p className="text-sm text-muted-foreground">
+                                    Processing {bulkRegenProgress.current} / {bulkRegenProgress.total}…
+                                </p>
+                            )}
+                            <AlertDialog open={bulkRegenDialogOpen} onOpenChange={(open) => !bulkRegenRunning && setBulkRegenDialogOpen(open)}>
+                                <AlertDialogTrigger asChild>
+                                    <Button
+                                        type="button"
+                                        variant="secondary"
+                                        className="sm:min-w-[200px]"
+                                        disabled={!bulkBranchId || eligibleBulkLoans.length === 0 || bulkRegenRunning}
+                                    >
+                                        {bulkRegenRunning ? (
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                            <RefreshCw className="mr-2 h-4 w-4" />
+                                        )}
+                                        Run for branch
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Regenerate all schedules in this branch?</AlertDialogTitle>
+                                        <AlertDialogDescription className="space-y-2 text-left">
+                                            <span>
+                                                This will rebuild repayment due dates for <strong>{eligibleBulkLoans.length}</strong> loan(s) using
+                                                the current holiday list, then reapply recorded repayments for each loan.
+                                            </span>
+                                            <span className="block text-amber-700 dark:text-amber-500">
+                                                Run after holidays change. Large branches may take a few minutes.
+                                            </span>
+                                        </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel disabled={bulkRegenRunning}>Cancel</AlertDialogCancel>
+                                        <Button type="button" disabled={bulkRegenRunning} onClick={handleBulkBranchRegenerate}>
+                                            {bulkRegenRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                            Start
+                                        </Button>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                        </div>
+                    </CardContent>
+                </Card>
+
+                <Card>
+                    <CardHeader>
                         <div className="flex flex-col gap-4">
                             <CardTitle>Loans List</CardTitle>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-4">
                                 <Input placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                                 
-                                <Select
+                                <SearchableSelect
                                     value={branchFilter}
                                     onValueChange={(v) => {
                                         setBranchFilter(v);
@@ -318,78 +527,77 @@ const AdminLoanManagement = () => {
                                         setCenterFilter('all');
                                         setGroupFilter('all');
                                     }}
-                                >
-                                    <SelectTrigger><SelectValue placeholder="Filter by Branch" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Branches</SelectItem>
-                                        {branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                    options={loanListBranchOpts}
+                                    allLabel="All Branches"
+                                    allValue="all"
+                                    placeholder="Filter by Branch"
+                                    searchPlaceholder="Search branches…"
+                                    emptyText="No branch found."
+                                />
 
-                                <Select
+                                <SearchableSelect
                                     value={officerFilter}
                                     onValueChange={(v) => {
                                         setOfficerFilter(v);
                                         setCenterFilter('all');
                                         setGroupFilter('all');
                                     }}
-                                >
-                                    <SelectTrigger><SelectValue placeholder="Filter by Officer" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Officers</SelectItem>
-                                        {filteredOfficers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                    options={loanListOfficerOpts}
+                                    allLabel="All Officers"
+                                    allValue="all"
+                                    placeholder="Filter by Officer"
+                                    searchPlaceholder="Search officers…"
+                                    emptyText="No officer found."
+                                />
 
-                                <Select
+                                <SearchableSelect
                                     value={centerFilter}
                                     onValueChange={(v) => {
                                         setCenterFilter(v);
                                         setGroupFilter('all');
                                     }}
                                     disabled={officerFilter === 'all'}
-                                >
-                                    <SelectTrigger><SelectValue placeholder={officerFilter === 'all' ? 'Select officer first' : 'Center'} /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All centers</SelectItem>
-                                        {centers.map((c) => (
-                                            <SelectItem key={c.id} value={c.id}>
-                                                {c.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
+                                    options={loanListCenterOpts}
+                                    allLabel="All centers"
+                                    allValue="all"
+                                    placeholder={officerFilter === 'all' ? 'Select officer first' : 'Center'}
+                                    searchPlaceholder="Search centers…"
+                                    emptyText="No center found."
+                                />
 
-                                <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
-                                    <SelectTrigger><SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All groups</SelectItem>
-                                        {groups.map((g) => (
-                                            <SelectItem key={g.id} value={g.id}>
-                                                {g.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                
-                                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                                    <SelectTrigger><SelectValue placeholder="Filter by Status" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Statuses</SelectItem>
-                                        <SelectItem value="active">Active</SelectItem>
-                                        <SelectItem value="paid">Paid</SelectItem>
-                                        <SelectItem value="delinquent">Delinquent</SelectItem>
-                                        <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                
-                                <Select value={productFilter} onValueChange={setProductFilter}>
-                                    <SelectTrigger><SelectValue placeholder="Filter by Product" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Products</SelectItem>
-                                        {loanProducts.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                <SearchableSelect
+                                    value={groupFilter}
+                                    onValueChange={setGroupFilter}
+                                    disabled={centerFilter === 'all'}
+                                    options={loanListGroupOpts}
+                                    allLabel="All groups"
+                                    allValue="all"
+                                    placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
+                                    searchPlaceholder="Search groups…"
+                                    emptyText="No group found."
+                                />
+
+                                <SearchableSelect
+                                    value={statusFilter}
+                                    onValueChange={setStatusFilter}
+                                    options={LOAN_STATUS_FILTER_OPTIONS}
+                                    allLabel="All Statuses"
+                                    allValue="all"
+                                    placeholder="Filter by Status"
+                                    searchPlaceholder="Search status…"
+                                    emptyText="No match."
+                                />
+
+                                <SearchableSelect
+                                    value={productFilter}
+                                    onValueChange={setProductFilter}
+                                    options={loanListProductOpts}
+                                    allLabel="All Products"
+                                    allValue="all"
+                                    placeholder="Filter by Product"
+                                    searchPlaceholder="Search products…"
+                                    emptyText="No product found."
+                                />
                                 
                                 <Popover>
                                     <PopoverTrigger asChild>
@@ -490,6 +698,53 @@ const AdminLoanManagement = () => {
                       }
                     />
                     </div>
+                    <DialogFooter className="shrink-0 flex-col items-stretch gap-3 border-t pt-4 sm:flex-row sm:justify-between">
+                        <p className="text-left text-xs text-muted-foreground max-w-xl">
+                            After changing public holidays, open this for each affected loan: rebuilds due dates from this loan’s terms and repayment start date, then reapplies recorded repayments.
+                        </p>
+                        {selectedLoan && loanStatusAllowsScheduleRegeneration(selectedLoan.status) ? (
+                            <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
+                                <AlertDialogTrigger asChild>
+                                    <Button type="button" variant="secondary" disabled={isRegeneratingCalendar} className="shrink-0">
+                                        {isRegeneratingCalendar ? (
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        ) : (
+                                            <RefreshCw className="mr-2 h-4 w-4" />
+                                        )}
+                                        Regenerate schedule (current holidays)
+                                    </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                        <AlertDialogTitle>Regenerate repayment schedule?</AlertDialogTitle>
+                                        <AlertDialogDescription className="text-left space-y-2">
+                                            <span>
+                                                This replaces installment due dates using the <strong>current</strong> holiday list and this loan’s stored repayment start date and terms. All recorded repayments are reapplied to the new schedule.
+                                            </span>
+                                            <span className="block text-amber-700 dark:text-amber-500">
+                                                Use when holidays were added or changed — run per loan as needed.
+                                            </span>
+                                        </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                        <AlertDialogCancel disabled={isRegeneratingCalendar}>Cancel</AlertDialogCancel>
+                                        <Button
+                                            type="button"
+                                            disabled={isRegeneratingCalendar}
+                                            onClick={handleRegenerateScheduleFromHolidays}
+                                        >
+                                            {isRegeneratingCalendar ? (
+                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            ) : null}
+                                            Confirm regenerate
+                                        </Button>
+                                    </AlertDialogFooter>
+                                </AlertDialogContent>
+                            </AlertDialog>
+                        ) : selectedLoan ? (
+                            <p className="text-xs text-muted-foreground shrink-0">Recalendar is only for active, delinquent, or defaulted loans.</p>
+                        ) : null}
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

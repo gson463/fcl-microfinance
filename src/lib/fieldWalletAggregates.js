@@ -7,6 +7,7 @@ import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrep
  * @param {Array} params.repayments - with loans.borrowers.groups.centers
  * @param {Array} params.loans - disbursed in range, with borrowers.groups
  * @param {number} params.applicationFeePerDisbursement
+ * @param {Array<{ officer_id: string, amount_taken?: number }>} [params.fieldTakenRows] — sums per officer over the report period
  */
 export function buildOfficerCenterBlocks({
   officers,
@@ -15,6 +16,7 @@ export function buildOfficerCenterBlocks({
   loans,
   expenses,
   applicationFeePerDisbursement,
+  fieldTakenRows,
 }) {
   const fee = Number(applicationFeePerDisbursement) || 0;
   const centerById = Object.fromEntries((centers || []).map((c) => [c.id, c]));
@@ -102,7 +104,10 @@ export function buildOfficerCenterBlocks({
     const totalRepIn = (repayments || []).filter((r) => r.officer_id === officer.id).reduce((s, r) => s + (Number(r.amount) || 0), 0);
     const totalDisb = (loans || []).filter((L) => L.officer_id === officer.id).reduce((s, L) => s + (Number(L.principal) || 0), 0);
     const totalExp = officerExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
-    const deposit = totalRepIn + sumRow.applicationFee - totalDisb - totalExp;
+    const takenSum = (fieldTakenRows || [])
+      .filter((t) => t.officer_id === officer.id)
+      .reduce((s, t) => s + (Number(t.amount_taken) || 0), 0);
+    const deposit = takenSum + totalRepIn + sumRow.applicationFee - totalDisb - totalExp;
 
     return {
       officer,
@@ -114,7 +119,7 @@ export function buildOfficerCenterBlocks({
         expense1: otherExpenses,
         expense2: 0,
         deposit,
-        amountTaken: '',
+        amountTaken: takenSum,
       },
     };
   });

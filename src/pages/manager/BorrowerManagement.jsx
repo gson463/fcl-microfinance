@@ -12,12 +12,22 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Button } from '@/components/ui/button';
 import { Edit, Loader2, ChevronLeft, ChevronRight, CheckCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 
 const PAGE_SIZE = 25;
+
+const MANAGER_BORROWER_STATUS_OPTIONS = [
+	{ value: 'pending', label: 'Pending re-loan (manager)' },
+	{ value: 'eligible', label: 'Eligible' },
+	{ value: 'active', label: 'Active' },
+	{ value: 'active_loan', label: 'Active Loan' },
+	{ value: 'defaulted', label: 'Defaulted' },
+	{ value: 'paid_up', label: 'Paid Up' },
+];
 
 const ManagerBorrowerManagement = () => {
   const { user } = useAuth();
@@ -213,20 +223,17 @@ const ManagerBorrowerManagement = () => {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full md:w-80"
               />
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-full md:w-[180px]">
-                  <SelectValue placeholder="Filter by Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
-                  <SelectItem value="eligible">Eligible</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="active_loan">Active Loan</SelectItem>
-                  <SelectItem value="defaulted">Defaulted</SelectItem>
-                  <SelectItem value="paid_up">Paid Up</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={statusFilter}
+                onValueChange={setStatusFilter}
+                options={MANAGER_BORROWER_STATUS_OPTIONS}
+                allLabel="All Statuses"
+                allValue="all"
+                placeholder="Filter by Status"
+                searchPlaceholder="Search status…"
+                emptyText="No match."
+                triggerClassName="w-full md:w-[180px]"
+              />
             </div>
           </div>
         </CardHeader>

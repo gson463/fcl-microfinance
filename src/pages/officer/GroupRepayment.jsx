@@ -10,17 +10,45 @@ import { useToast } from '@/components/ui/use-toast';
 import { Coins as HandCoins, Search, Calendar as CalendarIcon, Ban, Loader2, Copy, ArrowDownToLine, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { format as formatDate, isSunday, startOfDay, isToday, isBefore, isEqual } from 'date-fns';
-import { format as formatTZ, toZonedTime } from 'date-fns-tz';
+import { format as formatDate, startOfDay, isBefore, isEqual, subDays } from 'date-fns';
+import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import {
-    getInstallmentUnitFromSchedule,
-    smallestMultipleOfUnitAtLeast,
-    repaymentAmountValidationMessage,
-} from '@/lib/repaymentInstallmentUnit.js';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
+
+/** Calendar “today” in Nairobi (avoids timezone off-by-one). */
+function getTodayEATDateForForm() {
+    const s = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+
+function isSundayInTimeZone(date, timeZone) {
+    const w = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(date);
+    return w === 'Sunday';
+}
+import { cn } from '@/lib/utils';
+import {
+    getInstallmentUnitFromSchedule,
+    isValidRepaymentAmount,
+    smallestMultipleOfUnitAtLeast,
+    repaymentAmountValidationMessage,
+    REPAYMENT_AMOUNT_INVALID_FALLBACK,
+} from '@/lib/repaymentInstallmentUnit.js';
+
 const PAGE_SIZE = 25;
+const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
+
+function memberRepaymentAmountError(amountRaw, member, currencyLabel) {
+    if (amountRaw == null || String(amountRaw).trim() === '') return '';
+    const amount = parseFloat(String(amountRaw).replace(/,/g, ''));
+    if (!Number.isFinite(amount) || amount <= 0) return '';
+    if (isValidRepaymentAmount(amount, member.scheduledDue, member.installmentUnit)) return '';
+    return (
+        repaymentAmountValidationMessage(amount, member.scheduledDue, member.installmentUnit, currencyLabel) ||
+        REPAYMENT_AMOUNT_INVALID_FALLBACK
+    );
+}
 
 const GroupRepayment = () => {
     const { user, session } = useAuth();
@@ -34,18 +62,19 @@ const GroupRepayment = () => {
     const [groupMembers, setGroupMembers] = useState([]);
     const [repaymentAmounts, setRepaymentAmounts] = useState({});
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedDate, setSelectedDate] = useState(new Date());
+    const [selectedDate, setSelectedDate] = useState(() => getTodayEATDateForForm());
     const [holidays, setHolidays] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [memberPage, setMemberPage] = useState(1);
 
     const isHoliday = (date) => {
-        const formattedYYYYMMDD = formatDate(date, 'yyyy-MM-dd');
-        return holidays.some(h => h.date === formattedYYYYMMDD);
+        const formattedYYYYMMDD = formatInTimeZone(date, EAT_TIMEZONE, 'yyyy-MM-dd');
+        return holidays.some((h) => h.date === formattedYYYYMMDD);
     };
 
-    const isForbiddenDate = isSunday(selectedDate) || isHoliday(selectedDate);
+    const isForbiddenDate =
+        isSundayInTimeZone(selectedDate, EAT_TIMEZONE) || isHoliday(selectedDate);
     
     const fetchData = useCallback(async () => {
         if (!user) return;
@@ -245,11 +274,34 @@ const GroupRepayment = () => {
         setRepaymentAmounts(newAmounts);
         toast({
             title: "Bulk Copy Successful",
-            description: `Copied total due for ${count} members.`,
+            description: `Copied total collections for ${count} members.`,
         });
     };
 
     const handleSaveRepayments = async () => {
+        const payStr = formatInTimeZone(selectedDate, EAT_TIMEZONE, 'yyyy-MM-dd');
+        const todayStr = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+        const minStr = formatInTimeZone(
+            subDays(getTodayEATDateForForm(), PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS),
+            EAT_TIMEZONE,
+            'yyyy-MM-dd'
+        );
+        if (payStr > todayStr) {
+            toast({
+                title: 'Invalid date',
+                description: 'Payment date cannot be in the future.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (payStr < minStr) {
+            toast({
+                title: 'Invalid date',
+                description: `Payment date cannot be more than ${PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} days ago.`,
+                variant: 'destructive',
+            });
+            return;
+        }
         if (isForbiddenDate) {
             toast({ title: 'Invalid Date', description: "Repayments cannot be on Sundays or holidays.", variant: 'destructive' });
             return;
@@ -261,18 +313,26 @@ const GroupRepayment = () => {
         for (const member of groupMembers) {
             const amount = parseFloat(repaymentAmounts[member.borrowerId]);
             if (isNaN(amount) || amount <= 0) continue;
-            const msg = repaymentAmountValidationMessage(
-                amount,
-                member.scheduledDue,
-                member.installmentUnit,
-                currency,
-            );
-            if (msg) validationErrors.push(`${member.name}: ${msg}`);
+            if (
+                !isValidRepaymentAmount(amount, member.scheduledDue, member.installmentUnit)
+            ) {
+                const msg =
+                    repaymentAmountValidationMessage(
+                        amount,
+                        member.scheduledDue,
+                        member.installmentUnit,
+                        currency,
+                    ) || REPAYMENT_AMOUNT_INVALID_FALLBACK;
+                validationErrors.push(`${member.name}: ${msg}`);
+            }
         }
         if (validationErrors.length > 0) {
             toast({
                 title: 'Invalid amount',
-                description: validationErrors[0],
+                description:
+                    validationErrors.length === 1
+                        ? validationErrors[0]
+                        : `These amounts are not valid: ${validationErrors.join('; ')}`,
                 variant: 'destructive',
             });
             setIsSaving(false);
@@ -346,7 +406,7 @@ const GroupRepayment = () => {
             toast({
                 title: 'Nothing to save',
                 description:
-                    'Enter an amount greater than zero for at least one member, or use Copy All Total Due. Empty rows are skipped.',
+                    'Enter an amount greater than zero for at least one member, or use Copy All Total Collections. Empty rows are skipped.',
             });
         }
 
@@ -358,7 +418,7 @@ const GroupRepayment = () => {
     const selectedCenterName = useMemo(() => myCenters.find((c) => c.id === selectedCenterId)?.name || '', [myCenters, selectedCenterId]);
 
     return (
-        <DashboardLayout title="Group Repayments">
+        <DashboardLayout title="Group Collections">
              <TooltipProvider>
              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-1 flex flex-col gap-4">
@@ -435,7 +495,7 @@ const GroupRepayment = () => {
                     <Card>
                         <CardHeader>
                             <CardTitle>
-                                3. Record repayments
+                                3. Record Collections
                                 {selectedGroupName ? (
                                     <span className="block text-base font-normal text-muted-foreground mt-1">
                                         {selectedCenterName && `${selectedCenterName} · `}
@@ -446,7 +506,10 @@ const GroupRepayment = () => {
                                 )}
                             </CardTitle>
                             <div className="flex justify-between items-center mt-2">
-                                <CardDescription>Select a date to record repayments.</CardDescription>
+                                <CardDescription>
+                                    Choose the <strong>actual payment date</strong> (last {PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} days,
+                                    Africa/Nairobi). Due amounts and prepayment use this date. Sundays and holidays are blocked.
+                                </CardDescription>
                                 <Popover>
                                     <PopoverTrigger asChild>
                                         <Button variant={'outline'} className={`w-[240px] justify-start text-left font-normal ${isForbiddenDate ? 'border-red-500 text-red-500' : ''}`}>
@@ -455,7 +518,24 @@ const GroupRepayment = () => {
                                         </Button>
                                     </PopoverTrigger>
                                     <PopoverContent className="w-auto p-0" align="end">
-                                        <Calendar mode="single" selected={selectedDate} onSelect={setSelectedDate} initialFocus disabled={(date) => isSunday(date) || isHoliday(date)} />
+                                        <Calendar
+                                            mode="single"
+                                            selected={selectedDate}
+                                            onSelect={(d) => d && setSelectedDate(d)}
+                                            initialFocus
+                                            disabled={(date) => {
+                                                const d = formatInTimeZone(date, EAT_TIMEZONE, 'yyyy-MM-dd');
+                                                const today = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+                                                const minD = formatInTimeZone(
+                                                    subDays(getTodayEATDateForForm(), PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS),
+                                                    EAT_TIMEZONE,
+                                                    'yyyy-MM-dd'
+                                                );
+                                                if (d > today) return true;
+                                                if (d < minD) return true;
+                                                return isSundayInTimeZone(date, EAT_TIMEZONE) || isHoliday(date);
+                                            }}
+                                        />
                                     </PopoverContent>
                                 </Popover>
                             </div>
@@ -478,7 +558,7 @@ const GroupRepayment = () => {
                                         </p>
                                         <Button size="sm" variant="outline" onClick={handleCopyAllAmounts} className="text-blue-600 border-blue-200 hover:bg-blue-50">
                                             <ArrowDownToLine className="mr-2 h-4 w-4" />
-                                            Copy All Total Due
+                                            Copy All Total Collections
                                         </Button>
                                     </div>
                                     <div className="overflow-x-auto">
@@ -488,9 +568,9 @@ const GroupRepayment = () => {
                                                     {[
                                                         <TableHead key="no">No.</TableHead>,
                                                         <TableHead key="name">Client Name</TableHead>,
-                                                        <TableHead key="past">Past Due</TableHead>,
-                                                        <TableHead key="today">Due Today</TableHead>,
-                                                        <TableHead key="total">Total Due</TableHead>,
+                                                        <TableHead key="past">Arears</TableHead>,
+                                                        <TableHead key="today">Today Collection</TableHead>,
+                                                        <TableHead key="total">Total Collections</TableHead>,
                                                         <TableHead key="paid" className="w-48">
                                                             Amount Paid
                                                         </TableHead>,
@@ -498,37 +578,89 @@ const GroupRepayment = () => {
                                                 </TableRow>
                                             </TableHeader>
                                             <TableBody>
-                                                {pagedGroupMembers.map((member, index) => (
-                                                    <TableRow key={member.borrowerId}>
-                                                        <TableCell>{(memberPage - 1) * PAGE_SIZE + index + 1}</TableCell>
-                                                        <TableCell>{member.name}</TableCell>
-                                                        <TableCell>{currency} {member.pastDueAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                        <TableCell>{currency} {member.amountDueToday.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                                        <TableCell>
-                                                            <div className="flex items-center gap-2 font-semibold">
-                                                                <span>{currency} {member.totalDue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                                                                <Tooltip>
-                                                                    <TooltipTrigger asChild>
-                                                                        <Button variant="ghost" size="icon" className="h-6 w-6 text-gray-400 hover:text-blue-600" onClick={() => handleCopyAmount(member.borrowerId, member.totalDue, member.installmentUnit)}>
-                                                                            <Copy className="h-3 w-3" />
-                                                                        </Button>
-                                                                    </TooltipTrigger>
-                                                                    <TooltipContent><p>Copy total due</p></TooltipContent>
-                                                                </Tooltip>
-                                                            </div>
-                                                        </TableCell>
-                                                        <TableCell>
-                                                            <Input
-                                                                type="number"
-                                                                step="0.01"
-                                                                min="0.01"
-                                                                placeholder="0.00"
-                                                                value={repaymentAmounts[member.borrowerId] ?? ''}
-                                                                onChange={(e) => handleAmountChange(member.borrowerId, e.target.value)}
-                                                            />
-                                                        </TableCell>
-                                                    </TableRow>
-                                                ))}
+                                                {pagedGroupMembers.map((member, index) => {
+                                                    const rowErr = memberRepaymentAmountError(
+                                                        repaymentAmounts[member.borrowerId],
+                                                        member,
+                                                        currency,
+                                                    );
+                                                    return (
+                                                        <TableRow key={member.borrowerId}>
+                                                            <TableCell>{(memberPage - 1) * PAGE_SIZE + index + 1}</TableCell>
+                                                            <TableCell>{member.name}</TableCell>
+                                                            <TableCell>
+                                                                {currency}{' '}
+                                                                {member.pastDueAmount.toLocaleString(undefined, {
+                                                                    minimumFractionDigits: 2,
+                                                                    maximumFractionDigits: 2,
+                                                                })}
+                                                            </TableCell>
+                                                            <TableCell>
+                                                                {currency}{' '}
+                                                                {member.amountDueToday.toLocaleString(undefined, {
+                                                                    minimumFractionDigits: 2,
+                                                                    maximumFractionDigits: 2,
+                                                                })}
+                                                            </TableCell>
+                                                            <TableCell>
+                                                                <div className="flex items-center gap-2 font-semibold">
+                                                                    <span>
+                                                                        {currency}{' '}
+                                                                        {member.totalDue.toLocaleString(undefined, {
+                                                                            minimumFractionDigits: 2,
+                                                                            maximumFractionDigits: 2,
+                                                                        })}
+                                                                    </span>
+                                                                    <Tooltip>
+                                                                        <TooltipTrigger asChild>
+                                                                            <Button
+                                                                                variant="ghost"
+                                                                                size="icon"
+                                                                                className="h-6 w-6 text-gray-400 hover:text-blue-600"
+                                                                                onClick={() =>
+                                                                                    handleCopyAmount(
+                                                                                        member.borrowerId,
+                                                                                        member.totalDue,
+                                                                                        member.installmentUnit,
+                                                                                    )
+                                                                                }
+                                                                            >
+                                                                                <Copy className="h-3 w-3" />
+                                                                            </Button>
+                                                                        </TooltipTrigger>
+                                                                        <TooltipContent>
+                                                                            <p>Copy total collections</p>
+                                                                        </TooltipContent>
+                                                                    </Tooltip>
+                                                                </div>
+                                                            </TableCell>
+                                                            <TableCell>
+                                                                <div className="space-y-1 min-w-[10rem]">
+                                                                    <Input
+                                                                        type="number"
+                                                                        step="0.01"
+                                                                        min="0.01"
+                                                                        placeholder="0.00"
+                                                                        value={repaymentAmounts[member.borrowerId] ?? ''}
+                                                                        aria-invalid={rowErr ? true : undefined}
+                                                                        className={cn(rowErr && 'border-destructive')}
+                                                                        onChange={(e) =>
+                                                                            handleAmountChange(member.borrowerId, e.target.value)
+                                                                        }
+                                                                    />
+                                                                    {rowErr ? (
+                                                                        <p
+                                                                            className="text-xs text-destructive leading-snug"
+                                                                            role="alert"
+                                                                        >
+                                                                            {rowErr}
+                                                                        </p>
+                                                                    ) : null}
+                                                                </div>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    );
+                                                })}
                                             </TableBody>
                                             <TableFooter>
                                                 <TableRow>

@@ -33,7 +33,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import {
 	defaultDashboardRange,
 	quickActionCardClass,
@@ -128,6 +128,15 @@ const AdminDashboard = () => {
 		if (!branchId) return officers;
 		return officers.filter((o) => o.branch_id === branchId);
 	}, [officers, branchId]);
+
+	const adminDashBranchOptions = useMemo(
+		() => branches.map((b) => ({ value: b.id, label: b.name })),
+		[branches]
+	);
+	const adminDashOfficerOptions = useMemo(
+		() => officersForBranch.map((o) => ({ value: o.id, label: o.full_name })),
+		[officersForBranch]
+	);
 
 	useEffect(() => {
 		if (!officerId || !branchId) return;
@@ -623,7 +632,7 @@ const AdminDashboard = () => {
 
 						<div className="w-full min-w-[200px] sm:w-[220px]">
 							<p className="mb-1.5 text-xs font-medium text-neutral-500">Branch</p>
-							<Select
+							<SearchableSelect
 								value={branchId || 'all'}
 								onValueChange={(v) => {
 									const next = v === 'all' ? '' : v;
@@ -631,43 +640,33 @@ const AdminDashboard = () => {
 									setOfficerId('');
 									persistQuery({ branchId: next, officerId: '' });
 								}}
-							>
-								<SelectTrigger>
-									<SelectValue placeholder="All branches" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="all">All branches</SelectItem>
-									{branches.map((br) => (
-										<SelectItem key={br.id} value={br.id}>
-											{br.name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+								options={adminDashBranchOptions}
+								allLabel="All branches"
+								allValue="all"
+								placeholder="All branches"
+								searchPlaceholder="Search branches…"
+								emptyText="No branch found."
+								triggerClassName="w-full"
+							/>
 						</div>
 
 						<div className="w-full min-w-[200px] sm:w-[220px]">
 							<p className="mb-1.5 text-xs font-medium text-neutral-500">Loan officer</p>
-							<Select
+							<SearchableSelect
 								value={officerId || 'all'}
 								onValueChange={(v) => {
 									const next = v === 'all' ? '' : v;
 									setOfficerId(next);
 									persistQuery({ officerId: next });
 								}}
-							>
-								<SelectTrigger>
-									<SelectValue placeholder="All officers" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="all">All officers</SelectItem>
-									{officersForBranch.map((o) => (
-										<SelectItem key={o.id} value={o.id}>
-											{o.full_name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+								options={adminDashOfficerOptions}
+								allLabel="All officers"
+								allValue="all"
+								placeholder="All officers"
+								searchPlaceholder="Search officers…"
+								emptyText="No officer found."
+								triggerClassName="w-full"
+							/>
 						</div>
 
 						{(branchId || officerId) && (

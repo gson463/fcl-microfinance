@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
@@ -37,6 +38,14 @@ import {
     isDriversLicenseIdentificationType,
 } from '@/lib/borrowerIdValidation';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+
+const OFFICER_BORROWER_STATUS_FILTER_OPTIONS = [
+	{ value: 'eligible', label: 'Eligible' },
+	{ value: 'pending', label: 'Pending re-loan (manager)' },
+	{ value: 'active_loan', label: 'Active Loan' },
+	{ value: 'defaulted', label: 'Defaulted' },
+	{ value: 'paid_up', label: 'Paid Up' },
+];
 
 const PAGE_SIZE = 25;
 
@@ -232,6 +241,9 @@ const BorrowerManagement = () => {
         if (centerFilter === 'all') return [];
         return groups.filter((g) => g.center_id === centerFilter);
     }, [groups, centerFilter]);
+
+    const borrowerListCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const borrowerListGroupOpts = useMemo(() => groupsForListFilter.map((g) => ({ value: g.id, label: g.name })), [groupsForListFilter]);
 
     const filteredBorrowers = useMemo(() => {
         return borrowers.filter(b => {
@@ -972,49 +984,43 @@ const BorrowerManagement = () => {
                             <CardTitle>My Borrowers</CardTitle>
                              <div className="flex flex-wrap items-center gap-2">
                                 <Input placeholder="Search ID, name, phone, guarantor..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full min-w-[200px] md:w-64" />
-                                <Select
+                                <SearchableSelect
                                     value={centerFilter}
                                     onValueChange={(v) => {
                                         setCenterFilter(v);
                                         setGroupFilter('all');
                                     }}
-                                >
-                                    <SelectTrigger className="w-full min-w-[160px] md:w-[180px]"><SelectValue placeholder="Center" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All centers</SelectItem>
-                                        {centers.map((c) => (
-                                            <SelectItem key={c.id} value={c.id}>
-                                                {c.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Select
+                                    options={borrowerListCenterOpts}
+                                    allLabel="All centers"
+                                    allValue="all"
+                                    placeholder="Center"
+                                    searchPlaceholder="Search centers…"
+                                    emptyText="No center found."
+                                    triggerClassName="w-full min-w-[160px] md:w-[180px]"
+                                />
+                                <SearchableSelect
                                     value={groupFilter}
                                     onValueChange={setGroupFilter}
                                     disabled={centerFilter === 'all'}
-                                >
-                                    <SelectTrigger className="w-full min-w-[160px] md:w-[180px]"><SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All groups</SelectItem>
-                                        {groupsForListFilter.map((g) => (
-                                            <SelectItem key={g.id} value={g.id}>
-                                                {g.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                                    <SelectTrigger className="w-full md:w-[180px]"><SelectValue placeholder="Filter by Status" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Statuses</SelectItem>
-                                        <SelectItem value="eligible">Eligible</SelectItem>
-                                        <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
-                                        <SelectItem value="active_loan">Active Loan</SelectItem>
-                                        <SelectItem value="defaulted">Defaulted</SelectItem>
-                                        <SelectItem value="paid_up">Paid Up</SelectItem>
-                                    </SelectContent>
-                                </Select>
+                                    options={borrowerListGroupOpts}
+                                    allLabel="All groups"
+                                    allValue="all"
+                                    placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
+                                    searchPlaceholder="Search groups…"
+                                    emptyText="No group found."
+                                    triggerClassName="w-full min-w-[160px] md:w-[180px]"
+                                />
+                                <SearchableSelect
+                                    value={statusFilter}
+                                    onValueChange={setStatusFilter}
+                                    options={OFFICER_BORROWER_STATUS_FILTER_OPTIONS}
+                                    allLabel="All Statuses"
+                                    allValue="all"
+                                    placeholder="Filter by Status"
+                                    searchPlaceholder="Search status…"
+                                    emptyText="No match."
+                                    triggerClassName="w-full md:w-[180px]"
+                                />
                             </div>
                         </div>
                     </CardHeader>

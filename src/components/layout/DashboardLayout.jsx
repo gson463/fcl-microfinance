@@ -18,6 +18,7 @@ import { SidebarPaletteMenu } from '@/components/theme/SidebarPaletteMenu';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getSidebarPreset } from '@/lib/sidebarPresets';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import OfficerTakenGate from '@/components/officer/OfficerTakenGate';
 
 function headerProfileInitials(user) {
   const name = (user?.user_metadata?.full_name || '').trim();
@@ -32,15 +33,14 @@ const reportsNavLinks = [{ to: '/reports', icon: BarChart3, text: 'Reports' }];
 /** Admin primary nav (under "Menu") */
 const adminMainLinks = [
   { to: '/admin/dashboard', icon: Home, text: 'Dashboard' },
-  { to: '/admin/field-wallet', icon: Wallet, text: 'Field wallet' },
   { to: '/admin/branches', icon: GitBranch, text: 'Branches' },
   { to: '/admin/users', icon: Users, text: 'Users' },
   { to: '/admin/borrowers', icon: Users2, text: 'Borrowers' },
-  { to: '/admin/loans', icon: Briefcase, text: 'Loans' },
+  { to: '/admin/loans', icon: Briefcase, text: 'Loans & Disbursements' },
   { to: '/admin/reassignment', icon: ArrowLeftRight, text: 'Officer transfer' },
   { to: '/admin/loan-products', icon: Briefcase, text: 'Loan Products' },
   { to: '/admin/data-history', icon: Archive, text: 'History & audit' },
-  { to: '/admin/repayment-management', icon: DollarSign, text: 'Repayments' },
+  { to: '/admin/repayment-management', icon: DollarSign, text: 'Collections' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
   { to: '/admin/holidays', icon: Calendar, text: 'Holidays' },
@@ -54,12 +54,11 @@ const adminSystemLinks = [
 
 const managerLinks = [
   { to: '/manager/dashboard', icon: Home, text: 'Dashboard' },
-  { to: '/manager/field-wallet', icon: Wallet, text: 'Field wallet' },
   { to: '/manager/loan-officers', icon: UserPlus, text: 'Loan Officers' },
   { to: '/manager/borrowers', icon: Users, text: 'Borrowers' },
-  { to: '/manager/loans', icon: Briefcase, text: 'Loans' },
-  { to: '/manager/loan-requests', icon: FileText, text: 'Loan Requests' },
-  { to: '/manager/repayment-management', icon: DollarSign, text: 'Repayments' },
+  { to: '/manager/loans', icon: Briefcase, text: 'Loans & Disbursements' },
+  { to: '/manager/loan-requests', icon: FileText, text: 'Requests' },
+  { to: '/manager/repayment-management', icon: DollarSign, text: 'Collections' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
   { to: '/manager/settings', icon: Settings, text: 'Settings' },
@@ -70,9 +69,10 @@ const officerLinks = [
   { to: '/officer/field-wallet', icon: Wallet, text: 'Field wallet' },
   { to: '/officer/centers-groups', icon: Building, text: 'Centers & Groups' },
   { to: '/officer/borrowers', icon: Users, text: 'Borrowers' },
-  { to: '/officer/loans', icon: Briefcase, text: 'Loans' },
-  { to: '/officer/group-repayment', icon: Users2, text: 'Group Repayment' },
-  { to: '/officer/repayment-management', icon: DollarSign, text: 'Repayments' },
+  { to: '/officer/loans', icon: Briefcase, text: 'Loans & Disbursements' },
+  { to: '/officer/requests', icon: FileText, text: 'Requests' },
+  { to: '/officer/group-repayment', icon: Users2, text: 'Group Collections' },
+  { to: '/officer/repayment-management', icon: DollarSign, text: 'Collections' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
   { to: '/officer/expenses', icon: BookOpen, text: 'Expenses' },
@@ -166,7 +166,9 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
         <title>{`${title} | ${systemConfig.name}`}</title>
         <meta name="description" content={description} />
       </Helmet>
-      
+
+      <OfficerTakenGate />
+
       <div className="flex h-screen overflow-hidden bg-[#f4f2ed] dark:bg-neutral-950">
         {/* Mobile Overlay */}
         <AnimatePresence>

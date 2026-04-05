@@ -1,13 +1,19 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { logAudit } from '@/lib/auditLog';
+
+/** Sign out after this long with no user input (mouse, keyboard, scroll, touch, wheel, focus). */
+const IDLE_SESSION_MS = 5 * 60 * 1000;
+const IDLE_ACTIVITY_THROTTLE_MS = 1000;
 
 const AuthContext = createContext(undefined);
 
 export const AuthProvider = ({ children }) => {
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
@@ -162,6 +168,46 @@ export const AuthProvider = ({ children }) => {
     }
     await clearAuthState();
   }, [clearAuthState]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    let timeoutId;
+    let lastThrottle = 0;
+
+    const armTimer = () => {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        void (async () => {
+          await signOut();
+          toast({
+            title: 'Session ended',
+            description: 'You were signed out after 5 minutes of inactivity.',
+          });
+          navigate('/login', { replace: true });
+        })();
+      }, IDLE_SESSION_MS);
+    };
+
+    const onActivity = () => {
+      const now = Date.now();
+      if (now - lastThrottle < IDLE_ACTIVITY_THROTTLE_MS) return;
+      lastThrottle = now;
+      armTimer();
+    };
+
+    armTimer();
+    const passiveOpts = { passive: true };
+    const passiveEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'wheel'];
+    passiveEvents.forEach((e) => window.addEventListener(e, onActivity, passiveOpts));
+    window.addEventListener('focus', onActivity);
+
+    return () => {
+      clearTimeout(timeoutId);
+      passiveEvents.forEach((e) => window.removeEventListener(e, onActivity, passiveOpts));
+      window.removeEventListener('focus', onActivity);
+    };
+  }, [session, signOut, navigate, toast]);
 
   const value = useMemo(() => ({
     user,

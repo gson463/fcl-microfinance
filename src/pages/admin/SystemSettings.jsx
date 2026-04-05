@@ -4,12 +4,24 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
-import { Upload, Save, RotateCw } from 'lucide-react';
+import { Upload, Save, RotateCw, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/customSupabaseClient';
 import { DEFAULT_SYSTEM_NAME, resolveLogoUrl } from '@/lib/brand';
+
+const PURGE_CONFIRM_PHRASE = 'DELETE ALL DATA';
 
 const SystemSettings = () => {
   const { toast } = useToast();
@@ -26,6 +38,10 @@ const SystemSettings = () => {
   const fileInputRef = useRef(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [purgeDialogOpen, setPurgeDialogOpen] = useState(false);
+  const [purgeMode, setPurgeMode] = useState(null);
+  const [purgeConfirmPhrase, setPurgeConfirmPhrase] = useState('');
+  const [purging, setPurging] = useState(false);
 
   const fetchConfig = async () => {
     setIsLoading(true);
@@ -145,6 +161,49 @@ const SystemSettings = () => {
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const openPurgeDialog = (mode) => {
+    setPurgeMode(mode);
+    setPurgeConfirmPhrase('');
+    setPurgeDialogOpen(true);
+  };
+
+  const runPurge = async () => {
+    if (purgeConfirmPhrase.trim() !== PURGE_CONFIRM_PHRASE) {
+      toast({
+        variant: 'destructive',
+        title: 'Confirmation mismatch',
+        description: `Type exactly: ${PURGE_CONFIRM_PHRASE}`,
+      });
+      return;
+    }
+    if (!purgeMode) return;
+    const mode = purgeMode;
+    setPurging(true);
+    try {
+      const { data, error } = await supabase.rpc('admin_purge_all_data', { p_mode: mode });
+      if (error) throw error;
+      setPurgeDialogOpen(false);
+      setPurgeConfirmPhrase('');
+      setPurgeMode(null);
+      toast({
+        title: 'Database reset complete',
+        description:
+          mode === 'keep_all_users'
+            ? 'All business data was removed. All user accounts were kept. Minimal settings were restored — review System Settings.'
+            : `All business data was removed. Non-admin accounts were deleted (${data?.removed_auth_users ?? 0} users). Minimal settings were restored.`,
+      });
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (err) {
+      toast({
+        variant: 'destructive',
+        title: 'Purge failed',
+        description: err.message || 'Could not complete reset.',
+      });
+    } finally {
+      setPurging(false);
     }
   };
 
@@ -293,6 +352,96 @@ const SystemSettings = () => {
             </CardContent>
           </Card>
         </form>
+
+        <Card className="mt-8 border-destructive/40">
+          <CardHeader>
+            <CardTitle className="text-destructive">Danger zone</CardTitle>
+            <CardDescription>
+              Permanently remove application data. These actions cannot be undone. Only use on staging or when you intend
+              a full reset.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-4 space-y-3">
+              <p className="text-sm font-medium">Delete all data, keep every user account</p>
+              <p className="text-xs text-muted-foreground">
+                Removes loans, borrowers, repayments, branches, centres, groups, products, holidays, attendance, audit
+                logs, and other business tables. All users (admin, manager, officer) remain and can sign in. Branch links
+                on users are cleared.
+              </p>
+              <Button type="button" variant="destructive" onClick={() => openPurgeDialog('keep_all_users')}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Purge data (keep all users)
+              </Button>
+            </div>
+            <div className="rounded-lg border border-destructive/25 bg-destructive/5 p-4 space-y-3">
+              <p className="text-sm font-medium">Delete all data, keep admins only</p>
+              <p className="text-xs text-muted-foreground">
+                Same as above, then deletes every manager and officer from the system (including Supabase Auth). Only
+                users with role <strong>admin</strong> stay. Ensure at least one admin account exists before running this.
+              </p>
+              <Button type="button" variant="destructive" onClick={() => openPurgeDialog('keep_admins_only')}>
+                <Trash2 className="mr-2 h-4 w-4" />
+                Purge data (keep admins only)
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <AlertDialog
+          open={purgeDialogOpen}
+          onOpenChange={(open) => {
+            setPurgeDialogOpen(open);
+            if (!open) {
+              setPurgeConfirmPhrase('');
+              setPurgeMode(null);
+            }
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm full database reset</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-sm text-muted-foreground">
+                  <p>
+                    {purgeMode === 'keep_admins_only' ? (
+                      <>
+                        This will erase all business data and <strong>delete all non-admin users</strong> from Auth.
+                        Admins remain.
+                      </>
+                    ) : (
+                      <>This will erase all business data but keep every user account (all roles).</>
+                    )}
+                  </p>
+                  <p>
+                    Type <strong className="text-foreground">{PURGE_CONFIRM_PHRASE}</strong> to confirm.
+                  </p>
+                  <Input
+                    value={purgeConfirmPhrase}
+                    onChange={(e) => setPurgeConfirmPhrase(e.target.value)}
+                    placeholder={PURGE_CONFIRM_PHRASE}
+                    autoComplete="off"
+                    className="font-mono text-sm"
+                  />
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={purging}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                type="button"
+                disabled={purging || purgeConfirmPhrase.trim() !== PURGE_CONFIRM_PHRASE}
+                onClick={(e) => {
+                  e.preventDefault();
+                  runPurge();
+                }}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {purging ? 'Working…' : 'Run purge'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </motion.div>
     </DashboardLayout>
   );

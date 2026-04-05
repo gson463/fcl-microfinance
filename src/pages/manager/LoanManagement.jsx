@@ -15,7 +15,7 @@ import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { Eye, Briefcase, DollarSign, AlertTriangle, Calendar as CalendarIconLucide, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -26,6 +26,13 @@ import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerL
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
+
+const LOAN_STATUS_FILTER_OPTIONS = [
+	{ value: 'active', label: 'Active' },
+	{ value: 'paid', label: 'Paid' },
+	{ value: 'delinquent', label: 'Delinquent' },
+	{ value: 'defaulted', label: 'Defaulted' },
+];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -158,6 +165,11 @@ const ManagerLoanManagement = () => {
         };
     }, [centerFilter]);
 
+    const mgrLoanOfficerOpts = useMemo(() => officers.map((o) => ({ value: o.id, label: o.full_name })), [officers]);
+    const mgrLoanCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const mgrLoanGroupOpts = useMemo(() => groups.map((g) => ({ value: g.id, label: g.name })), [groups]);
+    const mgrLoanProductOpts = useMemo(() => loanProducts.map((p) => ({ value: p.id, label: p.name })), [loanProducts]);
+
     const filteredLoans = useMemo(() => {
         return loans.filter(loan => {
             const borrowerName = `${loan.borrowers?.first_name || ''} ${loan.borrowers?.surname || ''}`.toLowerCase();
@@ -245,10 +257,10 @@ const ManagerLoanManagement = () => {
 
     const getStatusBadge = (status) => ({ active: 'success', paid: 'default', delinquent: 'warning', defaulted: 'destructive', delete_requested: 'secondary', edit_requested: 'secondary' }[status] || 'secondary');
     
-    if (loading) return <DashboardLayout title="Branch Loans"><div className="flex items-center justify-center h-full">Loading...</div></DashboardLayout>;
+    if (loading) return <DashboardLayout title="Loans & Disbursements"><div className="flex items-center justify-center h-full">Loading...</div></DashboardLayout>;
 
     return (
-        <DashboardLayout title="Branch Loans">
+        <DashboardLayout title="Loans & Disbursements">
             <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard title="Total Loans" value={stats.totalLoans} icon={Briefcase} color="text-blue-600" />
@@ -263,66 +275,65 @@ const ManagerLoanManagement = () => {
                             <CardTitle>Loans List</CardTitle>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-4">
                                 <Input placeholder="Search..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
-                                <Select
+                                <SearchableSelect
                                     value={officerFilter}
                                     onValueChange={(v) => {
                                         setOfficerFilter(v);
                                         setCenterFilter('all');
                                         setGroupFilter('all');
                                     }}
-                                >
-                                    <SelectTrigger><SelectValue placeholder="Filter by Officer" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Officers</SelectItem>
-                                        {officers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                                <Select
+                                    options={mgrLoanOfficerOpts}
+                                    allLabel="All Officers"
+                                    allValue="all"
+                                    placeholder="Filter by Officer"
+                                    searchPlaceholder="Search officers…"
+                                    emptyText="No officer found."
+                                />
+                                <SearchableSelect
                                     value={centerFilter}
                                     onValueChange={(v) => {
                                         setCenterFilter(v);
                                         setGroupFilter('all');
                                     }}
                                     disabled={officerFilter === 'all'}
-                                >
-                                    <SelectTrigger><SelectValue placeholder={officerFilter === 'all' ? 'Select officer first' : 'Center'} /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All centers</SelectItem>
-                                        {centers.map((c) => (
-                                            <SelectItem key={c.id} value={c.id}>
-                                                {c.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
-                                    <SelectTrigger><SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All groups</SelectItem>
-                                        {groups.map((g) => (
-                                            <SelectItem key={g.id} value={g.id}>
-                                                {g.name}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                                    <SelectTrigger><SelectValue placeholder="Filter by Status" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Statuses</SelectItem>
-                                        <SelectItem value="active">Active</SelectItem>
-                                        <SelectItem value="paid">Paid</SelectItem>
-                                        <SelectItem value="delinquent">Delinquent</SelectItem>
-                                        <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                                <Select value={productFilter} onValueChange={setProductFilter}>
-                                    <SelectTrigger><SelectValue placeholder="Filter by Product" /></SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Products</SelectItem>
-                                        {loanProducts.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
+                                    options={mgrLoanCenterOpts}
+                                    allLabel="All centers"
+                                    allValue="all"
+                                    placeholder={officerFilter === 'all' ? 'Select officer first' : 'Center'}
+                                    searchPlaceholder="Search centers…"
+                                    emptyText="No center found."
+                                />
+                                <SearchableSelect
+                                    value={groupFilter}
+                                    onValueChange={setGroupFilter}
+                                    disabled={centerFilter === 'all'}
+                                    options={mgrLoanGroupOpts}
+                                    allLabel="All groups"
+                                    allValue="all"
+                                    placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
+                                    searchPlaceholder="Search groups…"
+                                    emptyText="No group found."
+                                />
+                                <SearchableSelect
+                                    value={statusFilter}
+                                    onValueChange={setStatusFilter}
+                                    options={LOAN_STATUS_FILTER_OPTIONS}
+                                    allLabel="All Statuses"
+                                    allValue="all"
+                                    placeholder="Filter by Status"
+                                    searchPlaceholder="Search status…"
+                                    emptyText="No match."
+                                />
+                                <SearchableSelect
+                                    value={productFilter}
+                                    onValueChange={setProductFilter}
+                                    options={mgrLoanProductOpts}
+                                    allLabel="All Products"
+                                    allValue="all"
+                                    placeholder="Filter by Product"
+                                    searchPlaceholder="Search products…"
+                                    emptyText="No product found."
+                                />
                                 <Popover>
                                     <PopoverTrigger asChild>
                                         <Button variant={"outline"} className="justify-start text-left font-normal">

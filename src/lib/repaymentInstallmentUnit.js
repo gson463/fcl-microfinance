@@ -3,6 +3,10 @@
  * Used by Group Repayment, Record Repayment dialog, and record-repayment Edge Function.
  */
 
+/** English fallback when validation fails without a specific message (edge case). */
+export const REPAYMENT_AMOUNT_INVALID_FALLBACK =
+    'This amount is not valid. Enter a multiple of the installment amount (minimum one full installment).';
+
 /**
  * Smallest original installment amount on the schedule (typical flat installment size).
  * @param {unknown} schedule

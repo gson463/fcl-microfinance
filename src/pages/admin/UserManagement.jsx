@@ -11,6 +11,7 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
 import { PlusCircle, Edit, Trash2, RotateCw, ShieldAlert, ChevronLeft, ChevronRight } from 'lucide-react';
@@ -84,6 +85,8 @@ const UserManagement = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const userFormBranchOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
 
   const handleOpenDialog = (user = null) => {
     if (user) {
@@ -359,14 +362,17 @@ const UserManagement = () => {
                       {formData.role && formData.role !== 'admin' && (
                         <div className="space-y-2">
                           <Label htmlFor="branch">Assign Branch</Label>
-                          <Select value={formData.branch_id} onValueChange={(value) => setFormData({ ...formData, branch_id: value })} disabled={!isCreateFlow}>
-                            <SelectTrigger><SelectValue placeholder="Select a branch" /></SelectTrigger>
-                            <SelectContent>
-                              {branches.map(branch => (
-                                <SelectItem key={branch.id} value={branch.id}>{branch.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <SearchableSelect
+                            id="branch"
+                            value={formData.branch_id}
+                            onValueChange={(value) => setFormData({ ...formData, branch_id: value })}
+                            disabled={!isCreateFlow}
+                            options={userFormBranchOpts}
+                            placeholder="Select a branch"
+                            searchPlaceholder="Search branches…"
+                            emptyText="No branch found."
+                            triggerClassName="w-full"
+                          />
                         </div>
                       )}
                     </>

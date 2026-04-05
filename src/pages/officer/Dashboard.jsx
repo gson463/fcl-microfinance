@@ -5,7 +5,7 @@ import { Calendar as CalendarIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
-import { Card, CardContent, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import {
 	Users,
 	Loader2,
@@ -17,6 +17,9 @@ import {
 	Sunrise,
 	AlertTriangle,
 	ShieldAlert,
+	Target,
+	Activity,
+	Flag,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -56,6 +59,8 @@ const LoanOfficerDashboard = () => {
 	const [officerBranchId, setOfficerBranchId] = useState(null);
 	const [branchName, setBranchName] = useState('');
 	const [expandedCardId, setExpandedCardId] = useState(null);
+	/** Period sums for selected date range (RPC officer_dashboard_range_kpis). */
+	const [rangeKpi, setRangeKpi] = useState(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -135,6 +140,23 @@ const LoanOfficerDashboard = () => {
 			if (error) throw error;
 			if (data?.length) setStats(data[0]);
 			else setStats(null);
+
+			try {
+				const { data: rk, error: rkErr } = await supabase.rpc('officer_dashboard_range_kpis', {
+					p_officer_id: user.id,
+					p_start: format(dateRange.from, 'yyyy-MM-dd'),
+					p_end: format(dateRange.to, 'yyyy-MM-dd'),
+				});
+				if (rkErr) {
+					console.warn('officer_dashboard_range_kpis', rkErr);
+					setRangeKpi(null);
+				} else {
+					setRangeKpi(rk && typeof rk === 'object' ? rk : null);
+				}
+			} catch (e) {
+				console.warn(e);
+				setRangeKpi(null);
+			}
 		} catch (err) {
 			console.error(err);
 			toast({
@@ -146,6 +168,7 @@ const LoanOfficerDashboard = () => {
 				variant: 'destructive',
 			});
 			setStats(null);
+			setRangeKpi(null);
 		} finally {
 			setLoading(false);
 		}
@@ -160,8 +183,40 @@ const LoanOfficerDashboard = () => {
 		return `${currency} ${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 	};
 
+	const officerKpis = useMemo(() => {
+		const z = stats || {};
+		const rk = rangeKpi || {};
+		const principalDisbursed = Number(rk.principal_disbursed) || 0;
+		const amountCollected = Number(rk.amount_collected) || 0;
+		const book = Number(z.loans_book_count) || 0;
+		const del = Number(z.loans_delinquent_count) || 0;
+		const healthyPct = book > 0 ? Math.round(((book - del) / book) * 100) : 100;
+		const expToday = Number(z.expected_today) || 0;
+		const collToday = Number(z.collected_today) || 0;
+		let todayCollectionPct = 0;
+		if (expToday > 0) todayCollectionPct = Math.min(100, Math.round((collToday / expToday) * 100));
+		else if (collToday > 0) todayCollectionPct = 100;
+		let periodRecoveryPct = 0;
+		if (principalDisbursed > 0) periodRecoveryPct = Math.min(100, Math.round((amountCollected / principalDisbursed) * 100));
+		else if (amountCollected > 0) periodRecoveryPct = 100;
+		return {
+			principalDisbursed,
+			amountCollected,
+			healthyPct,
+			todayCollectionPct,
+			periodRecoveryPct,
+			expToday,
+			collToday,
+			nearing: Number(z.nearing_completion) || 0,
+		};
+	}, [stats, rangeKpi]);
+
 	const dailyFocusCards = useMemo(() => {
 		const z = stats || {};
+		const expToday = Number(z.expected_today) || 0;
+		const collToday = Number(z.collected_today) || 0;
+		const todayBarPct =
+			expToday > 0 ? Math.min(100, Math.round((collToday / expToday) * 100)) : collToday > 0 ? 100 : 0;
 		const fc = (v) =>
 			`${currency} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 		return [
@@ -195,7 +250,7 @@ const LoanOfficerDashboard = () => {
 				value: fc(z.collected_today ?? 0),
 				icon: Banknote,
 				shell: OFFICER_CARD_SHELLS[4],
-				progressPct: 0,
+				progressPct: todayBarPct,
 				subItems: [
 					{
 						label: 'Drilldown — collected today',
@@ -251,6 +306,15 @@ const LoanOfficerDashboard = () => {
 			},
 		];
 	}, [stats, currency]);
+
+	const KpiBar = ({ pct, className }) => (
+		<div className={cn('h-2 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700', className)}>
+			<div
+				className="h-full rounded-full bg-gradient-to-r from-brand-gold to-brand-gold-deep transition-[width] duration-500"
+				style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+			/>
+		</div>
+	);
 
 	const riskCards = useMemo(() => {
 		const z = stats || {};
@@ -445,6 +509,83 @@ const LoanOfficerDashboard = () => {
 					</div>
 				) : (
 					<>
+						<div className="space-y-3 rounded-xl border border-brand-gold/30 bg-gradient-to-br from-amber-50/90 via-white to-white p-4 shadow-sm dark:from-brand-gold/15 dark:via-card dark:to-card dark:border-brand-gold/25">
+							<div>
+								<h2 className="font-display text-sm font-semibold uppercase tracking-wide text-neutral-700 dark:text-neutral-200">
+									Your progress
+								</h2>
+							</div>
+							<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+								<Card className="border-neutral-200/80 bg-white/90 dark:bg-card dark:border-neutral-700">
+									<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+										<CardTitle className="text-sm font-medium">Today: collection vs due</CardTitle>
+										<Banknote className="h-4 w-4 text-muted-foreground" />
+									</CardHeader>
+									<CardContent>
+										<p className="text-xs text-muted-foreground">Collected / due today</p>
+										<p className="text-lg font-bold tabular-nums">
+											{formatCurrency(officerKpis.collToday)} / {formatCurrency(officerKpis.expToday)}
+										</p>
+										<KpiBar pct={officerKpis.todayCollectionPct} className="mt-3" />
+										<p className="mt-1.5 text-xs text-muted-foreground">
+											{officerKpis.todayCollectionPct}% of today&apos;s scheduled due collected
+										</p>
+									</CardContent>
+								</Card>
+								<Card className="border-neutral-200/80 bg-white/90 dark:bg-card dark:border-neutral-700">
+									<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+										<CardTitle className="text-sm font-medium">Healthy book</CardTitle>
+										<Activity className="h-4 w-4 text-muted-foreground" />
+									</CardHeader>
+									<CardContent>
+										<p className="text-xs text-muted-foreground">Healthy book share</p>
+										<p className="text-3xl font-bold tabular-nums">{officerKpis.healthyPct}%</p>
+										<KpiBar pct={officerKpis.healthyPct} className="mt-3" />
+										<p className="mt-1.5 text-xs text-muted-foreground">
+											Share of your live loans that are not delinquent
+										</p>
+									</CardContent>
+								</Card>
+								<Card className="border-neutral-200/80 bg-white/90 dark:bg-card dark:border-neutral-700">
+									<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+										<CardTitle className="text-sm font-medium">Selected period</CardTitle>
+										<Target className="h-4 w-4 text-muted-foreground" />
+									</CardHeader>
+									<CardContent>
+										<p className="text-xs text-muted-foreground">Collected vs principal disbursed</p>
+										<p className="text-sm font-semibold tabular-nums">
+											{formatCurrency(officerKpis.amountCollected)} / {formatCurrency(officerKpis.principalDisbursed)}
+										</p>
+										<KpiBar pct={officerKpis.periodRecoveryPct} className="mt-3" />
+										<p className="mt-1.5 text-xs text-muted-foreground">
+											{officerKpis.principalDisbursed > 0
+												? `Collections as % of principal disbursed in range (${officerKpis.periodRecoveryPct}%)`
+												: 'No disbursements in this range — collections still reflect your activity'}
+										</p>
+									</CardContent>
+								</Card>
+								<Card className="border-neutral-200/80 bg-white/90 dark:bg-card dark:border-neutral-700">
+									<CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+										<CardTitle className="text-sm font-medium">Nearing completion</CardTitle>
+										<Flag className="h-4 w-4 text-muted-foreground" />
+									</CardHeader>
+									<CardContent>
+										<p className="text-xs text-muted-foreground">Loans nearing final payment</p>
+										<p className="text-3xl font-bold tabular-nums">{officerKpis.nearing}</p>
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											className="mt-3 w-full"
+											onClick={() => openMetric(DRILLDOWN_METRICS.nearing_completion, { days: 14 })}
+										>
+											View list
+										</Button>
+									</CardContent>
+								</Card>
+							</div>
+						</div>
+
 						<div className="space-y-2">
 							<h3 className="font-display text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
 								Today&apos;s focus

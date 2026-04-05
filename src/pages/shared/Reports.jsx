@@ -3,7 +3,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
@@ -14,9 +14,16 @@ import { format as formatDate, startOfMonth, endOfMonth, eachMonthOfInterval, st
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { format as formatTZ, toZonedTime } from 'date-fns-tz';
+import { isRepaymentInReportsRange, repaymentReportDateYyyyMmDd } from '@/lib/repaymentReportDate';
 
-const EAT_TIMEZONE = 'Africa/Nairobi';
+const REPORT_STATUS_OPTIONS = [
+    { value: 'pending', label: 'Pending' },
+    { value: 'active', label: 'Active' },
+    { value: 'paid', label: 'Paid' },
+    { value: 'delinquent', label: 'Delinquent' },
+    { value: 'defaulted', label: 'Defaulted' },
+    { value: 'rejected', label: 'Rejected' },
+];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
   <Card>
@@ -61,7 +68,10 @@ const Reports = () => {
                 supabase.from('loans').select('*, borrowers!inner(*)'),
                 supabase.from('borrowers').select('*'),
                 // Aligning with RepaymentManagement: fetch ALL repayments first, then filter in memory or via role logic below
-                supabase.from('repayments').select('*, loans(id, borrower_id, schedule, loan_id, borrowers(*, groups(*)))').order('actual_payment_date', { ascending: false }), 
+                supabase
+                    .from('repayments')
+                    .select('*, loans(id, borrower_id, loan_id, product_id, status, borrowers(*, groups(*)))')
+                    .order('actual_payment_date', { ascending: false }),
                 supabase.from('users').select('*'),
                 supabase.from('branches').select('*'),
                 supabase.from('loan_products').select('*'),
@@ -155,6 +165,27 @@ const Reports = () => {
         return { officers, centers, groups };
     }, [allData, user, selectedBranch, selectedOfficer, selectedCenter]);
 
+    const reportBranchOptions = useMemo(
+        () => allData.branches.map((b) => ({ value: b.id, label: b.name })),
+        [allData.branches]
+    );
+    const reportOfficerOptions = useMemo(
+        () => availableFilters.officers.map((o) => ({ value: o.id, label: o.full_name })),
+        [availableFilters.officers]
+    );
+    const reportProductOptions = useMemo(
+        () => allData.loanProducts.map((p) => ({ value: p.id, label: p.name })),
+        [allData.loanProducts]
+    );
+    const reportCenterOptions = useMemo(
+        () => availableFilters.centers.map((c) => ({ value: c.id, label: c.name })),
+        [availableFilters.centers]
+    );
+    const reportGroupOptions = useMemo(
+        () => availableFilters.groups.map((g) => ({ value: g.id, label: g.name })),
+        [availableFilters.groups]
+    );
+
     const filteredData = useMemo(() => {
         const role = user?.user_metadata.role;
 
@@ -231,7 +262,7 @@ const Reports = () => {
              repayments = repayments.filter(r => {
                  // The repayment object from Supabase join includes `loans` which has `borrowers`
                  // But our allData.repayments join structure might be slightly different depending on the fetch.
-                 // In fetchData above: .select('*, loans(id, borrower_id, schedule, loan_id, product_id, status, borrowers(*, groups(*)))')
+                 // In fetchData: .select('*, loans(id, borrower_id, loan_id, product_id, status, borrowers(*, groups(*)))')
                  
                  // If the deep join data is missing, we fallback to finding it in allData.loans
                  let loan = r.loans;
@@ -257,24 +288,9 @@ const Reports = () => {
              });
         }
 
-        // 2c. Date Filter - EXACT LOGIC from RepaymentManagement.jsx
-        // Logic:
-        // const dateMatch = !dateRangeFilter?.from || (
-        //     new Date(r.actual_payment_date) >= startOfDay(dateRangeFilter.from) &&
-        //     new Date(r.actual_payment_date) <= endOfDay(dateRangeFilter.to || dateRangeFilter.from)
-        // );
-
-        const dateFilteredRepayments = repayments.filter(r => {
-            if (!r.actual_payment_date) return false;
-            
-            // Standardize on JS Date object comparison used in RepaymentManagement
-            const rDate = new Date(r.actual_payment_date);
-            
-            const from = dateRange.from ? startOfDay(dateRange.from) : null;
-            const to = dateRange.to ? endOfDay(dateRange.to) : (dateRange.from ? endOfDay(dateRange.from) : null);
-            
-            return (!from || rDate >= from) && (!to || rDate <= to);
-        });
+        // 2c. Date filter: actual collection date (actual_payment_date; legacy fallback payment_date).
+        // String yyyy-MM-dd compare avoids UTC midnight shifting schedule-style date strings.
+        const dateFilteredRepayments = repayments.filter((r) => isRepaymentInReportsRange(r, dateRange));
 
         return { loans, borrowers: allData.borrowers, repayments: dateFilteredRepayments, loansDisbursedInPeriod };
     }, [allData, user, dateRange, selectedBranch, selectedOfficer, selectedProduct, selectedCenter, selectedGroup, selectedStatus, availableFilters.groups]);
@@ -325,11 +341,10 @@ const Reports = () => {
                     .reduce((sum, l) => sum + l.principal, 0);
 
                 const collected = repayments
-                    .filter(r => {
-                        // Repayment Chart Logic - match Date Filter logic above
-                        if (!r.actual_payment_date) return false;
-                        const rDate = new Date(r.actual_payment_date);
-                        return rDate >= start && rDate <= end;
+                    .filter((r) => {
+                        const d = repaymentReportDateYyyyMmDd(r);
+                        if (!d) return false;
+                        return d === formatDate(day, 'yyyy-MM-dd');
                     })
                     .reduce((sum, r) => sum + r.amount, 0);
 
@@ -349,12 +364,13 @@ const Reports = () => {
                     })
                     .reduce((sum, l) => sum + l.principal, 0);
 
+                const monthStartStr = formatDate(monthStart, 'yyyy-MM-dd');
+                const monthEndStr = formatDate(monthEnd, 'yyyy-MM-dd');
                 const collected = repayments
-                    .filter(r => {
-                         // Repayment Chart Logic - match Date Filter logic above
-                        if (!r.actual_payment_date) return false;
-                        const rDate = new Date(r.actual_payment_date);
-                        return rDate >= monthStart && rDate <= monthEnd;
+                    .filter((r) => {
+                        const d = repaymentReportDateYyyyMmDd(r);
+                        if (!d) return false;
+                        return d >= monthStartStr && d <= monthEndStr;
                     })
                     .reduce((sum, r) => sum + r.amount, 0);
 
@@ -438,7 +454,11 @@ const Reports = () => {
     return (
         <DashboardLayout title="Reports">
             <div className="space-y-8">
-                <p className="text-sm text-neutral-500">In-depth analysis of your operations.</p>
+                <p className="text-sm text-neutral-500">
+                    In-depth analysis of your operations. Collections and repayment charts use{' '}
+                    <strong>actual payment date</strong> (when cash was collected), not installment due dates from the loan
+                    schedule.
+                </p>
 
                 {loading ? <div className="text-center py-10">Loading report data...</div> :
                 <>
@@ -465,12 +485,76 @@ const Reports = () => {
                             </Popover>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-                            {user?.user_metadata.role === 'admin' && (<Select value={selectedBranch} onValueChange={setSelectedBranch}><SelectTrigger><SelectValue placeholder="Select Branch" /></SelectTrigger><SelectContent><SelectItem value="all">All Branches</SelectItem>{allData.branches.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}</SelectContent></Select>)}
-                            {(user?.user_metadata.role === 'admin' || user?.user_metadata.role === 'manager') && (<Select value={selectedOfficer} onValueChange={setSelectedOfficer}><SelectTrigger><SelectValue placeholder="Select Officer" /></SelectTrigger><SelectContent><SelectItem value="all">All Officers</SelectItem>{availableFilters.officers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}</SelectContent></Select>)}
-                            <Select value={selectedProduct} onValueChange={setSelectedProduct}><SelectTrigger><SelectValue placeholder="Select Product" /></SelectTrigger><SelectContent><SelectItem value="all">All Products</SelectItem>{allData.loanProducts.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select>
-                            <Select value={selectedCenter} onValueChange={setSelectedCenter}><SelectTrigger><SelectValue placeholder="Select Center" /></SelectTrigger><SelectContent><SelectItem value="all">All Centers</SelectItem>{availableFilters.centers.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent></Select>
-                            <Select value={selectedGroup} onValueChange={setSelectedGroup}><SelectTrigger><SelectValue placeholder="Select Group" /></SelectTrigger><SelectContent><SelectItem value="all">All Groups</SelectItem>{availableFilters.groups.map(g => <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>)}</SelectContent></Select>
-                            <Select value={selectedStatus} onValueChange={setSelectedStatus}><SelectTrigger><SelectValue placeholder="Loan Status" /></SelectTrigger><SelectContent><SelectItem value="all">All Statuses</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="active">Active</SelectItem><SelectItem value="paid">Paid</SelectItem><SelectItem value="delinquent">Delinquent</SelectItem><SelectItem value="defaulted">Defaulted</SelectItem><SelectItem value="rejected">Rejected</SelectItem></SelectContent></Select>
+                            {user?.user_metadata.role === 'admin' && (
+                                <SearchableSelect
+                                    value={selectedBranch}
+                                    onValueChange={setSelectedBranch}
+                                    options={reportBranchOptions}
+                                    allLabel="All branches"
+                                    allValue="all"
+                                    placeholder="Select branch"
+                                    searchPlaceholder="Search branches…"
+                                    emptyText="No branch found."
+                                    triggerClassName="w-full"
+                                />
+                            )}
+                            {(user?.user_metadata.role === 'admin' || user?.user_metadata.role === 'manager') && (
+                                <SearchableSelect
+                                    value={selectedOfficer}
+                                    onValueChange={setSelectedOfficer}
+                                    options={reportOfficerOptions}
+                                    allLabel="All officers"
+                                    allValue="all"
+                                    placeholder="Select officer"
+                                    searchPlaceholder="Search officers…"
+                                    emptyText="No officer found."
+                                    triggerClassName="w-full"
+                                />
+                            )}
+                            <SearchableSelect
+                                value={selectedProduct}
+                                onValueChange={setSelectedProduct}
+                                options={reportProductOptions}
+                                allLabel="All products"
+                                allValue="all"
+                                placeholder="Select product"
+                                searchPlaceholder="Search products…"
+                                emptyText="No product found."
+                                triggerClassName="w-full"
+                            />
+                            <SearchableSelect
+                                value={selectedCenter}
+                                onValueChange={setSelectedCenter}
+                                options={reportCenterOptions}
+                                allLabel="All centers"
+                                allValue="all"
+                                placeholder="Select center"
+                                searchPlaceholder="Search centers…"
+                                emptyText="No center found."
+                                triggerClassName="w-full"
+                            />
+                            <SearchableSelect
+                                value={selectedGroup}
+                                onValueChange={setSelectedGroup}
+                                options={reportGroupOptions}
+                                allLabel="All groups"
+                                allValue="all"
+                                placeholder="Select group"
+                                searchPlaceholder="Search groups…"
+                                emptyText="No group found."
+                                triggerClassName="w-full"
+                            />
+                            <SearchableSelect
+                                value={selectedStatus}
+                                onValueChange={setSelectedStatus}
+                                options={REPORT_STATUS_OPTIONS}
+                                allLabel="All statuses"
+                                allValue="all"
+                                placeholder="Loan status"
+                                searchPlaceholder="Search status…"
+                                emptyText="No status found."
+                                triggerClassName="w-full"
+                            />
                         </div>
                     </CardContent></Card>
 

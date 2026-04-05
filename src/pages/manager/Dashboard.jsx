@@ -30,7 +30,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import {
 	defaultDashboardRange,
 	quickActionCardClass,
@@ -137,6 +137,11 @@ const BranchManagerDashboard = () => {
 			setSearchParams(next, { replace: true });
 		},
 		[searchParams, setSearchParams]
+	);
+
+	const managerOfficerOptions = useMemo(
+		() => officers.map((o) => ({ value: o.id, label: o.full_name })),
+		[officers]
 	);
 
 	const fetchDashboardData = useCallback(async () => {
@@ -657,26 +662,21 @@ const BranchManagerDashboard = () => {
 
 						<div className="w-full min-w-[200px] sm:w-[220px]">
 							<p className="mb-1.5 text-xs font-medium text-neutral-500">Loan officer</p>
-							<Select
+							<SearchableSelect
 								value={officerId || 'all'}
 								onValueChange={(v) => {
 									const next = v === 'all' ? '' : v;
 									setOfficerId(next);
 									persistQuery({ officerId: next });
 								}}
-							>
-								<SelectTrigger>
-									<SelectValue placeholder="All officers in branch" />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="all">All officers in branch</SelectItem>
-									{officers.map((o) => (
-										<SelectItem key={o.id} value={o.id}>
-											{o.full_name}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
+								options={managerOfficerOptions}
+								allLabel="All officers in branch"
+								allValue="all"
+								placeholder="All officers in branch"
+								searchPlaceholder="Search officers…"
+								emptyText="No officer found."
+								triggerClassName="w-full"
+							/>
 						</div>
 
 						{officerId && (

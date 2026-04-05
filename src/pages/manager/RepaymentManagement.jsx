@@ -15,7 +15,7 @@ import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Input } from '@/components/ui/input';
 import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, Scale, ChevronLeft, ChevronRight, CheckCircle, XCircle, Search } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -30,6 +30,14 @@ import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerS
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
+
+const BORROWER_STATUS_FILTER_OPTIONS = [
+	{ value: 'eligible', label: 'Eligible' },
+	{ value: 'pending', label: 'Pending re-loan (manager)' },
+	{ value: 'active_loan', label: 'Active loan' },
+	{ value: 'defaulted', label: 'Defaulted' },
+	{ value: 'paid_up', label: 'Paid up' },
+];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -156,6 +164,10 @@ const ManagerRepaymentManagement = () => {
         if (centerFilter === 'all') return [];
         return groups.filter((g) => g.center_id === centerFilter);
     }, [groups, centerFilter]);
+
+    const mgrRepOfficerOpts = useMemo(() => branchOfficers.map((o) => ({ value: o.id, label: o.full_name })), [branchOfficers]);
+    const mgrRepCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
+    const mgrRepGroupOpts = useMemo(() => groupsForFilter.map((g) => ({ value: g.id, label: g.name })), [groupsForFilter]);
 
     const filteredRepayments = useMemo(() => {
         return repayments.filter(r => {
@@ -350,10 +362,10 @@ const ManagerRepaymentManagement = () => {
         XLSX.writeFile(wb, 'repayment_history.xlsx');
     };
 
-    if (loading) return <DashboardLayout><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
+    if (loading) return <DashboardLayout title="Collections"><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
 
     return (
-        <DashboardLayout title="Repayment Management">
+        <DashboardLayout title="Collections">
             <div className="space-y-6">
                 {pendingRepaymentDeletes.length > 0 && (
                     <Card>
@@ -479,50 +491,54 @@ const ManagerRepaymentManagement = () => {
                                 className="pl-8 w-[280px]"
                             />
                         </div>
-                        <Select value={officerFilter} onValueChange={setOfficerFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Filter by Loan Officer..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All Loan Officers</SelectItem>
-                                {branchOfficers.map(o => <SelectItem key={o.id} value={o.id}>{o.full_name}</SelectItem>)}
-                            </SelectContent>
-                        </Select>
-                        <Select value={centerFilter} onValueChange={(v) => { setCenterFilter(v); setGroupFilter('all'); }}>
-                            <SelectTrigger className="w-[220px]">
-                                <SelectValue placeholder="Center" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All centers</SelectItem>
-                                {centers.map((c) => (
-                                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={groupFilter} onValueChange={setGroupFilter} disabled={centerFilter === 'all'}>
-                            <SelectTrigger className="w-[220px]">
-                                <SelectValue placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'} />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All groups</SelectItem>
-                                {groupsForFilter.map((g) => (
-                                    <SelectItem key={g.id} value={g.id}>{g.name}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                        <Select value={borrowerStatusFilter} onValueChange={setBorrowerStatusFilter}>
-                            <SelectTrigger className="w-[240px]">
-                                <SelectValue placeholder="Borrower status" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                <SelectItem value="all">All borrower statuses</SelectItem>
-                                <SelectItem value="eligible">Eligible</SelectItem>
-                                <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
-                                <SelectItem value="active_loan">Active loan</SelectItem>
-                                <SelectItem value="defaulted">Defaulted</SelectItem>
-                                <SelectItem value="paid_up">Paid up</SelectItem>
-                            </SelectContent>
-                        </Select>
+                        <SearchableSelect
+                            value={officerFilter}
+                            onValueChange={setOfficerFilter}
+                            options={mgrRepOfficerOpts}
+                            allLabel="All Loan Officers"
+                            allValue="all"
+                            placeholder="Filter by Loan Officer..."
+                            searchPlaceholder="Search officers…"
+                            emptyText="No officer found."
+                            triggerClassName="w-[240px]"
+                        />
+                        <SearchableSelect
+                            value={centerFilter}
+                            onValueChange={(v) => {
+                                setCenterFilter(v);
+                                setGroupFilter('all');
+                            }}
+                            options={mgrRepCenterOpts}
+                            allLabel="All centers"
+                            allValue="all"
+                            placeholder="Center"
+                            searchPlaceholder="Search centers…"
+                            emptyText="No center found."
+                            triggerClassName="w-[220px]"
+                        />
+                        <SearchableSelect
+                            value={groupFilter}
+                            onValueChange={setGroupFilter}
+                            disabled={centerFilter === 'all'}
+                            options={mgrRepGroupOpts}
+                            allLabel="All groups"
+                            allValue="all"
+                            placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
+                            searchPlaceholder="Search groups…"
+                            emptyText="No group found."
+                            triggerClassName="w-[220px]"
+                        />
+                        <SearchableSelect
+                            value={borrowerStatusFilter}
+                            onValueChange={setBorrowerStatusFilter}
+                            options={BORROWER_STATUS_FILTER_OPTIONS}
+                            allLabel="All borrower statuses"
+                            allValue="all"
+                            placeholder="Borrower status"
+                            searchPlaceholder="Search status…"
+                            emptyText="No match."
+                            triggerClassName="w-[240px]"
+                        />
                         <Popover>
                             <PopoverTrigger asChild>
                                 <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
