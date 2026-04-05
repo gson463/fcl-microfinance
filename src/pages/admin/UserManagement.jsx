@@ -30,6 +30,7 @@ import { Badge } from '@/components/ui/badge';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
+import { ALL } from '@/lib/hierarchyFilterUtils';
 
 const PAGE_SIZE = 25;
 
@@ -47,19 +48,55 @@ const UserManagement = () => {
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const { toast } = useToast();
 
+  const [filterRole, setFilterRole] = useState('all');
+  const [filterBranchId, setFilterBranchId] = useState(ALL);
+  const [filterActive, setFilterActive] = useState('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterRole, filterBranchId, filterActive, debouncedSearch]);
+
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     const from = (page - 1) * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
-    const { data: usersData, error: usersError, count } = await supabase
+    let query = supabase
       .from('users')
       .select(
         'id, full_name, email, role, branch_id, phone_number, is_active, created_at, branches(name)',
         { count: 'exact' },
       )
-      .order('created_at', { ascending: false })
-      .range(from, to);
+      .order('created_at', { ascending: false });
+
+    if (filterRole !== 'all') {
+      query = query.eq('role', filterRole);
+    }
+    if (filterBranchId !== ALL) {
+      if (filterBranchId === 'none') {
+        query = query.is('branch_id', null);
+      } else {
+        query = query.eq('branch_id', filterBranchId);
+      }
+    }
+    if (filterActive === 'active') {
+      query = query.eq('is_active', true);
+    } else if (filterActive === 'inactive') {
+      query = query.eq('is_active', false);
+    }
+    if (debouncedSearch) {
+      const s = debouncedSearch.replace(/%/g, '\\%');
+      query = query.or(`full_name.ilike.%${s}%,email.ilike.%${s}%`);
+    }
+
+    const { data: usersData, error: usersError, count } = await query.range(from, to);
       
     if (usersError) {
       toast({ title: 'Error', description: 'Could not fetch users.', variant: 'destructive' });
@@ -80,13 +117,30 @@ const UserManagement = () => {
       setBranches(branchesData);
     }
     setIsLoading(false);
-  }, [toast, page]);
+  }, [toast, page, filterRole, filterBranchId, filterActive, debouncedSearch]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   const userFormBranchOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
+
+  const listBranchFilterOptions = useMemo(
+    () => [
+      { value: ALL, label: 'All branches' },
+      { value: 'none', label: 'No branch' },
+      ...branches.map((b) => ({ value: b.id, label: b.name })),
+    ],
+    [branches],
+  );
+
+  const clearListFilters = () => {
+    setFilterRole('all');
+    setFilterBranchId(ALL);
+    setFilterActive('all');
+    setSearchInput('');
+    setDebouncedSearch('');
+  };
 
   const handleOpenDialog = (user = null) => {
     if (user) {
@@ -398,6 +452,62 @@ const UserManagement = () => {
               </div>
             ) : (
               <>
+              <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border bg-muted/30 p-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Role</Label>
+                  <Select value={filterRole} onValueChange={setFilterRole}>
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue placeholder="Role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All roles</SelectItem>
+                      <SelectItem value="admin">Admin</SelectItem>
+                      <SelectItem value="manager">Manager</SelectItem>
+                      <SelectItem value="officer">Officer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Branch</Label>
+                  <SearchableSelect
+                    value={filterBranchId}
+                    onValueChange={setFilterBranchId}
+                    options={listBranchFilterOptions}
+                    placeholder="All branches"
+                    searchPlaceholder="Search branches…"
+                    emptyText="No branch found."
+                    triggerClassName="w-[200px]"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Status</Label>
+                  <Select value={filterActive} onValueChange={setFilterActive}>
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="min-w-[200px] flex-1 space-y-1.5">
+                  <Label htmlFor="user-search" className="text-xs">
+                    Search name or email
+                  </Label>
+                  <Input
+                    id="user-search"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Type to filter…"
+                    className="max-w-md"
+                  />
+                </div>
+                <Button type="button" variant="outline" size="sm" className="mb-0.5" onClick={clearListFilters}>
+                  Clear filters
+                </Button>
+              </div>
               <BulkDataTableToolbar
                 selectedCount={bulk.count}
                 onClear={bulk.clear}

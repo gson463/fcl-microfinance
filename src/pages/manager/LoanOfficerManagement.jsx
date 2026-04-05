@@ -27,6 +27,9 @@ import { useToast } from '@/components/ui/use-toast';
 import { PlusCircle, Loader2, Trash2, Edit, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/ui/searchable-select';
+import { ALL } from '@/lib/hierarchyFilterUtils';
 
 const PAGE_SIZE = 25;
 
@@ -44,6 +47,45 @@ const LoanOfficerManagement = () => {
   const [editingOfficer, setEditingOfficer] = useState(null);
   const [formData, setFormData] = useState({ full_name: '', email: '', password: '' });
   const [page, setPage] = useState(1);
+  const [centers, setCenters] = useState([]);
+  const [filterActive, setFilterActive] = useState('all');
+  const [centerFilterId, setCenterFilterId] = useState(ALL);
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [filterActive, centerFilterId, debouncedSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!managerBranchId) {
+      setCenters([]);
+      return;
+    }
+    (async () => {
+      const { data, error } = await supabase
+        .from('centers')
+        .select('id, name')
+        .eq('branch_id', managerBranchId)
+        .order('name');
+      if (cancelled) return;
+      if (error) {
+        console.error(error);
+        setCenters([]);
+        return;
+      }
+      setCenters(data || []);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [managerBranchId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -79,6 +121,21 @@ const LoanOfficerManagement = () => {
     };
   }, [user?.id]);
 
+  const centerFilterOptions = useMemo(
+    () => [
+      { value: ALL, label: 'All centers' },
+      ...centers.map((c) => ({ value: c.id, label: c.name })),
+    ],
+    [centers],
+  );
+
+  const clearListFilters = () => {
+    setFilterActive('all');
+    setCenterFilterId(ALL);
+    setSearchInput('');
+    setDebouncedSearch('');
+  };
+
   const fetchOfficers = useCallback(async () => {
     if (!user) {
       setOfficers([]);
@@ -93,28 +150,68 @@ const LoanOfficerManagement = () => {
     }
     setLoading(true);
 
-    const { data, error } = await supabase
+    let officerIdFilter = null;
+    if (centerFilterId !== ALL) {
+      const [{ data: cenRow }, { data: grpRows }] = await Promise.all([
+        supabase.from('centers').select('loan_officer_id').eq('id', centerFilterId).maybeSingle(),
+        supabase.from('groups').select('loan_officer_id').eq('center_id', centerFilterId),
+      ]);
+      const ids = new Set();
+      if (cenRow?.loan_officer_id) ids.add(cenRow.loan_officer_id);
+      (grpRows || []).forEach((g) => {
+        if (g.loan_officer_id) ids.add(g.loan_officer_id);
+      });
+      officerIdFilter = [...ids];
+      if (officerIdFilter.length === 0) {
+        setOfficers([]);
+        setLoading(false);
+        return;
+      }
+    }
+
+    let query = supabase
       .from('users')
       .select('*')
       .eq('role', 'officer')
-      .eq('branch_id', managerBranchId);
+      .eq('branch_id', managerBranchId)
+      .order('full_name', { ascending: true });
+
+    if (officerIdFilter) {
+      query = query.in('id', officerIdFilter);
+    }
+    if (filterActive === 'active') {
+      query = query.eq('is_active', true);
+    } else if (filterActive === 'inactive') {
+      query = query.eq('is_active', false);
+    }
+    if (debouncedSearch) {
+      const s = debouncedSearch.replace(/%/g, '\\%');
+      query = query.or(`full_name.ilike.%${s}%,email.ilike.%${s}%`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       toast({ title: 'Error', description: 'Failed to fetch loan officers.', variant: 'destructive' });
       console.error(error);
+      setOfficers([]);
     } else {
-      setOfficers(data);
+      setOfficers(data || []);
     }
     setLoading(false);
-  }, [user, managerBranchId, profileLoading, toast]);
+  }, [
+    user,
+    managerBranchId,
+    profileLoading,
+    toast,
+    filterActive,
+    centerFilterId,
+    debouncedSearch,
+  ]);
 
   useEffect(() => {
     fetchOfficers();
   }, [fetchOfficers]);
-
-  useEffect(() => {
-    setPage(1);
-  }, [officers.length]);
 
   const pagedOfficers = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE;
@@ -298,6 +395,49 @@ const LoanOfficerManagement = () => {
         <CardContent>
             {loading ? <div className="text-center p-8">Loading officers...</div> :
             <>
+            <div className="mb-4 flex flex-wrap items-end gap-3 rounded-lg border bg-muted/30 p-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Status</Label>
+                <Select value={filterActive} onValueChange={setFilterActive}>
+                  <SelectTrigger className="w-[140px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Center</Label>
+                <SearchableSelect
+                  value={centerFilterId}
+                  onValueChange={setCenterFilterId}
+                  options={centerFilterOptions}
+                  placeholder="All centers"
+                  searchPlaceholder="Search centers…"
+                  emptyText="No center found."
+                  disabled={centers.length === 0}
+                  triggerClassName="w-[220px]"
+                />
+              </div>
+              <div className="min-w-[200px] flex-1 space-y-1.5">
+                <Label htmlFor="officer-search" className="text-xs">
+                  Search name or email
+                </Label>
+                <Input
+                  id="officer-search"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="Type to filter…"
+                  className="max-w-md"
+                />
+              </div>
+              <Button type="button" variant="outline" size="sm" className="mb-0.5" onClick={clearListFilters}>
+                Clear filters
+              </Button>
+            </div>
             <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportOfficersCsv} />
             <Table>
                 <TableHeader>
