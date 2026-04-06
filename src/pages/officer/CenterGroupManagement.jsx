@@ -14,6 +14,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import * as XLSX from 'xlsx';
 
+/** Single spaces, trimmed — used for duplicate checks and saving. */
+function normalizeGroupName(name) {
+    return String(name ?? '').trim().replace(/\s+/g, ' ');
+}
+
 const CenterGroupManagement = () => {
     const { user } = useAuth();
     const { toast } = useToast();
@@ -29,11 +34,21 @@ const CenterGroupManagement = () => {
     const importFileRef = useRef(null);
     const [activeTab, setActiveTab] = useState('centers');
     const [groupMemberCounts, setGroupMemberCounts] = useState({});
+    /** From public.users — JWT user_metadata.branch_id is often missing or stale after recovery. */
+    const [officerBranchId, setOfficerBranchId] = useState(null);
 
     const fetchData = useCallback(async () => {
         if (!user) return;
         setLoading(true);
         try {
+            const { data: profileRow, error: profileError } = await supabase
+                .from('users')
+                .select('branch_id')
+                .eq('id', user.id)
+                .maybeSingle();
+            if (profileError) throw profileError;
+            setOfficerBranchId(profileRow?.branch_id ?? null);
+
             const { data: centersData, error: centersError } = await supabase.from('centers').select('*').eq('loan_officer_id', user.id);
             if (centersError) throw centersError;
             setCenters(centersData || []);
@@ -78,9 +93,20 @@ const CenterGroupManagement = () => {
         if (editingCenter) {
             result = await supabase.from('centers').update({ ...centerFormData }).eq('id', editingCenter.id);
         } else {
-            result = await supabase.from('centers').insert({ ...centerFormData, loan_officer_id: user.id, branch_id: user.user_metadata.branch_id });
+            if (!officerBranchId) {
+                toast({
+                    title: 'Branch not assigned',
+                    description:
+                        'Your officer profile has no branch in the database. Ask an admin to assign you to a branch in User Management, then sign out and sign in again.',
+                    variant: 'destructive',
+                });
+                return;
+            }
+            result = await supabase
+                .from('centers')
+                .insert({ ...centerFormData, loan_officer_id: user.id, branch_id: officerBranchId });
         }
-        
+
         if (result.error) {
             toast({ title: 'Error', description: result.error.message, variant: 'destructive' });
         } else {
@@ -97,16 +123,44 @@ const CenterGroupManagement = () => {
             toast({ title: 'Error', description: 'Please fill all fields for the group.', variant: 'destructive' });
             return;
         }
-        
+
+        const nameNorm = normalizeGroupName(groupFormData.name);
+        if (!nameNorm) {
+            toast({ title: 'Error', description: 'Enter a valid group name.', variant: 'destructive' });
+            return;
+        }
+
+        const nameKey = nameNorm.toLowerCase();
+        const duplicate = groups.some(
+            (g) =>
+                g.center_id === groupFormData.center_id &&
+                (!editingGroup || g.id !== editingGroup.id) &&
+                normalizeGroupName(g.name).toLowerCase() === nameKey,
+        );
+        if (duplicate) {
+            toast({
+                title: 'Duplicate group name',
+                description: 'A group with this name already exists in this center. Use a different name.',
+                variant: 'destructive',
+            });
+            return;
+        }
+
+        const payload = { name: nameNorm, center_id: groupFormData.center_id };
+
         let result;
         if (editingGroup) {
-            result = await supabase.from('groups').update({ ...groupFormData }).eq('id', editingGroup.id);
+            result = await supabase.from('groups').update(payload).eq('id', editingGroup.id);
         } else {
-            result = await supabase.from('groups').insert({ ...groupFormData, loan_officer_id: user.id });
+            result = await supabase.from('groups').insert({ ...payload, loan_officer_id: user.id });
         }
-        
+
         if (result.error) {
-             toast({ title: 'Error', description: result.error.message, variant: 'destructive' });
+            const desc =
+                result.error.code === '23505'
+                    ? 'A group with this name already exists in this center.'
+                    : result.error.message;
+            toast({ title: 'Error', description: desc, variant: 'destructive' });
         } else {
             fetchData();
             setGroupDialogOpen(false);
@@ -155,6 +209,11 @@ const CenterGroupManagement = () => {
 
     return (
         <DashboardLayout title="Centers & Groups">
+            {!officerBranchId && (
+                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+                    Your officer account has no branch assigned in the database. You cannot create centers until an admin assigns a branch in User Management, then you sign out and sign in again.
+                </div>
+            )}
             <Tabs defaultValue="centers" onValueChange={setActiveTab}>
                 <div className="flex justify-between items-center mb-4">
                     <TabsList>
@@ -166,7 +225,17 @@ const CenterGroupManagement = () => {
                         <Button onClick={() => importFileRef.current.click()}><Upload className="mr-2 h-4 w-4" /> Import</Button>
                         <input type="file" ref={importFileRef} className="hidden" accept=".csv, .xlsx" onChange={handleImport} />
                         <Dialog open={centerDialogOpen} onOpenChange={setCenterDialogOpen}>
-                            <DialogTrigger asChild><Button onClick={() => { setEditingCenter(null); setCenterFormData({ name: '', location: '' }); }}><PlusCircle className="mr-2 h-4 w-4" /> Add Center</Button></DialogTrigger>
+                            <DialogTrigger asChild>
+                                <Button
+                                    disabled={!officerBranchId}
+                                    onClick={() => {
+                                        setEditingCenter(null);
+                                        setCenterFormData({ name: '', location: '' });
+                                    }}
+                                >
+                                    <PlusCircle className="mr-2 h-4 w-4" /> Add Center
+                                </Button>
+                            </DialogTrigger>
                              <DialogContent>
                                 <DialogHeader><DialogTitle>{editingCenter ? 'Edit' : 'New'} Center</DialogTitle></DialogHeader>
                                 <div className="space-y-4 py-4">
