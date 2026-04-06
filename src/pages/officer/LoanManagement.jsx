@@ -35,6 +35,9 @@ import { cn } from '@/lib/utils';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 import { checkDisbursementAgainstFieldWallet } from '@/lib/officerFieldWalletDisburse';
 import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
+import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
+import { downloadLoansImportTemplate } from '@/lib/excelImportTemplateDownloads';
+import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
@@ -117,6 +120,9 @@ const LoanManagement = () => {
     const [disburseBorrowerSearch, setDisburseBorrowerSearch] = useState('');
     const [dateRange, setDateRange] = useState({ from: undefined, to: undefined });
     const [page, setPage] = useState(1);
+    const [importReportOpen, setImportReportOpen] = useState(false);
+    const [importReportSummary, setImportReportSummary] = useState('');
+    const [importReportDetails, setImportReportDetails] = useState('');
 
     // Initial form state now uses strings for date inputs (YYYY-MM-DD)
     const [formData, setFormData] = useState({ 
@@ -254,6 +260,22 @@ const LoanManagement = () => {
     const officerListCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
     const officerListGroupOpts = useMemo(() => groups.map((g) => ({ value: g.id, label: g.name })), [groups]);
     const officerListProductOpts = useMemo(() => loanProducts.map((p) => ({ value: p.id, label: p.name })), [loanProducts]);
+
+    const eligibleBorrowersForLoanTemplate = useMemo(
+        () =>
+            borrowers.filter(
+                (b) =>
+                    (b.status === 'eligible' || b.status === 'paid_up') &&
+                    !borrowerHasOutstandingLoan(loans, b.id),
+            ),
+        [borrowers, loans],
+    );
+    const loansImportTemplateBlocked = !loanProducts.length || eligibleBorrowersForLoanTemplate.length === 0;
+    const loansImportTemplateTitle = !loanProducts.length
+        ? 'Add at least one active loan product first.'
+        : eligibleBorrowersForLoanTemplate.length === 0
+          ? 'Need at least one eligible or paid-up borrower with no outstanding loan.'
+          : undefined;
 
     useEffect(() => {
        resetFormData();
@@ -601,34 +623,42 @@ const LoanManagement = () => {
         }
     };
     
-    const handleDownloadTemplate = () => {
-        const templateData = [{ borrower_id: '', loan_product_name: '', principal: '', disbursement_date: '', repayment_start_date: '' }];
-        const loansSheet = XLSX.utils.json_to_sheet(templateData);
-        const instructions = [
-            ['Column Name', 'Description', 'Example'],
-            ['borrower_id', 'The unique ID of the borrower. Must exist in the system.', 'B-123456'],
-            ['loan_product_name', 'The exact name of an active loan product.', 'Personal Loan'],
-            ['principal', 'The loan amount without currency symbols.', '500000'],
-            ['disbursement_date', 'Date the loan is given. Format: YYYY-MM-DD. Must be a working day.', '2025-11-10'],
-            ['repayment_start_date', 'Date repayments begin. Format: YYYY-MM-DD. Must be a working day.', '2025-12-10']
-        ];
-        const instructionsSheet = XLSX.utils.aoa_to_sheet(instructions);
-        const validBorrowers = borrowers
-            .filter(
-                (b) =>
-                    (b.status === 'eligible' || b.status === 'paid_up') &&
-                    !borrowerHasOutstandingLoan(loans, b.id),
-            )
-            .map((b) => ({ 'Borrower ID': b.borrower_id, 'Name': `${b.first_name} ${b.surname}` }));
-        const borrowersSheet = XLSX.utils.json_to_sheet(validBorrowers);
-        const validProducts = loanProducts.map(p => ({ 'Product Name': p.name }));
-        const productsSheet = XLSX.utils.json_to_sheet(validProducts);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, loansSheet, 'Loans Import');
-        XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'Instructions');
-        XLSX.utils.book_append_sheet(workbook, borrowersSheet, 'Valid Borrowers');
-        XLSX.utils.book_append_sheet(workbook, productsSheet, 'Valid Loan Products');
-        XLSX.writeFile(workbook, 'Loans_Import_Template.xlsx');
+    const handleDownloadTemplate = async () => {
+        if (!loanProducts.length) {
+            toast({
+                title: 'No loan products',
+                description: 'Configure at least one loan product before downloading the loans import template.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (eligibleBorrowersForLoanTemplate.length === 0) {
+            toast({
+                title: 'No eligible borrowers',
+                description:
+                    'You need at least one borrower with status Eligible or Paid up and no outstanding loan before downloading this template.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const validBorrowers = eligibleBorrowersForLoanTemplate.map((b) => ({
+            borrower_id: b.borrower_id,
+            name: `${b.first_name} ${b.surname}`,
+        }));
+        try {
+            await downloadLoansImportTemplate({
+                validBorrowers,
+                loanProducts,
+                exampleProductName: loanProducts[0]?.name ?? 'Your Product Name',
+            });
+        } catch (err) {
+            console.error(err);
+            toast({
+                title: 'Template error',
+                description: err?.message ?? 'Could not build template.',
+                variant: 'destructive',
+            });
+        }
     };
     
     const isWorkingDay = (dateStr) => isWorkingDayEAT(dateStr, holidays);
@@ -650,11 +680,12 @@ const LoanManagement = () => {
                 }
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
+                const sheetName = getImportDataSheet(workbook, ['Loans Import', 'loans import', 'Loans']);
                 const worksheet = workbook.Sheets[sheetName];
                 const importedLoans = XLSX.utils.sheet_to_json(worksheet, { raw: true });
                 const borrowersMap = new Map(borrowers.map(b => [b.borrower_id, b]));
                 const productsMap = new Map(loanProducts.map(p => [p.name.toLowerCase(), p]));
+                const processedBorrowerIds = new Set();
                 const { data: importFeeRow } = await supabase
                     .from('system_config')
                     .select('value')
@@ -666,6 +697,18 @@ const LoanManagement = () => {
                 const newLoans = [];
                 const skippedLoans = [];
                 for (const row of importedLoans) {
+                    if (!row.borrower_id && !row.loan_product_name && !row.principal) continue;
+                    if (row.borrower_id) {
+                        const bid = String(row.borrower_id).trim();
+                        if (processedBorrowerIds.has(bid)) {
+                            skippedLoans.push({
+                                ...row,
+                                reason: 'Duplicate borrower_id in file (only one loan per borrower per import)',
+                            });
+                            continue;
+                        }
+                        processedBorrowerIds.add(bid);
+                    }
                     const borrower = borrowersMap.get(row.borrower_id);
                     const product = productsMap.get(row.loan_product_name?.toLowerCase());
                     const disbursementDate = excelSerialDateToYYYYMMDD(row.disbursement_date);
@@ -739,11 +782,28 @@ const LoanManagement = () => {
                     const borrowerIdsToUpdate = newLoans.map(l => l.borrower_id);
                     await supabase.from('borrowers').update({ status: 'active_loan' }).in('id', borrowerIdsToUpdate);
                 }
-                toast({ title: 'Import Complete', description: `${newLoans.length} loans imported successfully. ${skippedLoans.length} loans skipped.` });
-                if (skippedLoans.length > 0) {
-                     console.log("Skipped loans:", skippedLoans);
-                     toast({ title: 'Some loans were skipped', description: 'Check console for details on skipped loans.', variant: 'default'});
-                }
+                const skipLines = skippedLoans.map(
+                    (s) => `${s.borrower_id ?? '?'}: ${s.reason}`,
+                );
+                const { line } = formatImportReportSummary({
+                    imported: newLoans.length,
+                    skippedDuplicate: 0,
+                    skippedInvalid: skippedLoans.length,
+                    failed: 0,
+                });
+                setImportReportSummary(
+                    `${line} (Imported loans: ${newLoans.length}. Skipped rows: ${skippedLoans.length}.)`,
+                );
+                setImportReportDetails(
+                    skipLines.length
+                        ? skipLines.slice(0, 150).join('\n') + (skipLines.length > 150 ? '\n…' : '')
+                        : '',
+                );
+                setImportReportOpen(true);
+                toast({
+                    title: 'Import complete',
+                    description: `${newLoans.length} loan(s) imported. ${skippedLoans.length} row(s) skipped.`,
+                });
                 fetchData();
             } catch (error) {
                 toast({ title: 'Import Failed', description: error.message, variant: 'destructive' });
@@ -899,7 +959,13 @@ const LoanManagement = () => {
                         <p className="text-sm text-neutral-500">Manage, disburse, and track all loan activities.</p>
                     </div>
                     <div className="flex flex-wrap gap-3">
-                        <Button variant="outline" onClick={handleDownloadTemplate} className="border-brand-gold/35 bg-white/80 hover:bg-brand-gold/10 dark:border-brand-gold/25 dark:bg-neutral-900/50 dark:hover:bg-brand-gold/10">
+                        <Button
+                            variant="outline"
+                            onClick={handleDownloadTemplate}
+                            disabled={loansImportTemplateBlocked}
+                            title={loansImportTemplateTitle}
+                            className="border-brand-gold/35 bg-white/80 hover:bg-brand-gold/10 dark:border-brand-gold/25 dark:bg-neutral-900/50 dark:hover:bg-brand-gold/10"
+                        >
                              <Download className="mr-2 h-4 w-4 text-brand-gold-deep" /> Template
                         </Button>
                         <Button variant="outline" onClick={() => importFileRef.current.click()} disabled={isImporting} className="border-brand-gold/35 bg-white/80 hover:bg-brand-gold/10 dark:border-brand-gold/25 dark:bg-neutral-900/50 dark:hover:bg-brand-gold/10">
@@ -1534,6 +1600,12 @@ const LoanManagement = () => {
                     </div>
                 </DialogContent>
             </Dialog>
+            <ImportResultDialog
+                open={importReportOpen}
+                onOpenChange={setImportReportOpen}
+                summary={importReportSummary}
+                details={importReportDetails}
+            />
         </DashboardLayout>
     );
 };

@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
 import { Checkbox } from '@/components/ui/checkbox';
 import { exportObjectsToCsv } from '@/lib/tableExport';
+import { downloadBorrowersImportTemplate, downloadPreparedLoansTemplate } from '@/lib/excelImportTemplateDownloads';
 import { cn } from '@/lib/utils';
 import {
     NIDA_DIGIT_LENGTH,
@@ -38,6 +39,8 @@ import {
     isDriversLicenseIdentificationType,
 } from '@/lib/borrowerIdValidation';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
+import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 
 const OFFICER_BORROWER_STATUS_FILTER_OPTIONS = [
 	{ value: 'eligible', label: 'Eligible' },
@@ -124,6 +127,10 @@ const BorrowerManagement = () => {
     const [statusFilter, setStatusFilter] = useState('all');
     const [page, setPage] = useState(1);
     const [requestingApprovalId, setRequestingApprovalId] = useState(null);
+    const [officerBranchId, setOfficerBranchId] = useState(null);
+    const [importReportOpen, setImportReportOpen] = useState(false);
+    const [importReportSummary, setImportReportSummary] = useState('');
+    const [importReportDetails, setImportReportDetails] = useState('');
 
     const defaultFormState = {
         first_name: '',
@@ -163,6 +170,10 @@ const BorrowerManagement = () => {
         if (!user) return;
         setLoading(true);
 
+        const { data: profileRow } = await supabase.from('users').select('branch_id').eq('id', user.id).maybeSingle();
+        const branchId = profileRow?.branch_id ?? null;
+        setOfficerBranchId(branchId);
+
         const { data: borrowersData, error: borrowersError } = await supabase
             .from('borrowers')
             .select('*, groups(id, center_id)')
@@ -174,8 +185,8 @@ const BorrowerManagement = () => {
             .eq('loan_officer_id', user.id);
 
         let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
-        if (user.user_metadata?.branch_id) {
-            centersQuery = centersQuery.eq('branch_id', user.user_metadata.branch_id);
+        if (branchId) {
+            centersQuery = centersQuery.eq('branch_id', branchId);
         }
         const { data: centersData, error: centersError } = await centersQuery;
 
@@ -321,9 +332,17 @@ const BorrowerManagement = () => {
         toast({ title: 'Exported', description: `${rows.length} borrower(s) to CSV.` });
     };
 
-    const handleGenerateLoanTemplate = () => {
+    const handleGenerateLoanTemplate = async () => {
         if (selectedBorrowers.size === 0) {
             toast({ title: 'No Borrowers Selected', description: 'Please select at least one borrower to prepare loans.', variant: 'warning' });
+            return;
+        }
+        if (!loanProducts.length) {
+            toast({
+                title: 'No loan products',
+                description: 'Add at least one active loan product before downloading a prepared-loan template.',
+                variant: 'destructive',
+            });
             return;
         }
 
@@ -337,31 +356,19 @@ const BorrowerManagement = () => {
             disbursement_date: '',
             repayment_start_date: '',
         }));
-        
-        const loansSheet = XLSX.utils.json_to_sheet(templateData);
-        
-        const instructions = [
-            ['Column Name', 'Description', 'Example'],
-            ['borrower_id', 'DO NOT CHANGE. This is the unique ID of the borrower.', 'BRW-12345'],
-            ['borrower_name', 'DO NOT CHANGE. Name of the borrower for reference.', 'John Doe'],
-            ['loan_product_name', 'The exact name of an active loan product.', 'Personal Loan'],
-            ['principal', 'The loan amount without currency symbols.', '500000'],
-            ['disbursement_date', 'Date the loan is given. Format: YYYY-MM-DD.', '2025-11-09'],
-            ['repayment_start_date', 'Date repayments begin. Format: YYYY-MM-DD.', '2025-12-09']
-        ];
-        const instructionsSheet = XLSX.utils.aoa_to_sheet(instructions);
-        
-        const validProducts = loanProducts.map(p => ({ 'Product Name': p.name }));
-        const productsSheet = XLSX.utils.json_to_sheet(validProducts);
-        
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, loansSheet, 'Prepared Loans');
-        XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'Instructions');
-        XLSX.utils.book_append_sheet(workbook, productsSheet, 'Valid Loan Products');
-        
-        XLSX.writeFile(workbook, 'Prepared_Loans_Template.xlsx');
-        toast({ title: 'Template Generated', description: `Template for ${selectedBorrowers.size} borrower(s) has been downloaded.` });
-        setSelectedBorrowers(new Set());
+
+        try {
+            await downloadPreparedLoansTemplate({ rows: templateData, loanProducts });
+            toast({ title: 'Template Generated', description: `Template for ${selectedBorrowers.size} borrower(s) has been downloaded.` });
+            setSelectedBorrowers(new Set());
+        } catch (err) {
+            console.error(err);
+            toast({
+                title: 'Template error',
+                description: err?.message ?? 'Could not build template.',
+                variant: 'destructive',
+            });
+        }
     };
 
     const stats = useMemo(() => {
@@ -373,6 +380,13 @@ const BorrowerManagement = () => {
             defaulted: borrowers.filter(b => b.status === 'defaulted').length,
         };
     }, [borrowers]);
+
+    const borrowerTemplateDownloadBlocked = !officerBranchId || centers.length === 0 || groups.length === 0;
+    const borrowerTemplateDownloadTitle = !officerBranchId
+        ? 'Assign a branch to your profile first (User Management).'
+        : centers.length === 0 || groups.length === 0
+          ? 'Create at least one centre and one group under Centres & Groups first.'
+          : undefined;
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -559,27 +573,35 @@ const BorrowerManagement = () => {
         setDialogOpen(true);
     };
 
-    const handleDownloadTemplate = () => {
-        const templateData = [{
-            first_name: 'John',
-            surname: 'Doe',
-            gender: 'male',
-            phone_number: '0712345678',
-            address: '123 Main St, Dar es Salaam',
-            business_name: 'Johns Store',
-            business_location: 'Kariakoo',
-            identification_type: 'national_id',
-            identification_number: '12345678901234567890',
-            borrower_type: 'group',
-            center_name: 'My Centre Name',
-            group_name: 'Upendo Group',
-            guarantor_name: 'Jane Doe',
-            guarantor_phone: '0755123456',
-        }];
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Borrowers");
-        XLSX.writeFile(workbook, 'Borrowers_Import_Template.xlsx');
+    const handleDownloadTemplate = async () => {
+        if (!officerBranchId) {
+            toast({
+                title: 'Branch not assigned',
+                description:
+                    'Your officer profile has no branch. Ask an admin to assign you in User Management, then sign out and sign in again.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (centers.length === 0 || groups.length === 0) {
+            toast({
+                title: 'Add centres and groups first',
+                description:
+                    'Create at least one centre and one group under Centres & Groups before downloading the borrower template (reference lists and group borrowers need them).',
+                variant: 'destructive',
+            });
+            return;
+        }
+        try {
+            await downloadBorrowersImportTemplate({ centers, groups });
+        } catch (err) {
+            console.error(err);
+            toast({
+                title: 'Template error',
+                description: err?.message ?? 'Could not build template.',
+                variant: 'destructive',
+            });
+        }
     };
 
     const handleImport = (event) => {
@@ -589,176 +611,163 @@ const BorrowerManagement = () => {
         setIsImporting(true);
         const reader = new FileReader();
         reader.onload = async (e) => {
+            const detailLines = [];
+            let imported = 0;
+            let skippedDuplicate = 0;
+            let skippedInvalid = 0;
             try {
                 const data = new Uint8Array(e.target.result);
                 const workbook = XLSX.read(data, { type: 'array' });
-                const sheetName = workbook.SheetNames[0];
+                const sheetName = getImportDataSheet(workbook, ['Borrowers', 'borrowers']);
                 const worksheet = workbook.Sheets[sheetName];
                 const json = XLSX.utils.sheet_to_json(worksheet);
-
                 const centersMap = new Map(centers.map((c) => [c.name.toLowerCase(), c.id]));
+                const branchForInsert = officerBranchId ?? user.user_metadata?.branch_id ?? null;
 
                 const seenInFile = new Set();
                 for (let idx = 0; idx < json.length; idx++) {
                     const row = json[idx];
+                    const rowNum = idx + 2;
+                    if (!String(row.first_name ?? '').trim() && !String(row.phone_number ?? '').trim()) {
+                        continue;
+                    }
+
                     const pk = normalizePhoneDigitsMax10(String(row.phone_number ?? ''));
                     const idRaw = idKeyForImportDuplicateCheck(row);
                     const ik = normalizeIdKey(idRaw);
                     if (pk && seenInFile.has(`p:${pk}`)) {
-                        throw new Error(`File has duplicate phone number: ${row.phone_number}`);
+                        skippedInvalid += 1;
+                        detailLines.push(`Row ${rowNum}: duplicate phone in file (${row.phone_number})`);
+                        continue;
                     }
                     if (ik && seenInFile.has(`i:${ik}`)) {
-                        throw new Error(`File has duplicate identification number: ${row.identification_number}`);
+                        skippedInvalid += 1;
+                        detailLines.push(`Row ${rowNum}: duplicate ID in file`);
+                        continue;
                     }
                     if (pk) seenInFile.add(`p:${pk}`);
                     if (ik) seenInFile.add(`i:${ik}`);
-                }
 
-                const newBorrowers = json.map((row, idx) => {
-                    const borrower_type = row.borrower_type?.toLowerCase() || 'group';
-                    let group_id = null;
-                    let center_id = null;
-                    if (borrower_type === 'group') {
-                        const centerName = String(row.center_name ?? '')
-                            .trim()
-                            .toLowerCase();
-                        const groupName = String(row.group_name ?? '')
-                            .trim()
-                            .toLowerCase();
-                        if (!centerName || !centersMap.has(centerName)) {
-                            throw new Error(
-                                `Row ${idx + 1}: centre '${row.center_name || ''}' not found or missing. Use the exact centre name from Centers & Groups.`
+                    let payload;
+                    try {
+                        const borrower_type = String(row.borrower_type ?? 'group').toLowerCase() || 'group';
+                        let group_id = null;
+                        let center_id = null;
+                        if (borrower_type === 'group') {
+                            const centerName = String(row.center_name ?? '').trim().toLowerCase();
+                            const groupName = String(row.group_name ?? '').trim().toLowerCase();
+                            if (!centerName || !centersMap.has(centerName)) {
+                                throw new Error(
+                                    `centre '${row.center_name || ''}' not found — use Reference_Centres names exactly`,
+                                );
+                            }
+                            center_id = centersMap.get(centerName);
+                            const match = groups.find(
+                                (g) => g.center_id === center_id && g.name.toLowerCase() === groupName,
                             );
+                            if (!groupName || !match) {
+                                throw new Error(`group '${row.group_name || ''}' not found in that centre`);
+                            }
+                            group_id = match.id;
                         }
-                        center_id = centersMap.get(centerName);
-                        const match = groups.find(
-                            (g) => g.center_id === center_id && g.name.toLowerCase() === groupName
-                        );
-                        if (!groupName || !match) {
-                            throw new Error(
-                                `Row ${idx + 1}: group '${row.group_name || ''}' not found in that centre for ${row.first_name}.`
-                            );
-                        }
-                        group_id = match.id;
-                    }
 
-                    const phoneImp = validatePhoneNumberTenDigits(String(row.phone_number ?? ''));
-                    if (!phoneImp.ok) {
-                        throw new Error(`Row ${idx + 1}: ${phoneImp.error}`);
-                    }
-                    const guarantorPh = validatePhoneNumberTenDigits(String(row.guarantor_phone ?? ''));
-                    if (!guarantorPh.ok) {
-                        throw new Error(`Row ${idx + 1}: ${guarantorPh.error}`);
-                    }
-                    if (!String(row.address ?? '').trim()) {
-                        throw new Error(`Row ${idx + 1}: Address is required.`);
-                    }
-                    if (!String(row.business_name ?? '').trim()) {
-                        throw new Error(`Row ${idx + 1}: Business name is required.`);
-                    }
-                    if (!String(row.business_location ?? '').trim()) {
-                        throw new Error(`Row ${idx + 1}: Business location is required.`);
-                    }
-                    if (!normalizePersonNameLettersOnly(String(row.guarantor_name ?? '')).trim()) {
-                        throw new Error(`Row ${idx + 1}: Guarantor name is required.`);
-                    }
-
-                    let idNum = String(row.identification_number);
-                    if (isNationalIdIdentificationType(row.identification_type)) {
-                        const nida = validateNidaIdentificationNumber(idNum);
-                        if (!nida.ok) {
-                            throw new Error(`Row ${idx + 1} (${row.first_name ?? '?'} ${row.surname ?? ''}): ${nida.error}`);
+                        const phoneImp = validatePhoneNumberTenDigits(String(row.phone_number ?? ''));
+                        if (!phoneImp.ok) throw new Error(phoneImp.error);
+                        const guarantorPh = validatePhoneNumberTenDigits(String(row.guarantor_phone ?? ''));
+                        if (!guarantorPh.ok) throw new Error(guarantorPh.error);
+                        if (!String(row.address ?? '').trim()) throw new Error('address required');
+                        if (!String(row.business_name ?? '').trim()) throw new Error('business_name required');
+                        if (!String(row.business_location ?? '').trim()) throw new Error('business_location required');
+                        if (!normalizePersonNameLettersOnly(String(row.guarantor_name ?? '')).trim()) {
+                            throw new Error('guarantor_name required');
                         }
-                        idNum = nida.value;
-                    } else if (isVotersIdIdentificationType(row.identification_type)) {
-                        const vid = validateVotersIdentificationNumber(idNum);
-                        if (!vid.ok) {
-                            throw new Error(`Row ${idx + 1} (${row.first_name ?? '?'} ${row.surname ?? ''}): ${vid.error}`);
-                        }
-                        idNum = vid.value;
-                    } else if (isDriversLicenseIdentificationType(row.identification_type)) {
-                        const dl = validateDriversLicenseIdentificationNumber(idNum);
-                        if (!dl.ok) {
-                            throw new Error(`Row ${idx + 1} (${row.first_name ?? '?'} ${row.surname ?? ''}): ${dl.error}`);
-                        }
-                        idNum = dl.value;
-                    } else if (String(row.identification_type ?? '').toLowerCase() === 'passport') {
-                        idNum = String(idNum).trim();
-                        if (!idNum) {
-                            throw new Error(`Row ${idx + 1}: Passport number is required.`);
-                        }
-                    }
 
-                    const gName = normalizePersonNameLettersOnly(String(row.guarantor_name ?? '')).trim();
-                    const gPhone = guarantorPh.value;
+                        let idNum = String(row.identification_number ?? '');
+                        if (isNationalIdIdentificationType(row.identification_type)) {
+                            const nida = validateNidaIdentificationNumber(idNum);
+                            if (!nida.ok) throw new Error(nida.error);
+                            idNum = nida.value;
+                        } else if (isVotersIdIdentificationType(row.identification_type)) {
+                            const vid = validateVotersIdentificationNumber(idNum);
+                            if (!vid.ok) throw new Error(vid.error);
+                            idNum = vid.value;
+                        } else if (isDriversLicenseIdentificationType(row.identification_type)) {
+                            const dl = validateDriversLicenseIdentificationNumber(idNum);
+                            if (!dl.ok) throw new Error(dl.error);
+                            idNum = dl.value;
+                        } else if (String(row.identification_type ?? '').toLowerCase() === 'passport') {
+                            idNum = String(idNum).trim();
+                            if (!idNum) throw new Error('passport number required');
+                        }
 
-                    return {
-                        first_name: normalizePersonNameLettersOnly(String(row.first_name ?? '')).trim(),
-                        surname: normalizePersonNameLettersOnly(String(row.surname ?? '')).trim(),
-                        gender: row.gender,
-                        phone_number: phoneImp.value,
-                        address: String(row.address ?? '').trim(),
-                        business_name: String(row.business_name ?? '').trim(),
-                        business_location: String(row.business_location ?? '').trim(),
-                        identification_type: row.identification_type,
-                        identification_number: idNum,
-                        borrower_type: borrower_type,
-                        group_id: group_id,
-                        center_id: center_id,
-                        guarantor_name: gName,
-                        guarantor_phone: gPhone,
-                        loan_officer_id: user.id,
-                        branch_id: user.user_metadata.branch_id,
-                        status: 'eligible',
-                        borrower_id: `B-${Date.now().toString().slice(-6)}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
-                    };
-                });
-                
-                if (newBorrowers.length === 0) {
-                    toast({ title: 'Warning', description: 'No borrowers found in the file.', variant: 'default' });
-                    return;
-                }
-
-                let imported = 0;
-                const skipped = [];
-                for (const row of newBorrowers) {
-                    const dup = await fetchDuplicateBorrower(row.phone_number, row.identification_number, null);
-                    if (dup) {
-                        skipped.push(`${row.first_name} ${row.surname} (duplicate: ${dup.borrower_id})`);
+                        const gName = normalizePersonNameLettersOnly(String(row.guarantor_name ?? '')).trim();
+                        payload = {
+                            first_name: normalizePersonNameLettersOnly(String(row.first_name ?? '')).trim(),
+                            surname: normalizePersonNameLettersOnly(String(row.surname ?? '')).trim(),
+                            gender: row.gender,
+                            phone_number: phoneImp.value,
+                            address: String(row.address ?? '').trim(),
+                            business_name: String(row.business_name ?? '').trim(),
+                            business_location: String(row.business_location ?? '').trim(),
+                            identification_type: row.identification_type,
+                            identification_number: idNum,
+                            borrower_type,
+                            group_id,
+                            center_id,
+                            guarantor_name: gName,
+                            guarantor_phone: guarantorPh.value,
+                            loan_officer_id: user.id,
+                            branch_id: branchForInsert,
+                            status: 'eligible',
+                            borrower_id: `B-${Date.now().toString().slice(-6)}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
+                        };
+                    } catch (err) {
+                        skippedInvalid += 1;
+                        detailLines.push(`Row ${rowNum}: ${err.message}`);
                         continue;
                     }
-                    const { error: insErr } = await supabase.from('borrowers').insert([row]);
+
+                    const dup = await fetchDuplicateBorrower(payload.phone_number, payload.identification_number, null);
+                    if (dup) {
+                        skippedDuplicate += 1;
+                        detailLines.push(`Row ${rowNum}: already exists (${dup.borrower_id})`);
+                        continue;
+                    }
+
+                    const { error: insErr } = await supabase.from('borrowers').insert([payload]);
                     if (insErr) {
                         if (
                             insErr.message?.includes('idx_borrowers_phone_norm_unique') ||
                             insErr.message?.includes('idx_borrowers_ident_norm_unique')
                         ) {
-                            skipped.push(`${row.first_name} ${row.surname} (duplicate phone/ID)`);
+                            skippedDuplicate += 1;
+                            detailLines.push(`Row ${rowNum}: duplicate phone/ID in database`);
                         } else {
-                            throw insErr;
+                            skippedInvalid += 1;
+                            detailLines.push(`Row ${rowNum}: ${insErr.message}`);
                         }
                     } else {
                         imported += 1;
                     }
                 }
 
-                if (imported > 0) {
-                    toast({
-                        title: 'Import completed',
-                        description: `${imported} imported.${skipped.length ? ` ${skipped.length} skipped: ${skipped.slice(0, 5).join('; ')}${skipped.length > 5 ? '…' : ''}` : ''}`,
-                    });
-                } else {
-                    toast({
-                        title: 'Nothing imported',
-                        description:
-                            skipped.length > 0
-                                ? `All rows were duplicates: ${skipped.slice(0, 3).join('; ')}`
-                                : 'No records in file.',
-                        variant: 'destructive',
-                    });
-                }
+                const { line } = formatImportReportSummary({
+                    imported,
+                    skippedDuplicate,
+                    skippedInvalid,
+                    failed: 0,
+                });
+                setImportReportSummary(line);
+                setImportReportDetails(
+                    detailLines.length ? detailLines.slice(0, 120).join('\n') + (detailLines.length > 120 ? '\n…' : '') : '',
+                );
+                setImportReportOpen(true);
+                toast({
+                    title: imported > 0 ? 'Import finished' : 'Import finished',
+                    description: line,
+                    variant: imported === 0 && skippedDuplicate + skippedInvalid > 0 ? 'destructive' : 'default',
+                });
                 fetchData();
-
             } catch (err) {
                 toast({ title: 'Import Error', description: err.message, variant: 'destructive' });
             } finally {
@@ -802,7 +811,14 @@ const BorrowerManagement = () => {
         <DashboardLayout title="Borrower Management">
             <div className="space-y-6">
                 <div className="flex flex-wrap justify-end gap-2">
-                        <Button variant="outline" onClick={handleDownloadTemplate}><Download className="mr-2 h-4 w-4" /> Template</Button>
+                        <Button
+                            variant="outline"
+                            onClick={handleDownloadTemplate}
+                            disabled={borrowerTemplateDownloadBlocked}
+                            title={borrowerTemplateDownloadTitle}
+                        >
+                            <Download className="mr-2 h-4 w-4" /> Template
+                        </Button>
                         <Button onClick={() => importFileRef.current.click()} disabled={isImporting}>
                             {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />} Import
                         </Button>
@@ -1033,7 +1049,15 @@ const BorrowerManagement = () => {
                                         <Download className="mr-2 h-4 w-4"/>
                                         Export CSV
                                     </Button>
-                                    <Button onClick={handleGenerateLoanTemplate}>
+                                    <Button
+                                        onClick={handleGenerateLoanTemplate}
+                                        disabled={!loanProducts.length}
+                                        title={
+                                            !loanProducts.length
+                                                ? 'Add at least one active loan product before preparing loan rows.'
+                                                : undefined
+                                        }
+                                    >
                                         <FileSpreadsheet className="mr-2 h-4 w-4"/>
                                         Prepare Loans
                                     </Button>
@@ -1126,6 +1150,12 @@ const BorrowerManagement = () => {
                     </CardContent>
                 </Card>
             </div>
+            <ImportResultDialog
+                open={importReportOpen}
+                onOpenChange={setImportReportOpen}
+                summary={importReportSummary}
+                details={importReportDetails}
+            />
         </DashboardLayout>
     );
 };

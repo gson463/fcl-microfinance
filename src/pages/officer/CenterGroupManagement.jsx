@@ -8,11 +8,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { useToast } from '@/components/ui/use-toast';
-import { PlusCircle, Edit, Trash2, Download, Upload, Users } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Download, Upload, Users, Loader2 } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import * as XLSX from 'xlsx';
+import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
+import { downloadCentersImportTemplate, downloadGroupsImportTemplate } from '@/lib/excelImportTemplateDownloads';
+import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 
 /** Single spaces, trimmed — used for duplicate checks and saving. */
 function normalizeGroupName(name) {
@@ -32,6 +35,10 @@ const CenterGroupManagement = () => {
     const [groupFormData, setGroupFormData] = useState({ name: '', center_id: '' });
     const [loading, setLoading] = useState(true);
     const importFileRef = useRef(null);
+    const [isImporting, setIsImporting] = useState(false);
+    const [importReportOpen, setImportReportOpen] = useState(false);
+    const [importReportSummary, setImportReportSummary] = useState('');
+    const [importReportDetails, setImportReportDetails] = useState('');
     const [activeTab, setActiveTab] = useState('centers');
     const [groupMemberCounts, setGroupMemberCounts] = useState({});
     /** From public.users — JWT user_metadata.branch_id is often missing or stale after recovery. */
@@ -182,28 +189,184 @@ const CenterGroupManagement = () => {
         }
     };
 
-    const handleDownloadTemplate = () => {
-        let templateData, fileName;
+    const handleDownloadTemplate = async () => {
         if (activeTab === 'centers') {
-            templateData = [{ name: 'Kijitonyama Center', location: 'Dar es Salaam' }];
-            fileName = 'Centers_Import_Template.xlsx';
+            if (!officerBranchId) {
+                toast({
+                    title: 'Branch not assigned',
+                    description:
+                        'Assign a branch to your officer profile before downloading the centres template (required for import).',
+                    variant: 'destructive',
+                });
+                return;
+            }
         } else {
-            const centerExample = centers.length > 0 ? centers[0].name : 'Kijitonyama Center';
-            templateData = [{ name: 'Upendo Group', centerName: centerExample }];
-            fileName = 'Groups_Import_Template.xlsx';
+            if (centers.length === 0) {
+                toast({
+                    title: 'No centres yet',
+                    description: 'Create at least one centre before downloading the groups import template.',
+                    variant: 'destructive',
+                });
+                return;
+            }
         }
-        const worksheet = XLSX.utils.json_to_sheet(templateData);
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, worksheet, "Template");
-        XLSX.writeFile(workbook, fileName);
+        try {
+            if (activeTab === 'centers') {
+                await downloadCentersImportTemplate();
+            } else {
+                await downloadGroupsImportTemplate({ centers });
+            }
+        } catch (err) {
+            console.error(err);
+            toast({
+                title: 'Template error',
+                description: err?.message ?? 'Could not build template.',
+                variant: 'destructive',
+            });
+        }
     };
 
     const handleImport = (event) => {
-        toast({ title: 'In Progress', description: 'Import feature is being updated for database integration.' });
-        event.target.value = null;
+        const file = event.target.files[0];
+        if (!file) return;
+        if (!officerBranchId) {
+            toast({
+                title: 'Branch not assigned',
+                description: 'Assign a branch to your officer profile before importing.',
+                variant: 'destructive',
+            });
+            event.target.value = null;
+            return;
+        }
+        setIsImporting(true);
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const detailLines = [];
+            let imported = 0;
+            let skippedDuplicate = 0;
+            let skippedInvalid = 0;
+            try {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = getImportDataSheet(
+                    workbook,
+                    activeTab === 'centers' ? ['Centers', 'centers'] : ['Groups', 'groups'],
+                );
+                const worksheet = workbook.Sheets[sheetName];
+                const rows = XLSX.utils.sheet_to_json(worksheet);
+                if (activeTab === 'centers') {
+                    const seen = new Set(centers.map((c) => c.name.trim().toLowerCase()));
+                    const batch = new Set();
+                    for (let i = 0; i < rows.length; i++) {
+                        const row = rows[i];
+                        const name = String(row.name ?? '').trim();
+                        const location = String(row.location ?? '').trim();
+                        if (!name && !location) continue;
+                        if (!name || !location) {
+                            skippedInvalid += 1;
+                            detailLines.push(`Row ${i + 2}: missing name or location`);
+                            continue;
+                        }
+                        const key = name.toLowerCase();
+                        if (seen.has(key) || batch.has(key)) {
+                            skippedDuplicate += 1;
+                            detailLines.push(`Row ${i + 2}: duplicate centre "${name}"`);
+                            continue;
+                        }
+                        const { error } = await supabase.from('centers').insert({
+                            name,
+                            location,
+                            loan_officer_id: user.id,
+                            branch_id: officerBranchId,
+                        });
+                        if (error) {
+                            skippedInvalid += 1;
+                            detailLines.push(`Row ${i + 2}: ${error.message}`);
+                        } else {
+                            imported += 1;
+                            batch.add(key);
+                            seen.add(key);
+                        }
+                    }
+                } else {
+                    const centersByName = new Map(centers.map((c) => [c.name.trim().toLowerCase(), c]));
+                    const seenPair = new Set(
+                        groups.map((g) => `${g.center_id}|${normalizeGroupName(g.name).toLowerCase()}`),
+                    );
+                    const batchPair = new Set();
+                    for (let i = 0; i < rows.length; i++) {
+                        const row = rows[i];
+                        const gName = normalizeGroupName(row.group_name ?? '');
+                        const cNameRaw = String(row.center_name ?? row.centerName ?? '').trim();
+                        if (!gName && !cNameRaw) continue;
+                        if (!gName || !cNameRaw) {
+                            skippedInvalid += 1;
+                            detailLines.push(`Row ${i + 2}: missing group_name or center_name`);
+                            continue;
+                        }
+                        const center = centersByName.get(cNameRaw.toLowerCase());
+                        if (!center) {
+                            skippedInvalid += 1;
+                            detailLines.push(`Row ${i + 2}: centre "${cNameRaw}" not found — use Reference_Centres`);
+                            continue;
+                        }
+                        const pairKey = `${center.id}|${gName.toLowerCase()}`;
+                        if (seenPair.has(pairKey) || batchPair.has(pairKey)) {
+                            skippedDuplicate += 1;
+                            detailLines.push(`Row ${i + 2}: duplicate group "${gName}" in that centre`);
+                            continue;
+                        }
+                        const { error } = await supabase.from('groups').insert({
+                            name: gName,
+                            center_id: center.id,
+                            loan_officer_id: user.id,
+                        });
+                        if (error) {
+                            skippedInvalid += 1;
+                            detailLines.push(`Row ${i + 2}: ${error.message}`);
+                        } else {
+                            imported += 1;
+                            batchPair.add(pairKey);
+                            seenPair.add(pairKey);
+                        }
+                    }
+                }
+                await fetchData();
+                const { line } = formatImportReportSummary({
+                    imported,
+                    skippedDuplicate,
+                    skippedInvalid,
+                    failed: 0,
+                    sampleFailures: [],
+                });
+                setImportReportSummary(line);
+                setImportReportDetails(
+                    detailLines.length ? detailLines.slice(0, 80).join('\n') + (detailLines.length > 80 ? '\n…' : '') : '',
+                );
+                setImportReportOpen(true);
+                toast({ title: 'Import finished', description: line });
+            } catch (err) {
+                toast({ title: 'Import failed', description: err.message, variant: 'destructive' });
+            } finally {
+                setIsImporting(false);
+                event.target.value = null;
+            }
+        };
+        reader.readAsArrayBuffer(file);
     };
     
     const getCenterName = (centerId) => centers.find(c => c.id === centerId)?.name || 'N/A';
+
+    const centerGroupTemplateBlocked =
+        activeTab === 'centers' ? !officerBranchId : centers.length === 0;
+    const centerGroupTemplateTitle =
+        activeTab === 'centers'
+            ? !officerBranchId
+                ? 'Assign a branch before downloading the centres template.'
+                : undefined
+            : centers.length === 0
+              ? 'Create at least one centre before downloading the groups template.'
+              : undefined;
     
     if (loading) return <DashboardLayout title="Centers & Groups"><div className="flex items-center justify-center h-full">Loading...</div></DashboardLayout>;
 
@@ -221,8 +384,18 @@ const CenterGroupManagement = () => {
                         <TabsTrigger value="groups">Groups</TabsTrigger>
                     </TabsList>
                     <div className="flex gap-2">
-                        <Button variant="outline" onClick={handleDownloadTemplate}><Download className="mr-2 h-4 w-4" /> Template</Button>
-                        <Button onClick={() => importFileRef.current.click()}><Upload className="mr-2 h-4 w-4" /> Import</Button>
+                        <Button
+                            variant="outline"
+                            onClick={handleDownloadTemplate}
+                            disabled={centerGroupTemplateBlocked}
+                            title={centerGroupTemplateTitle}
+                        >
+                            <Download className="mr-2 h-4 w-4" /> Template
+                        </Button>
+                        <Button disabled={isImporting} onClick={() => importFileRef.current.click()}>
+                            {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+                            Import
+                        </Button>
                         <input type="file" ref={importFileRef} className="hidden" accept=".csv, .xlsx" onChange={handleImport} />
                         <Dialog open={centerDialogOpen} onOpenChange={setCenterDialogOpen}>
                             <DialogTrigger asChild>
@@ -283,6 +456,12 @@ const CenterGroupManagement = () => {
                     </Card>
                 </TabsContent>
             </Tabs>
+            <ImportResultDialog
+                open={importReportOpen}
+                onOpenChange={setImportReportOpen}
+                summary={importReportSummary}
+                details={importReportDetails}
+            />
         </DashboardLayout>
     );
 };

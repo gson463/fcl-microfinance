@@ -318,7 +318,7 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
           </div>
         </motion.aside>
 
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {/* Mobile header */}
           <header className={cn('relative z-30 flex items-center justify-between gap-3 border-b p-4 shadow-md lg:hidden', sb.mobileHeader)}>
             <div className={cn('absolute inset-x-0 top-0 h-px', sb.mobileTopHairline)} aria-hidden />
@@ -413,8 +413,8 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
             </div>
           </header>
 
-          <main className="relative flex-1 overflow-x-hidden overflow-y-auto bg-[#f4f2ed]/90 p-4 dark:bg-neutral-950/95 sm:p-6 lg:p-8">
-            <div className="max-w-7xl mx-auto w-full">
+          <main className="relative min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain bg-[#f4f2ed]/90 p-4 [-webkit-overflow-scrolling:touch] dark:bg-neutral-950/95 sm:p-6 lg:p-8">
+            <div className="mx-auto min-w-0 w-full max-w-7xl">
               {children}
             </div>
           </main>
