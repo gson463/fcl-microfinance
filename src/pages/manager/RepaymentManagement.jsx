@@ -27,6 +27,7 @@ import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -54,6 +55,8 @@ const StatCard = ({ title, value, icon: Icon, color }) => (
 const ManagerRepaymentManagement = () => {
     const { user } = useAuth();
     const { toast } = useToast();
+    const { loading: profileLoading, branchId: profileBranchId } = useUserProfileScope(user?.id);
+    const managerBranchId = profileBranchId ?? user?.user_metadata?.branch_id;
     const [repayments, setRepayments] = useState([]);
     const [branchOfficers, setBranchOfficers] = useState([]);
     const [groups, setGroups] = useState([]);
@@ -85,7 +88,15 @@ const ManagerRepaymentManagement = () => {
     };
 
     const fetchData = useCallback(async () => {
-        if (!user || !user.user_metadata.branch_id) return;
+        if (!user || profileLoading) return;
+        if (!managerBranchId) {
+            setRepayments([]);
+            setBranchOfficers([]);
+            setCenters([]);
+            setGroups([]);
+            setLoading(false);
+            return;
+        }
         setLoading(true);
         try {
             const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
@@ -95,7 +106,7 @@ const ManagerRepaymentManagement = () => {
             const { data: officersData, error: officersError } = await supabase
                 .from('users')
                 .select('id, full_name')
-                .eq('branch_id', user.user_metadata.branch_id)
+                .eq('branch_id', managerBranchId)
                 .eq('role', 'officer');
             if (officersError) throw officersError;
             setBranchOfficers(officersData || []);
@@ -138,7 +149,7 @@ const ManagerRepaymentManagement = () => {
             const { data: centersData, error: centersError } = await supabase
                 .from('centers')
                 .select('id, name')
-                .eq('branch_id', user.user_metadata.branch_id)
+                .eq('branch_id', managerBranchId)
                 .order('name');
             if (centersError) throw centersError;
             setCenters(centersData || []);
@@ -148,7 +159,7 @@ const ManagerRepaymentManagement = () => {
         } finally {
             setLoading(false);
         }
-    }, [user, toast]);
+    }, [user, toast, profileLoading, managerBranchId]);
 
     useEffect(() => {
         fetchData();
@@ -292,7 +303,7 @@ const ManagerRepaymentManagement = () => {
                 actual_payment_date: r.actual_payment_date,
                 officer_id: r.officer_id,
                 officer_name: officerName,
-                branch_id: user.user_metadata.branch_id,
+                branch_id: managerBranchId,
                 requested_by_officer_id: req.officer_id,
                 approved_by_manager_id: user.id,
                 snapshot: { ...r, loan: r.loans },

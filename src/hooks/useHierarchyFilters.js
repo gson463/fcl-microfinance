@@ -1,14 +1,17 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/customSupabaseClient';
 import { ALL } from '@/lib/hierarchyFilterUtils';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 /**
  * Shared branch → center → group → officer + disbursement date range state for reporting pages.
  * Managers default to their branch; officers default to themselves as officer filter.
+ * Branch/role come from `public.users` when available (JWT metadata can be stale).
  */
 export function useHierarchyFilters(user) {
-  const role = user?.user_metadata?.role;
-  const userBranchId = user?.user_metadata?.branch_id ?? null;
+  const { loading: profileLoading, branchId: profileBranchId, role: profileRole } = useUserProfileScope(user?.id);
+  const role = profileRole ?? user?.user_metadata?.role;
+  const userBranchId = profileBranchId ?? user?.user_metadata?.branch_id ?? null;
 
   const [branches, setBranches] = useState([]);
   const [centers, setCenters] = useState([]);
@@ -43,6 +46,7 @@ export function useHierarchyFilters(user) {
   }, []);
 
   useEffect(() => {
+    if (profileLoading) return;
     if (role === 'manager' && userBranchId) {
       setBranchId(userBranchId);
     }
@@ -52,7 +56,7 @@ export function useHierarchyFilters(user) {
     if (role === 'officer' && user?.id) {
       setOfficerId(user.id);
     }
-  }, [role, userBranchId, user?.id]);
+  }, [profileLoading, role, userBranchId, user?.id]);
 
   useEffect(() => {
     setCenterId(ALL);

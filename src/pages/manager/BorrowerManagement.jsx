@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Button } from '@/components/ui/button';
 import { Edit, Loader2, ChevronLeft, ChevronRight, CheckCircle } from 'lucide-react';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 
@@ -42,7 +43,8 @@ const ManagerBorrowerManagement = () => {
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
 
-  const branchId = user?.user_metadata?.branch_id;
+  const { loading: profileLoading, branchId: profileBranchId } = useUserProfileScope(user?.id);
+  const branchId = profileBranchId ?? user?.user_metadata?.branch_id;
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 350);
@@ -54,6 +56,10 @@ const ManagerBorrowerManagement = () => {
   }, [debouncedSearch, statusFilter]);
 
   const fetchData = useCallback(async () => {
+    if (profileLoading) {
+      setLoading(true);
+      return;
+    }
     if (!branchId) {
       setBorrowers([]);
       setTotalCount(0);
@@ -91,7 +97,7 @@ const ManagerBorrowerManagement = () => {
       setTotalCount(count ?? 0);
     }
     setLoading(false);
-  }, [toast, page, debouncedSearch, statusFilter, branchId]);
+  }, [toast, page, debouncedSearch, statusFilter, branchId, profileLoading]);
 
   useEffect(() => {
     fetchData();

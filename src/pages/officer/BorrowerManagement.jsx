@@ -506,7 +506,7 @@ const BorrowerManagement = () => {
             guarantor_name: guarantorName,
             guarantor_phone: guarantorPhone,
             loan_officer_id: user.id,
-            branch_id: user.user_metadata.branch_id,
+            branch_id: officerBranchId ?? user.user_metadata.branch_id,
             status: editingBorrower ? editingBorrower.status : 'eligible',
         };
 

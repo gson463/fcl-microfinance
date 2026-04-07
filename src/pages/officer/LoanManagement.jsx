@@ -37,6 +37,7 @@ import { checkDisbursementAgainstFieldWallet } from '@/lib/officerFieldWalletDis
 import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
 import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
 import { downloadLoansImportTemplate } from '@/lib/excelImportTemplateDownloads';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
@@ -91,6 +92,7 @@ function excelSerialDateToYYYYMMDD(serial) {
 const LoanManagement = () => {
     const { user } = useAuth();
     const { toast } = useToast();
+    const { branchId: officerProfileBranchId } = useUserProfileScope(user?.id);
     const [loans, setLoans] = useState([]);
     const [borrowers, setBorrowers] = useState([]);
     const [loanProducts, setLoanProducts] = useState([]);
@@ -233,14 +235,15 @@ const LoanManagement = () => {
         }
         (async () => {
             let q = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
-            if (user.user_metadata?.branch_id) q = q.eq('branch_id', user.user_metadata.branch_id);
+            const bid = officerProfileBranchId ?? user.user_metadata?.branch_id;
+            if (bid) q = q.eq('branch_id', bid);
             const { data } = await q;
             if (!cancelled) setCenters(data || []);
         })();
         return () => {
             cancelled = true;
         };
-    }, [user?.id, user?.user_metadata?.branch_id]);
+    }, [user?.id, user?.user_metadata?.branch_id, officerProfileBranchId]);
 
     useEffect(() => {
         let cancelled = false;

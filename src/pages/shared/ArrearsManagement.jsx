@@ -21,6 +21,7 @@ import {
   getInstallmentUnitFromSchedule,
   roundToValidRepaymentAmount,
 } from '@/lib/repaymentInstallmentUnit.js';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -28,7 +29,8 @@ const PAGE_SIZE = 25;
 const ArrearsManagement = () => {
     const { user, session } = useAuth();
     const { toast } = useToast();
-    const role = user?.user_metadata?.role;
+    const { branchId: profileBranchId, role: profileRole } = useUserProfileScope(user?.id);
+    const role = profileRole ?? user?.user_metadata?.role;
     const hf = useHierarchyFilters(user);
     const [loans, setLoans] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -74,13 +76,24 @@ const ArrearsManagement = () => {
         );
 
         // Role-Based Filtering
-        if (user.user_metadata.role === 'officer') {
+        if (role === 'officer') {
             query = query.eq('officer_id', user.id);
-        } else if (user.user_metadata.role === 'manager') {
+        } else if (role === 'manager') {
+            const branchScope = profileBranchId ?? user?.user_metadata?.branch_id;
+            if (!branchScope) {
+                toast({
+                    title: 'Branch not assigned',
+                    description: 'Your profile has no branch. Contact an administrator.',
+                    variant: 'destructive',
+                });
+                setLoading(false);
+                return;
+            }
             const { data: officers, error: officersError } = await supabase
                 .from('users')
                 .select('id')
-                .eq('branch_id', user.user_metadata.branch_id);
+                .eq('branch_id', branchScope)
+                .eq('role', 'officer');
 
             if (officersError) {
                 toast({ title: 'Error fetching loan officers', description: officersError.message, variant: 'destructive' });
@@ -142,7 +155,7 @@ const ArrearsManagement = () => {
             setLoans(loansWithArrears);
         }
         setLoading(false);
-    }, [user, toast, currentDate]);
+    }, [user, toast, currentDate, role, profileBranchId]);
 
     useEffect(() => {
         fetchArrearsLoans();

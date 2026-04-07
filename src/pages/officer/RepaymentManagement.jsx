@@ -34,6 +34,7 @@ import {
     roundToValidRepaymentAmount,
 } from '@/lib/repaymentInstallmentUnit.js';
 import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -82,6 +83,7 @@ const StatCard = ({ title, value, icon: Icon, color }) => (
 const RepaymentManagement = () => {
     const { user, session } = useAuth();
     const { toast } = useToast();
+    const { branchId: officerProfileBranchId } = useUserProfileScope(user?.id);
     const [repayments, setRepayments] = useState([]);
     const [loans, setLoans] = useState([]);
     const [groups, setGroups] = useState([]);
@@ -177,8 +179,9 @@ const RepaymentManagement = () => {
             setGroups(groupsData || []);
 
             let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
-            if (user.user_metadata?.branch_id) {
-                centersQuery = centersQuery.eq('branch_id', user.user_metadata.branch_id);
+            const bid = officerProfileBranchId ?? user.user_metadata?.branch_id;
+            if (bid) {
+                centersQuery = centersQuery.eq('branch_id', bid);
             }
             const { data: centersData, error: centersError } = await centersQuery;
             if (centersError) throw centersError;
@@ -192,7 +195,7 @@ const RepaymentManagement = () => {
         } finally {
             setLoading(false);
         }
-    }, [user, toast]);
+    }, [user, toast, officerProfileBranchId]);
 
     useEffect(() => {
         fetchData();

@@ -18,6 +18,7 @@ import { format, differenceInDays } from 'date-fns';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useDate } from '@/contexts/DateContext';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -37,7 +38,8 @@ const StatCard = ({ title, value, icon: Icon }) => (
 const DefaultersManagement = () => {
     const { user } = useAuth();
     const { toast } = useToast();
-    const role = user?.user_metadata?.role;
+    const { branchId: profileBranchId, role: profileRole } = useUserProfileScope(user?.id);
+    const role = profileRole ?? user?.user_metadata?.role;
     const hf = useHierarchyFilters(user);
     const [defaultedLoans, setDefaultedLoans] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -80,12 +82,18 @@ const DefaultersManagement = () => {
                 officer:users!officer_id(id, full_name, branch_id)
             `).eq('status', 'defaulted');
 
-            if (user.user_metadata.role === 'officer') {
+            if (role === 'officer') {
                 query = query.eq('officer_id', user.id);
-            } else if (user.user_metadata.role === 'manager') {
-                const { data: officers, error: officersError } = await supabase.from('users').select('id').eq('branch_id', user.user_metadata.branch_id);
+            } else if (role === 'manager') {
+                const branchScope = profileBranchId ?? user?.user_metadata?.branch_id;
+                if (!branchScope) throw new Error('Branch not assigned to your profile.');
+                const { data: officers, error: officersError } = await supabase
+                    .from('users')
+                    .select('id')
+                    .eq('branch_id', branchScope)
+                    .eq('role', 'officer');
                 if (officersError) throw officersError;
-                query = query.in('officer_id', officers.map(o => o.id));
+                query = query.in('officer_id', officers.map((o) => o.id));
             }
             
             const { data: loansData, error } = await query;
@@ -104,7 +112,7 @@ const DefaultersManagement = () => {
         } finally {
             setLoading(false);
         }
-    }, [user, toast]);
+    }, [user, toast, role, profileBranchId]);
 
     useEffect(() => {
         fetchData();

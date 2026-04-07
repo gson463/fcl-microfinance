@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { generateSchedule } from '@/utils/loanUtils';
 import { recalculateLoanScheduleWithRetry } from '@/lib/loanScheduleRegeneration';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
+import { useUserProfileScope, fetchOfficerIdsForBranch } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -25,6 +26,7 @@ const HISTORY_PAGE_SIZE = 15;
 const LoanRequests = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const { loading: profileLoading, branchId: managerBranchId } = useUserProfileScope(user?.id);
   const [requests, setRequests] = useState([]);
   const [loanProducts, setLoanProducts] = useState([]);
   const [holidays, setHolidays] = useState([]);
@@ -37,8 +39,20 @@ const LoanRequests = () => {
   const [resolvingId, setResolvingId] = useState(null);
 
   const fetchData = useCallback(async () => {
-    if (!user) return;
+    if (!user || profileLoading) return;
     setLoading(true);
+
+    const branchScope = managerBranchId ?? user.user_metadata?.branch_id;
+    let officerIds = null;
+    if (branchScope) {
+      try {
+        officerIds = await fetchOfficerIdsForBranch(branchScope);
+      } catch (e) {
+        toast({ title: 'Error', description: e?.message ?? 'Could not load branch officers.', variant: 'destructive' });
+        setLoading(false);
+        return;
+      }
+    }
 
     const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
     if (config) setCurrency(config.value);
@@ -57,10 +71,19 @@ const LoanRequests = () => {
         setHolidays(holidaysData || []);
     }
 
+    if (!branchScope || !officerIds || officerIds.length === 0) {
+      setRequests([]);
+      setAttendanceExceptions([]);
+      setLoanIncreaseHistory([]);
+      setLoading(false);
+      return;
+    }
+
     const { data: requestsData, error: requestsError } = await supabase
       .from('loans')
       .select(`*, borrowers(first_name, surname), officer:users!officer_id(full_name)`)
-      .in('status', ['delete_requested', 'edit_requested']);
+      .in('status', ['delete_requested', 'edit_requested'])
+      .in('officer_id', officerIds);
 
     if (requestsError) {
       toast({ title: "Error", description: requestsError.message, variant: "destructive" });
@@ -74,6 +97,7 @@ const LoanRequests = () => {
         `id, officer_notes, created_at, borrowers(first_name, surname, borrower_id), officer:users!officer_id(full_name)`
       )
       .eq('status', 'pending')
+      .in('officer_id', officerIds)
       .order('created_at', { ascending: false });
     if (excError) {
       console.error(excError);
@@ -90,6 +114,7 @@ const LoanRequests = () => {
          officer:users!officer_id(full_name),
          manager:users!manager_id(full_name)`
       )
+      .in('officer_id', officerIds)
       .order('created_at', { ascending: false })
       .limit(200);
     if (histError) {
@@ -100,7 +125,7 @@ const LoanRequests = () => {
     }
 
     setLoading(false);
-  }, [user, toast]);
+  }, [user, toast, profileLoading, managerBranchId]);
 
   useEffect(() => {
     fetchData();
@@ -174,7 +199,7 @@ const LoanRequests = () => {
       ? `${loan.borrowers.first_name} ${loan.borrowers.surname}`.trim()
       : '';
     const officerName = loan.officer?.full_name ?? null;
-    const branchId = user?.user_metadata?.branch_id ?? null;
+    const branchId = managerBranchId ?? user?.user_metadata?.branch_id ?? null;
     try {
       const snapshot = { ...loan };
       const { error: insErr } = await supabase.from('deleted_loan_records').insert({

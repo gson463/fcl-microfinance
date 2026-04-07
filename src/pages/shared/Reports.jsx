@@ -15,6 +15,10 @@ import * as XLSX from 'xlsx';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isRepaymentInReportsRange, repaymentReportDateYyyyMmDd } from '@/lib/repaymentReportDate';
+import { useUserProfileScope, fetchOfficerIdsForBranch } from '@/hooks/useUserProfileScope';
+
+const REPAYMENT_REPORT_SELECT =
+    '*, loans(id, borrower_id, loan_id, product_id, status, borrowers(*, groups(*)))';
 
 const REPORT_STATUS_OPTIONS = [
     { value: 'pending', label: 'Pending' },
@@ -40,6 +44,9 @@ const StatCard = ({ title, value, icon: Icon, color }) => (
 const Reports = () => {
     const { user } = useAuth();
     const { toast } = useToast();
+    const { loading: profileLoading, branchId: profileBranchId, role: profileRole } = useUserProfileScope(user?.id);
+    const effectiveRole = profileRole ?? user?.user_metadata?.role;
+    const managerBranchScope = profileBranchId ?? user?.user_metadata?.branch_id;
     const [loading, setLoading] = useState(true);
     const [currency, setCurrency] = useState('TZS');
 
@@ -57,55 +64,153 @@ const Reports = () => {
 
     const fetchData = useCallback(async () => {
         if (!user) return;
+        if (profileLoading) {
+            setLoading(true);
+            return;
+        }
         setLoading(true);
 
+        const checkError = (res, name) => {
+            if (res.error) throw new Error(`Failed to fetch ${name}: ${res.error.message}`);
+            return res.data;
+        };
+
         try {
-            const [
-                configRes, loansRes, borrowersRes, repaymentsRes, usersRes,
-                branchesRes, productsRes, centersRes, groupsRes
-            ] = await Promise.all([
-                supabase.from('system_config').select('value').eq('key', 'currency').single(),
-                supabase.from('loans').select('*, borrowers!inner(*)'),
-                supabase.from('borrowers').select('*'),
-                // Aligning with RepaymentManagement: fetch ALL repayments first, then filter in memory or via role logic below
-                supabase
-                    .from('repayments')
-                    .select('*, loans(id, borrower_id, loan_id, product_id, status, borrowers(*, groups(*)))')
-                    .order('actual_payment_date', { ascending: false }),
-                supabase.from('users').select('*'),
-                supabase.from('branches').select('*'),
-                supabase.from('loan_products').select('*'),
-                supabase.from('centers').select('*'),
-                supabase.from('groups').select('*'),
-            ]);
+            const role = effectiveRole;
+            const cfgP = supabase.from('system_config').select('value').eq('key', 'currency').single();
+            const prodP = supabase.from('loan_products').select('*');
 
-            const checkError = (res, name) => {
-                if (res.error) throw new Error(`Failed to fetch ${name}: ${res.error.message}`);
-                return res.data;
-            };
+            if (role === 'admin') {
+                const [
+                    configRes, loansRes, borrowersRes, repaymentsRes, usersRes,
+                    branchesRes, productsRes, centersRes, groupsRes,
+                ] = await Promise.all([
+                    cfgP,
+                    supabase.from('loans').select('*, borrowers!inner(*)'),
+                    supabase.from('borrowers').select('*'),
+                    supabase
+                        .from('repayments')
+                        .select(REPAYMENT_REPORT_SELECT)
+                        .order('actual_payment_date', { ascending: false }),
+                    supabase.from('users').select('*'),
+                    supabase.from('branches').select('*'),
+                    prodP,
+                    supabase.from('centers').select('*'),
+                    supabase.from('groups').select('*'),
+                ]);
 
-            setCurrency(checkError(configRes, 'config')?.value || 'TZS');
-            setAllData({
-                loans: checkError(loansRes, 'loans'),
-                borrowers: checkError(borrowersRes, 'borrowers'),
-                repayments: checkError(repaymentsRes, 'repayments'),
-                users: checkError(usersRes, 'users'),
-                branches: checkError(branchesRes, 'branches'),
-                loanProducts: checkError(productsRes, 'products'),
-                centers: checkError(centersRes, 'centers'),
-                groups: checkError(groupsRes, 'groups'),
-            });
-            
-            if (user?.user_metadata.role === 'manager') {
-                setSelectedBranch(user.user_metadata.branch_id);
+                setCurrency(checkError(configRes, 'config')?.value || 'TZS');
+                setAllData({
+                    loans: checkError(loansRes, 'loans'),
+                    borrowers: checkError(borrowersRes, 'borrowers'),
+                    repayments: checkError(repaymentsRes, 'repayments'),
+                    users: checkError(usersRes, 'users'),
+                    branches: checkError(branchesRes, 'branches'),
+                    loanProducts: checkError(productsRes, 'products'),
+                    centers: checkError(centersRes, 'centers'),
+                    groups: checkError(groupsRes, 'groups'),
+                });
+            } else if (role === 'manager') {
+                const branchId = managerBranchScope;
+                if (!branchId) {
+                    throw new Error('Branch not assigned to your profile.');
+                }
+                const officerIds = await fetchOfficerIdsForBranch(branchId);
+                const [configRes, borrowersRes, branchesRes, usersRes, productsRes, centersRes] = await Promise.all([
+                    cfgP,
+                    supabase.from('borrowers').select('*').eq('branch_id', branchId),
+                    supabase.from('branches').select('*').eq('id', branchId),
+                    supabase.from('users').select('*').eq('branch_id', branchId),
+                    prodP,
+                    supabase.from('centers').select('*').eq('branch_id', branchId),
+                ]);
+
+                const centerRows = checkError(centersRes, 'centers');
+                const centerIds = (centerRows || []).map((c) => c.id);
+
+                let loansRes;
+                let repaymentsRes;
+                let groupsRes;
+                if (officerIds.length === 0) {
+                    loansRes = { data: [], error: null };
+                    repaymentsRes = { data: [], error: null };
+                    groupsRes = { data: [], error: null };
+                } else {
+                    [loansRes, repaymentsRes, groupsRes] = await Promise.all([
+                        supabase.from('loans').select('*, borrowers!inner(*)').in('officer_id', officerIds),
+                        supabase
+                            .from('repayments')
+                            .select(REPAYMENT_REPORT_SELECT)
+                            .in('officer_id', officerIds)
+                            .order('actual_payment_date', { ascending: false }),
+                        centerIds.length > 0
+                            ? supabase.from('groups').select('*').in('center_id', centerIds)
+                            : Promise.resolve({ data: [], error: null }),
+                    ]);
+                }
+
+                setCurrency(checkError(configRes, 'config')?.value || 'TZS');
+                setAllData({
+                    loans: checkError(loansRes, 'loans') || [],
+                    borrowers: checkError(borrowersRes, 'borrowers') || [],
+                    repayments: checkError(repaymentsRes, 'repayments') || [],
+                    users: checkError(usersRes, 'users') || [],
+                    branches: checkError(branchesRes, 'branches') || [],
+                    loanProducts: checkError(productsRes, 'products') || [],
+                    centers: centerRows || [],
+                    groups: checkError(groupsRes, 'groups') || [],
+                });
+                setSelectedBranch(branchId);
+            } else if (role === 'officer') {
+                const branchId = managerBranchScope;
+                const [configRes, loansRes, borrowersRes, repaymentsRes, usersRes, branchesRes, productsRes, centersRes, groupsRes] =
+                    await Promise.all([
+                        cfgP,
+                        supabase.from('loans').select('*, borrowers!inner(*)').eq('officer_id', user.id),
+                        supabase.from('borrowers').select('*').eq('loan_officer_id', user.id),
+                        supabase
+                            .from('repayments')
+                            .select(REPAYMENT_REPORT_SELECT)
+                            .eq('officer_id', user.id)
+                            .order('actual_payment_date', { ascending: false }),
+                        supabase.from('users').select('*').eq('id', user.id),
+                        branchId
+                            ? supabase.from('branches').select('*').eq('id', branchId)
+                            : Promise.resolve({ data: [], error: null }),
+                        prodP,
+                        supabase.from('centers').select('*').eq('loan_officer_id', user.id),
+                        supabase.from('groups').select('*').eq('loan_officer_id', user.id),
+                    ]);
+
+                setCurrency(checkError(configRes, 'config')?.value || 'TZS');
+                setAllData({
+                    loans: checkError(loansRes, 'loans'),
+                    borrowers: checkError(borrowersRes, 'borrowers'),
+                    repayments: checkError(repaymentsRes, 'repayments'),
+                    users: checkError(usersRes, 'users'),
+                    branches: checkError(branchesRes, 'branches'),
+                    loanProducts: checkError(productsRes, 'products'),
+                    centers: checkError(centersRes, 'centers'),
+                    groups: checkError(groupsRes, 'groups'),
+                });
+            } else {
+                setAllData({
+                    loans: [],
+                    borrowers: [],
+                    repayments: [],
+                    users: [],
+                    branches: [],
+                    loanProducts: [],
+                    centers: [],
+                    groups: [],
+                });
             }
-
         } catch (error) {
             toast({ title: 'Error fetching report data', description: error.message, variant: 'destructive' });
         } finally {
             setLoading(false);
         }
-    }, [user, toast]);
+    }, [user, toast, profileLoading, effectiveRole, managerBranchScope]);
 
     useEffect(() => {
         fetchData();
@@ -133,14 +238,14 @@ const Reports = () => {
         let centers = allData.centers;
         let groups = allData.groups;
 
-        const role = user?.user_metadata.role;
+        const role = effectiveRole;
 
         if (role === 'manager') {
-            officers = officers.filter(o => o.branch_id === user.user_metadata.branch_id);
-            centers = centers.filter(c => c.branch_id === user.user_metadata.branch_id);
+            officers = officers.filter((o) => o.branch_id === managerBranchScope);
+            centers = centers.filter((c) => c.branch_id === managerBranchScope);
         } else if (role === 'officer') {
             officers = [];
-            centers = centers.filter(c => c.loan_officer_id === user.id);
+            centers = centers.filter((c) => c.loan_officer_id === user.id);
         }
 
         if (selectedBranch !== 'all' && role === 'admin') {
@@ -163,7 +268,7 @@ const Reports = () => {
         }
 
         return { officers, centers, groups };
-    }, [allData, user, selectedBranch, selectedOfficer, selectedCenter]);
+    }, [allData, user, selectedBranch, selectedOfficer, selectedCenter, effectiveRole, managerBranchScope]);
 
     const reportBranchOptions = useMemo(
         () => allData.branches.map((b) => ({ value: b.id, label: b.name })),
@@ -187,15 +292,15 @@ const Reports = () => {
     );
 
     const filteredData = useMemo(() => {
-        const role = user?.user_metadata.role;
+        const role = effectiveRole;
 
         // --- 1. FILTER LOANS (Portfolio / Stock Metrics) ---
         let loans = allData.loans;
 
         if (role === 'manager') {
-            loans = loans.filter(l => l.borrowers.branch_id === user.user_metadata.branch_id);
+            loans = loans.filter((l) => l.borrowers?.branch_id === managerBranchScope);
         } else if (role === 'officer') {
-            loans = loans.filter(l => l.officer_id === user.id);
+            loans = loans.filter((l) => l.officer_id === user.id);
         }
 
         if (selectedBranch !== 'all') loans = loans.filter(l => l.borrowers.branch_id === selectedBranch);
@@ -228,10 +333,9 @@ const Reports = () => {
         if (role === 'officer') {
             repayments = repayments.filter(r => r.officer_id === user.id);
         } else if (role === 'manager') {
-             // Managers see repayments where the collecting officer is in their branch
-             repayments = repayments.filter(r => {
-                 const officer = allData.users.find(u => u.id === r.officer_id);
-                 return officer && officer.branch_id === user.user_metadata.branch_id;
+             repayments = repayments.filter((r) => {
+                 const officer = allData.users.find((u) => u.id === r.officer_id);
+                 return officer && officer.branch_id === managerBranchScope;
              });
         }
         // Admins see all by default (already loaded)
@@ -293,7 +397,7 @@ const Reports = () => {
         const dateFilteredRepayments = repayments.filter((r) => isRepaymentInReportsRange(r, dateRange));
 
         return { loans, borrowers: allData.borrowers, repayments: dateFilteredRepayments, loansDisbursedInPeriod };
-    }, [allData, user, dateRange, selectedBranch, selectedOfficer, selectedProduct, selectedCenter, selectedGroup, selectedStatus, availableFilters.groups]);
+    }, [allData, user, dateRange, selectedBranch, selectedOfficer, selectedProduct, selectedCenter, selectedGroup, selectedStatus, availableFilters.groups, effectiveRole, managerBranchScope]);
 
     const reportStats = useMemo(() => {
         const { loans, repayments, loansDisbursedInPeriod } = filteredData;
@@ -406,7 +510,7 @@ const Reports = () => {
     };
 
     const branchPerformanceData = useMemo(() => {
-        if (user?.user_metadata.role !== 'admin') return [];
+        if (effectiveRole !== 'admin') return [];
         return allData.branches.map(branch => {
             const branchLoans = allData.loans.filter(l => l.borrowers.branch_id === branch.id);
             const portfolio = branchLoans.reduce((sum, l) => sum + (l.balance || 0), 0);
@@ -418,14 +522,14 @@ const Reports = () => {
                 officers: allData.users.filter(u => u.role === 'officer' && u.branch_id === branch.id).length
             };
         });
-    }, [allData, user]);
+    }, [allData, effectiveRole]);
 
     const officerPerformanceData = useMemo(() => {
-        const role = user?.user_metadata.role;
+        const role = effectiveRole;
         if (role === 'officer') return [];
         let officers = allData.users.filter(u => u.role === 'officer');
         if (role === 'manager') {
-            officers = officers.filter(o => o.branch_id === user.user_metadata.branch_id);
+            officers = officers.filter((o) => o.branch_id === managerBranchScope);
         }
         return officers.map(officer => {
             const officerLoans = allData.loans.filter(l => l.officer_id === officer.id);
@@ -438,7 +542,7 @@ const Reports = () => {
                 loans: officerLoans.length
             };
         });
-    }, [allData, user]);
+    }, [allData, effectiveRole, managerBranchScope]);
 
     const statsCardsData = [
         { title: 'Total Portfolio', value: `${currency} ${reportStats.totalPortfolio.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, icon: Briefcase, color: 'text-blue-600' },

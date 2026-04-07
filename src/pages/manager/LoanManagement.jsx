@@ -22,6 +22,7 @@ import { Eye, Briefcase, DollarSign, AlertTriangle, Calendar as CalendarIconLuci
 import { Badge } from '@/components/ui/badge';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
@@ -49,6 +50,8 @@ const StatCard = ({ title, value, icon: Icon, color }) => (
 const ManagerLoanManagement = () => {
     const { user } = useAuth();
     const { toast } = useToast();
+    const { loading: profileLoading, branchId: profileBranchId } = useUserProfileScope(user?.id);
+    const managerBranchId = profileBranchId ?? user?.user_metadata?.branch_id;
     const [loans, setLoans] = useState([]);
     const [officers, setOfficers] = useState([]);
     const [loanProducts, setLoanProducts] = useState([]);
@@ -70,7 +73,13 @@ const ManagerLoanManagement = () => {
     const [page, setPage] = useState(1);
 
     const fetchData = useCallback(async () => {
-        if (!user || !user.user_metadata.branch_id) return;
+        if (!user || profileLoading) return;
+        if (!managerBranchId) {
+            setLoans([]);
+            setOfficers([]);
+            setLoading(false);
+            return;
+        }
         setLoading(true);
 
         const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
@@ -81,7 +90,7 @@ const ManagerLoanManagement = () => {
         const { data: officersData, error: officersError } = await supabase
             .from('users')
             .select('id, full_name')
-            .eq('branch_id', user.user_metadata.branch_id)
+            .eq('branch_id', managerBranchId)
             .eq('role', 'officer');
             
         if (officersError) {
@@ -117,7 +126,7 @@ const ManagerLoanManagement = () => {
             setLoanProducts(productsData || []);
         }
         setLoading(false);
-    }, [user, toast]);
+    }, [user, toast, profileLoading, managerBranchId]);
 
     useEffect(() => {
         fetchData();
@@ -132,7 +141,7 @@ const ManagerLoanManagement = () => {
 
     useEffect(() => {
         let cancelled = false;
-        if (officerFilter === 'all' || !user?.user_metadata?.branch_id) {
+        if (officerFilter === 'all' || !managerBranchId) {
             setCenters([]);
             return;
         }
@@ -141,14 +150,14 @@ const ManagerLoanManagement = () => {
                 .from('centers')
                 .select('id, name')
                 .eq('loan_officer_id', officerFilter)
-                .eq('branch_id', user.user_metadata.branch_id)
+                .eq('branch_id', managerBranchId)
                 .order('name');
             if (!cancelled) setCenters(data || []);
         })();
         return () => {
             cancelled = true;
         };
-    }, [officerFilter, user?.user_metadata?.branch_id]);
+    }, [officerFilter, managerBranchId]);
 
     useEffect(() => {
         let cancelled = false;
