@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/table';
 import { Loader2, ArrowLeft, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { DRILLDOWN_METRICS, METRIC_TITLES } from '@/lib/dashboardMetrics';
+import { DRILLDOWN_METRICS, METRIC_TITLES, MANAGER_HIDDEN_DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -114,6 +114,18 @@ const DashboardMetricDrilldown = () => {
 		setFilterCenterId(searchParams.get('center') || '');
 		setFilterGroupId(searchParams.get('group') || '');
 	}, [searchParams, isAdminRoute, isManagerRoute]);
+
+	useEffect(() => {
+		if (!isManagerRoute || !metricKey) return;
+		if (MANAGER_HIDDEN_DRILLDOWN_METRICS.has(metricKey)) {
+			toast({
+				title: 'Not available',
+				description: 'Interest details are not shown for branch managers.',
+				variant: 'destructive',
+			});
+			navigate('/manager/dashboard', { replace: true });
+		}
+	}, [isManagerRoute, metricKey, navigate, toast]);
 
 	useEffect(() => {
 		if (metricKey !== DRILLDOWN_METRICS.nearing_completion) return;

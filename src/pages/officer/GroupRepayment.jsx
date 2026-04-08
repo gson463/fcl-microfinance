@@ -35,6 +35,7 @@ import {
     repaymentAmountValidationMessage,
     REPAYMENT_AMOUNT_INVALID_FALLBACK,
 } from '@/lib/repaymentInstallmentUnit.js';
+import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
 
 const PAGE_SIZE = 25;
 const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
@@ -67,6 +68,7 @@ const GroupRepayment = () => {
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [memberPage, setMemberPage] = useState(1);
+    const [walletPrepaymentSplitMode, setWalletPrepaymentSplitMode] = useState(WALLET_PREPAYMENT_ARREARS_ONLY);
 
     const isHoliday = (date) => {
         const formattedYYYYMMDD = formatInTimeZone(date, EAT_TIMEZONE, 'yyyy-MM-dd');
@@ -82,6 +84,13 @@ const GroupRepayment = () => {
         
         const { data: configData } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
         setCurrency(configData?.value || 'TZS');
+
+        const { data: splitRow } = await supabase
+            .from('system_config')
+            .select('value')
+            .eq('key', 'walletPrepaymentSplitMode')
+            .maybeSingle();
+        setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
 
         const { data: holidaysData } = await supabase.from('holidays').select('date');
         setHolidays(holidaysData || []);
@@ -139,13 +148,15 @@ const GroupRepayment = () => {
         const selectedD = startOfDay(selectedDate);
         const payStr = formatTZ(selectedDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
 
+        const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
+
         const memberPromises = loansInGroup
             .map(async (loan) => {
                 let pastDueAmount = 0;
                 let amountDueToday = 0;
                 let hasAnyDueInstallment = false;
 
-                const { data: dueRaw, error: dueRpcErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+                const { data: dueRaw, error: dueRpcErr } = await supabase.rpc(dueRpc, {
                     p_schedule: loan.schedule ?? null,
                     p_payment_date: payStr,
                 });
@@ -197,7 +208,7 @@ const GroupRepayment = () => {
         });
         setRepaymentAmounts(initialAmounts);
         setLoading(false);
-    }, [user, selectedDate, isForbiddenDate, toast]);
+    }, [user, selectedDate, isForbiddenDate, toast, walletPrepaymentSplitMode]);
     
     useEffect(() => {
         if(selectedGroupId) handleGroupSelection(selectedGroupId);

@@ -22,6 +22,7 @@ import {
   roundToValidRepaymentAmount,
 } from '@/lib/repaymentInstallmentUnit.js';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
+import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -40,6 +41,7 @@ const ArrearsManagement = () => {
     const { currentDate } = useDate();
     const [holidays, setHolidays] = useState([]);
     const [page, setPage] = useState(1);
+    const [walletPrepaymentSplitMode, setWalletPrepaymentSplitMode] = useState(WALLET_PREPAYMENT_ARREARS_ONLY);
 
     useEffect(() => {
         const fetchHolidays = async () => {
@@ -65,7 +67,13 @@ const ArrearsManagement = () => {
         if (config) {
             setCurrency(config.value);
         }
-        
+        const { data: splitRow } = await supabase
+            .from('system_config')
+            .select('value')
+            .eq('key', 'walletPrepaymentSplitMode')
+            .maybeSingle();
+        setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
+
         // Step 1: Force backend to update statuses based on Today's date
         // This ensures the DB status column is as fresh as possible
         await supabase.rpc('update_all_loan_statuses');
@@ -200,7 +208,8 @@ const ArrearsManagement = () => {
         }
 
         const payStr = formatTZ(currentDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
-        const { data: dueRaw, error: dueErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+        const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
+        const { data: dueRaw, error: dueErr } = await supabase.rpc(dueRpc, {
             p_schedule: loan.schedule ?? null,
             p_payment_date: payStr,
         });

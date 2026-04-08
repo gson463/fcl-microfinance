@@ -46,7 +46,8 @@ const LOAN_SELECT = `id, loan_id, principal, disbursement_date, officer_id, borr
     groups(id, name, center_id, centers(id, name))
   )`;
 
-const REP_SELECT = `id, amount, prepayment_amount, scheduled_due_snapshot, actual_payment_date, officer_id, loan_id,
+/** Include wallet_split_source so scheduled vs prepayment matches Repayment Management (explicit officer split). */
+const REP_SELECT = `id, amount, prepayment_amount, scheduled_due_snapshot, wallet_split_source, actual_payment_date, officer_id, loan_id,
   loans(
     loan_id,
     borrower_id,

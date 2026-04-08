@@ -18,6 +18,7 @@ import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { DEFAULT_SYSTEM_NAME } from '@/lib/brand';
+import { borrowerPublicId } from '@/lib/borrowerPublicId';
 
 const DetailItem = ({ label, value, isBadge = false, badgeVariant = 'default' }) => (
     <div className="flex justify-between py-2 border-b">
@@ -298,7 +299,9 @@ const BorrowerDetails = () => {
                          <UserCircle className="w-16 h-16 text-gray-400" />
                     </div>
                     <CardTitle>{borrower.first_name} {borrower.surname}</CardTitle>
-                    <CardDescription>{borrower.borrower_id}</CardDescription>
+                    {borrowerPublicId(borrower) ? (
+                      <CardDescription>{borrowerPublicId(borrower)}</CardDescription>
+                    ) : null}
                 </CardHeader>
                 <CardContent className="space-y-1">
                     <DetailItem label="Loan Status" value={getBorrowerStatusText(borrower.status)} isBadge badgeVariant={getBorrowerStatusBadge(borrower.status)} />

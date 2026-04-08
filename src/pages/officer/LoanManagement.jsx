@@ -20,7 +20,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Combobox } from '@/components/ui/combobox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -39,10 +38,17 @@ import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportE
 import { downloadLoansImportTemplate } from '@/lib/excelImportTemplateDownloads';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
+import { borrowerPublicId } from '@/lib/borrowerPublicId';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
+
+/** Native <select> avoids Popover+Dialog focus/pointer issues (same as Admin → Add User → Assign Branch). */
+const NATIVE_SELECT_DIALOG =
+  'flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
+const NATIVE_SELECT_FILTER =
+  'flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
 
 const OFFICER_LOAN_STATUS_FILTER_OPTIONS = [
 	{ value: 'active', label: 'Active' },
@@ -260,9 +266,10 @@ const LoanManagement = () => {
         };
     }, [centerFilter]);
 
-    const officerListCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
-    const officerListGroupOpts = useMemo(() => groups.map((g) => ({ value: g.id, label: g.name })), [groups]);
-    const officerListProductOpts = useMemo(() => loanProducts.map((p) => ({ value: p.id, label: p.name })), [loanProducts]);
+    /** When centre filter is "all", list all groups (same idea as disburse picker). */
+    const portfolioGroupRows = useMemo(() => {
+        return centerFilter === 'all' ? disbursementGroups : groups;
+    }, [centerFilter, groups, disbursementGroups]);
 
     const eligibleBorrowersForLoanTemplate = useMemo(
         () =>
@@ -284,11 +291,18 @@ const LoanManagement = () => {
        resetFormData();
     }, [resetFormData]);
 
+    /** Keep group selection valid when centre changes (e.g. group only exists under another centre). */
     useEffect(() => {
-        if (disbursePickerCenterFilter === 'all') {
+        if (disbursePickerGroupFilter === 'all') return;
+        const g = disbursementGroups.find((x) => x.id === disbursePickerGroupFilter);
+        if (!g) {
+            setDisbursePickerGroupFilter('all');
+            return;
+        }
+        if (disbursePickerCenterFilter !== 'all' && g.center_id !== disbursePickerCenterFilter) {
             setDisbursePickerGroupFilter('all');
         }
-    }, [disbursePickerCenterFilter]);
+    }, [disbursePickerCenterFilter, disbursePickerGroupFilter, disbursementGroups]);
 
     useEffect(() => {
         if (!formData.borrowerId) {
@@ -855,16 +869,11 @@ const LoanManagement = () => {
         [borrowers, loans],
     );
 
+    /** When centre is "all", list every group so officers can narrow by group without picking a centre first. */
     const groupsForDisbursePicker = useMemo(() => {
-        if (disbursePickerCenterFilter === 'all') return [];
+        if (disbursePickerCenterFilter === 'all') return disbursementGroups;
         return disbursementGroups.filter((g) => g.center_id === disbursePickerCenterFilter);
     }, [disbursementGroups, disbursePickerCenterFilter]);
-
-    const disburseCenterPickerOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
-    const disburseGroupPickerOpts = useMemo(
-        () => groupsForDisbursePicker.map((g) => ({ value: g.id, label: g.name })),
-        [groupsForDisbursePicker],
-    );
 
     const eligibleBorrowersForDisburse = useMemo(() => {
         return eligibleBorrowers.filter((b) => {
@@ -1003,7 +1012,7 @@ const LoanManagement = () => {
                                      <div className="relative z-10">
                                         <DialogTitle className="font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">Disburse New Loan</DialogTitle>
                                         <DialogDescription className="mt-2 text-sm text-white/85 sm:text-base">
-                                            Filter by centre and group (optional), then choose a qualified borrower.
+                                            Filter by centre and/or group (both optional), then choose a qualified borrower.
                                         </DialogDescription>
                                      </div>
                                 </div>
@@ -1020,44 +1029,48 @@ const LoanManagement = () => {
                                             <div className="grid gap-3 sm:grid-cols-2">
                                                 <div className="space-y-2">
                                                     <Label htmlFor="disburse-center">Centre</Label>
-                                                    <SearchableSelect
+                                                    <select
                                                         id="disburse-center"
+                                                        className={NATIVE_SELECT_DIALOG}
                                                         value={disbursePickerCenterFilter}
-                                                        onValueChange={(v) => {
+                                                        onChange={(e) => {
+                                                            const v = e.target.value;
                                                             setDisbursePickerCenterFilter(v);
                                                             setDisburseBorrowerSearch('');
                                                             setFormData((prev) => ({ ...prev, borrowerId: '' }));
                                                         }}
-                                                        options={disburseCenterPickerOpts}
-                                                        allLabel="All centres"
-                                                        allValue="all"
-                                                        placeholder="All centres"
-                                                        searchPlaceholder="Search centres…"
-                                                        emptyText="No centre found."
-                                                        triggerClassName="h-11 w-full"
-                                                    />
+                                                    >
+                                                        <option value="all">All centres</option>
+                                                        {centers.map((c) => (
+                                                            <option key={c.id} value={c.id}>
+                                                                {c.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
                                                 </div>
                                                 <div className="space-y-2">
                                                     <Label htmlFor="disburse-group">Group</Label>
-                                                    <SearchableSelect
+                                                    <select
                                                         id="disburse-group"
+                                                        className={NATIVE_SELECT_DIALOG}
                                                         value={disbursePickerGroupFilter}
-                                                        disabled={disbursePickerCenterFilter === 'all'}
-                                                        onValueChange={(v) => {
+                                                        disabled={disbursementGroups.length === 0}
+                                                        onChange={(e) => {
+                                                            const v = e.target.value;
                                                             setDisbursePickerGroupFilter(v);
                                                             setDisburseBorrowerSearch('');
                                                             setFormData((prev) => ({ ...prev, borrowerId: '' }));
                                                         }}
-                                                        options={disburseGroupPickerOpts}
-                                                        allLabel="All groups"
-                                                        allValue="all"
-                                                        placeholder={
-                                                            disbursePickerCenterFilter === 'all' ? 'Pick centre first' : 'All groups'
-                                                        }
-                                                        searchPlaceholder="Search groups…"
-                                                        emptyText="No group found."
-                                                        triggerClassName="h-11 w-full"
-                                                    />
+                                                    >
+                                                        <option value="all">
+                                                            {disbursementGroups.length === 0 ? 'No groups yet' : 'All groups'}
+                                                        </option>
+                                                        {groupsForDisbursePicker.map((g) => (
+                                                            <option key={g.id} value={g.id}>
+                                                                {g.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
                                                 </div>
                                             </div>
                                             <div className="space-y-2">
@@ -1110,9 +1123,11 @@ const LoanManagement = () => {
                                                                 <span className="font-semibold text-neutral-900 dark:text-neutral-100">
                                                                     {b.first_name} {b.surname}
                                                                 </span>
-                                                                <span className="text-xs text-muted-foreground">
-                                                                    ID: {b.borrower_id}
-                                                                </span>
+                                                                {borrowerPublicId(b) ? (
+                                                                    <span className="text-xs text-muted-foreground">
+                                                                        ID: {borrowerPublicId(b)}
+                                                                    </span>
+                                                                ) : null}
                                                             </button>
                                                         ))
                                                     )}
@@ -1124,9 +1139,9 @@ const LoanManagement = () => {
                                                             const sel = eligibleBorrowers.find(
                                                                 (x) => x.id === formData.borrowerId,
                                                             );
-                                                            return sel
-                                                                ? `${sel.first_name} ${sel.surname} — ${sel.borrower_id}`
-                                                                : formData.borrowerId;
+                                                            if (!sel) return '—';
+                                                            const pub = borrowerPublicId(sel);
+                                                            return `${sel.first_name} ${sel.surname}${pub ? ` — ${pub}` : ''}`;
                                                         })()}
                                                     </p>
                                                 ) : null}
@@ -1362,54 +1377,64 @@ const LoanManagement = () => {
                                     onChange={(e) => setSearchQuery(e.target.value)} 
                                     className="bg-white border-gray-200 focus:ring-blue-100 focus:border-blue-400"
                                 />
-                                <SearchableSelect
+                                <select
+                                    className={NATIVE_SELECT_FILTER}
                                     value={centerFilter}
-                                    onValueChange={(v) => {
-                                        setCenterFilter(v);
+                                    onChange={(e) => {
+                                        setCenterFilter(e.target.value);
                                         setGroupFilter('all');
                                     }}
-                                    options={officerListCenterOpts}
-                                    allLabel="All centers"
-                                    allValue="all"
-                                    placeholder="Center"
-                                    searchPlaceholder="Search centers…"
-                                    emptyText="No center found."
-                                    triggerClassName="bg-white border-gray-200"
-                                />
-                                <SearchableSelect
+                                    aria-label="Filter by center"
+                                >
+                                    <option value="all">All centers</option>
+                                    {centers.map((c) => (
+                                        <option key={c.id} value={c.id}>
+                                            {c.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <select
+                                    className={NATIVE_SELECT_FILTER}
                                     value={groupFilter}
-                                    onValueChange={setGroupFilter}
-                                    disabled={centerFilter === 'all'}
-                                    options={officerListGroupOpts}
-                                    allLabel="All groups"
-                                    allValue="all"
-                                    placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
-                                    searchPlaceholder="Search groups…"
-                                    emptyText="No group found."
-                                    triggerClassName="bg-white border-gray-200"
-                                />
-                                <SearchableSelect
+                                    onChange={(e) => setGroupFilter(e.target.value)}
+                                    disabled={portfolioGroupRows.length === 0}
+                                    aria-label="Filter by group"
+                                >
+                                    <option value="all">
+                                        {portfolioGroupRows.length === 0 ? 'No groups' : 'All groups'}
+                                    </option>
+                                    {portfolioGroupRows.map((g) => (
+                                        <option key={g.id} value={g.id}>
+                                            {g.name}
+                                        </option>
+                                    ))}
+                                </select>
+                                <select
+                                    className={NATIVE_SELECT_FILTER}
                                     value={statusFilter}
-                                    onValueChange={setStatusFilter}
-                                    options={OFFICER_LOAN_STATUS_FILTER_OPTIONS}
-                                    allLabel="All Statuses"
-                                    allValue="all"
-                                    placeholder="Filter by Status"
-                                    searchPlaceholder="Search status…"
-                                    emptyText="No match."
-                                    triggerClassName="bg-white border-gray-200"
-                                />
-                                <SearchableSelect
+                                    onChange={(e) => setStatusFilter(e.target.value)}
+                                    aria-label="Filter by status"
+                                >
+                                    <option value="all">All statuses</option>
+                                    {OFFICER_LOAN_STATUS_FILTER_OPTIONS.map((o) => (
+                                        <option key={o.value} value={o.value}>
+                                            {o.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <select
+                                    className={NATIVE_SELECT_FILTER}
                                     value={productFilter}
-                                    onValueChange={setProductFilter}
-                                    options={officerListProductOpts}
-                                    allLabel="All Products"
-                                    allValue="all"
-                                    placeholder="Filter by Product"
-                                    searchPlaceholder="Search products…"
-                                    emptyText="No product found."
-                                    triggerClassName="bg-white border-gray-200"
-                                />
+                                    onChange={(e) => setProductFilter(e.target.value)}
+                                    aria-label="Filter by product"
+                                >
+                                    <option value="all">All products</option>
+                                    {loanProducts.map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.name}
+                                        </option>
+                                    ))}
+                                </select>
                                 <Popover>
                                     <PopoverTrigger asChild>
                                         <Button variant={"outline"} className="justify-start text-left font-normal bg-white border-gray-200">

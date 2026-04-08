@@ -56,35 +56,35 @@ const OfficerDashboardDrilldownRoute = () => {
 };
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { user, loading } = useAuth();
-  
-  if (loading) {
+  const { user, loading, profileLoading, effectiveRole } = useAuth();
+
+  if (loading || (user && profileLoading)) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
-  
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
-  
-  if (allowedRoles && !allowedRoles.includes(user.user_metadata.role)) {
+
+  if (allowedRoles && (!effectiveRole || !allowedRoles.includes(effectiveRole))) {
     return <Navigate to="/" replace />;
   }
-  
+
   return children;
 };
 
 const DashboardRedirect = () => {
-  const { user, loading } = useAuth();
-  
-  if (loading) {
+  const { user, loading, profileLoading, effectiveRole } = useAuth();
+
+  if (loading || (user && profileLoading)) {
     return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
-  
+
   if (!user) {
     return <Navigate to="/login" replace />;
   }
-  
-  switch (user.user_metadata.role) {
+
+  switch (effectiveRole) {
     case 'admin':
       return <Navigate to="/admin/dashboard" replace />;
     case 'manager':

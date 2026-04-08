@@ -27,6 +27,12 @@ export const DRILLDOWN_METRICS = {
 	nearing_completion: 'nearing_completion',
 };
 
+/** Manager UI must not expose these drilldowns (interest amounts). */
+export const MANAGER_HIDDEN_DRILLDOWN_METRICS = new Set([
+	DRILLDOWN_METRICS.collected_month_interest,
+	DRILLDOWN_METRICS.outstanding_interest,
+]);
+
 export const METRIC_TITLES = {
 	[DRILLDOWN_METRICS.portfolio_active]: 'Portfolio — Active loans',
 	[DRILLDOWN_METRICS.portfolio_defaulted]: 'Portfolio — Defaulted',

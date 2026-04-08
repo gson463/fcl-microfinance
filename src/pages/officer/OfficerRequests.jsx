@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FileQuestion, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
+import { borrowerPublicId, borrowerPublicIdOrDash } from '@/lib/borrowerPublicId';
 
 const HISTORY_PAGE_SIZE = 15;
 
@@ -230,8 +231,8 @@ const OfficerRequests = () => {
                             {row.borrowers
                               ? `${row.borrowers.first_name} ${row.borrowers.surname}`.trim()
                               : '—'}
-                            {row.borrowers?.borrower_id ? (
-                              <span className="block text-xs text-muted-foreground">ID: {row.borrowers.borrower_id}</span>
+                            {borrowerPublicId(row.borrowers) ? (
+                              <span className="block text-xs text-muted-foreground">ID: {borrowerPublicId(row.borrowers)}</span>
                             ) : null}
                           </TableCell>
                           <TableCell className="max-w-md whitespace-pre-wrap text-sm text-neutral-700">
@@ -302,8 +303,8 @@ const OfficerRequests = () => {
                           </TableCell>
                           <TableCell>
                             {row.borrowers ? `${row.borrowers.first_name} ${row.borrowers.surname}`.trim() : '—'}
-                            {row.borrowers?.borrower_id ? (
-                              <span className="block text-xs text-muted-foreground">ID: {row.borrowers.borrower_id}</span>
+                            {borrowerPublicId(row.borrowers) ? (
+                              <span className="block text-xs text-muted-foreground">ID: {borrowerPublicId(row.borrowers)}</span>
                             ) : null}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
@@ -382,7 +383,7 @@ const OfficerRequests = () => {
                         className="rounded border border-neutral-200/80 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950/50"
                       >
                         <p className="text-xs font-semibold text-neutral-500">
-                          {row.borrowers?.borrower_id ?? row.id} · {row.status}
+                          {borrowerPublicIdOrDash(row.borrowers)} · {row.status}
                         </p>
                         <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                           <span className="font-medium">You:</span> {row.officer_notes || '—'}

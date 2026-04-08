@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
@@ -24,14 +24,44 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useToast } from '@/components/ui/use-toast';
-import { PlusCircle, Loader2, Trash2, Edit, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PlusCircle, Loader2, Trash2, Edit, ChevronLeft, ChevronRight, Download, Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { ALL } from '@/lib/hierarchyFilterUtils';
+import * as XLSX from 'xlsx';
+import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
+import { downloadLoanOfficersImportTemplate } from '@/lib/excelImportTemplateDownloads';
+import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 
 const PAGE_SIZE = 25;
+
+const MIN_OFFICER_PASSWORD_LEN = 6;
+
+function parseOfficerImportRow(row) {
+  const fullName = String(row.full_name ?? row['Full Name'] ?? row.name ?? '').trim();
+  const email = String(row.email ?? row.Email ?? '').trim().toLowerCase();
+  const password = String(row.password ?? row.Password ?? '').trim();
+  return { fullName, email, password };
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+async function parseCreateUserInvokeError(err) {
+  if (!err) return 'Unknown error';
+  if (err.context && typeof err.context.json === 'function') {
+    try {
+      const j = await err.context.json();
+      return j.error || err.message;
+    } catch {
+      return err.message;
+    }
+  }
+  return err.message;
+}
 
 const LoanOfficerManagement = () => {
   const { user, session } = useAuth();
@@ -52,6 +82,11 @@ const LoanOfficerManagement = () => {
   const [centerFilterId, setCenterFilterId] = useState(ALL);
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const importFileRef = useRef(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importReportOpen, setImportReportOpen] = useState(false);
+  const [importReportSummary, setImportReportSummary] = useState('');
+  const [importReportDetails, setImportReportDetails] = useState('');
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(searchInput.trim()), 400);
@@ -315,6 +350,142 @@ const LoanOfficerManagement = () => {
     }
   };
 
+  const handleDownloadLoanOfficersTemplate = async () => {
+    if (!managerBranchId) {
+      toast({
+        title: 'Branch missing',
+        description: 'Assign a branch to your manager profile before using the template.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      await downloadLoanOfficersImportTemplate();
+    } catch (err) {
+      console.error(err);
+      toast({
+        title: 'Template error',
+        description: err?.message ?? 'Could not build template.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleImportLoanOfficers = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    if (!managerBranchId) {
+      toast({
+        title: 'Branch missing',
+        description:
+          'Your account has no branch in the database. Ask an admin to assign a branch, then sign out and sign in again.',
+        variant: 'destructive',
+      });
+      event.target.value = null;
+      return;
+    }
+    setIsImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const detailLines = [];
+      let imported = 0;
+      let skippedDuplicate = 0;
+      let skippedInvalid = 0;
+      let failed = 0;
+      const sampleFailures = [];
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = getImportDataSheet(workbook, ['Loan Officers', 'Officers', 'officers']);
+        const worksheet = workbook.Sheets[sheetName];
+        if (!worksheet) {
+          throw new Error(`No worksheet found (expected "Loan Officers" or similar).`);
+        }
+        const rows = XLSX.utils.sheet_to_json(worksheet);
+        const existingEmails = new Set(
+          (officers || []).map((o) => String(o.email ?? '').trim().toLowerCase()).filter(Boolean),
+        );
+        const batchEmails = new Set();
+
+        for (let i = 0; i < rows.length; i++) {
+          const row = rows[i];
+          const { fullName, email, password } = parseOfficerImportRow(row);
+          if (!fullName && !email && !password) continue;
+          const rowLabel = `Row ${i + 2}`;
+          if (!fullName || !email || !password) {
+            skippedInvalid += 1;
+            detailLines.push(`${rowLabel}: missing full_name, email, or password`);
+            continue;
+          }
+          if (!isValidEmail(email)) {
+            skippedInvalid += 1;
+            detailLines.push(`${rowLabel}: invalid email "${email}"`);
+            continue;
+          }
+          if (password.length < MIN_OFFICER_PASSWORD_LEN) {
+            skippedInvalid += 1;
+            detailLines.push(
+              `${rowLabel}: password must be at least ${MIN_OFFICER_PASSWORD_LEN} characters`,
+            );
+            continue;
+          }
+          if (existingEmails.has(email) || batchEmails.has(email)) {
+            skippedDuplicate += 1;
+            detailLines.push(`${rowLabel}: duplicate or existing email "${email}"`);
+            continue;
+          }
+
+          const { error: invokeError } = await invokeEdgeFunction(
+            'create-user',
+            {
+              body: {
+                full_name: fullName,
+                email,
+                password,
+                role: 'officer',
+                branch_id: managerBranchId,
+              },
+            },
+            session?.access_token,
+          );
+          if (invokeError) {
+            failed += 1;
+            const msg = await parseCreateUserInvokeError(invokeError);
+            detailLines.push(`${rowLabel}: ${msg}`);
+            if (sampleFailures.length < 8) sampleFailures.push(`${rowLabel}: ${msg}`);
+          } else {
+            imported += 1;
+            batchEmails.add(email);
+            existingEmails.add(email);
+          }
+        }
+
+        await fetchOfficers();
+        const { line } = formatImportReportSummary({
+          imported,
+          skippedDuplicate,
+          skippedInvalid,
+          failed,
+          sampleFailures,
+        });
+        setImportReportSummary(line);
+        setImportReportDetails(
+          detailLines.length
+            ? detailLines.slice(0, 80).join('\n') + (detailLines.length > 80 ? '\n…' : '')
+            : '',
+        );
+        setImportReportOpen(true);
+        toast({ title: 'Import finished', description: line });
+      } catch (err) {
+        toast({ title: 'Import failed', description: err.message, variant: 'destructive' });
+      } finally {
+        setIsImporting(false);
+        event.target.value = null;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
   const handleDelete = async (officerId) => {
     const result = await invokeEdgeFunction('delete-user', { body: { userId: officerId } }, session?.access_token);
     const fail = await getEdgeInvokeFailure(result);
@@ -357,7 +528,32 @@ const LoanOfficerManagement = () => {
           Your manager account has no branch assigned in the system. An admin must set your branch in User Management, then you should sign out and sign in again before registering officers.
         </div>
       )}
-      <div className="mb-6 flex justify-end">
+      <div className="mb-6 flex flex-wrap items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleDownloadLoanOfficersTemplate}
+          disabled={!managerBranchId}
+          title={!managerBranchId ? 'Assign a branch before downloading the template.' : undefined}
+        >
+          <Download className="mr-2 h-4 w-4" /> Template
+        </Button>
+        <Button
+          type="button"
+          disabled={isImporting || !managerBranchId}
+          onClick={() => importFileRef.current?.click()}
+          title={!managerBranchId ? 'Assign a branch before importing.' : undefined}
+        >
+          {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
+          Import
+        </Button>
+        <input
+          type="file"
+          ref={importFileRef}
+          className="hidden"
+          accept=".csv,.xlsx,.xls"
+          onChange={handleImportLoanOfficers}
+        />
         <Button onClick={() => handleOpenDialog()} disabled={!managerBranchId}>
           <PlusCircle className="mr-2 h-4 w-4" /> Register Officer
         </Button>
@@ -522,6 +718,13 @@ const LoanOfficerManagement = () => {
             }
         </CardContent>
       </Card>
+      <ImportResultDialog
+        open={importReportOpen}
+        onOpenChange={setImportReportOpen}
+        title="Loan officers import"
+        summary={importReportSummary}
+        details={importReportDetails}
+      />
     </DashboardLayout>
   );
 };

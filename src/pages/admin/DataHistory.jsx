@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { HierarchyFilterBar } from '@/components/filters/HierarchyFilterBar';
 import { ALL } from '@/lib/hierarchyFilterUtils';
+import { borrowerPublicId, borrowerPublicIdOrDash } from '@/lib/borrowerPublicId';
 
 const PAGE_SIZE = 25;
 const AUDIT_PAGE_SIZE = 40;
@@ -809,8 +810,8 @@ const AdminDataHistory = () => {
                                 </TableCell>
                                 <TableCell>
                                   {row.borrowers ? `${row.borrowers.first_name} ${row.borrowers.surname}`.trim() : '—'}
-                                  {row.borrowers?.borrower_id ? (
-                                    <span className="block text-xs text-muted-foreground">ID: {row.borrowers.borrower_id}</span>
+                                  {borrowerPublicId(row.borrowers) ? (
+                                    <span className="block text-xs text-muted-foreground">ID: {borrowerPublicId(row.borrowers)}</span>
                                   ) : null}
                                 </TableCell>
                                 <TableCell className="text-sm">
@@ -867,7 +868,7 @@ const AdminDataHistory = () => {
                         {pagedLoanIncrease.map((row) => (
                           <div key={`${row.id}-notes`} className="rounded border border-neutral-200/80 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950/50">
                             <p className="text-xs font-semibold text-neutral-500">
-                              {row.borrowers?.borrower_id ?? row.id} · {row.status}
+                              {borrowerPublicIdOrDash(row.borrowers)} · {row.status}
                             </p>
                             <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                               <span className="font-medium">Officer:</span> {row.officer_notes || '—'}

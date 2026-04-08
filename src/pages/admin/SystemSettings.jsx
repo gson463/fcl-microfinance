@@ -30,6 +30,7 @@ const SystemSettings = () => {
     logoUrl: '',
     currency: '',
     applicationFeePerDisbursement: '0',
+    walletPrepaymentSplitMode: 'arrears_only',
     attendanceMinMeetingsForIncreaseEligibility: '6',
     attendanceRequireNoDefaultForAutoIncrease: 'true',
   });
@@ -65,6 +66,8 @@ const SystemSettings = () => {
           dbConfig.attendanceMinMeetingsForIncreaseEligibility || '6',
         attendanceRequireNoDefaultForAutoIncrease:
           dbConfig.attendanceRequireNoDefaultForAutoIncrease === 'false' ? 'false' : 'true',
+        walletPrepaymentSplitMode:
+          dbConfig.walletPrepaymentSplitMode === 'standard' ? 'standard' : 'arrears_only',
       };
       setConfig(fetchedConfig);
       setLogoPreview(fetchedConfig.logoUrl || resolveLogoUrl(''));
@@ -286,6 +289,38 @@ const SystemSettings = () => {
                         value={config.applicationFeePerDisbursement}
                         onChange={handleInputChange}
                       />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/25 p-4">
+                    <div>
+                      <p className="text-sm font-medium">Field wallet &amp; prepayment labelling</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Controls how each repayment is split between <strong>scheduled collection</strong> and{' '}
+                        <strong>prepayment</strong> when recording via the officer app. Loan schedule math is unchanged.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="walletPrepaymentSplitMode">Scheduled vs prepayment split</Label>
+                      <select
+                        id="walletPrepaymentSplitMode"
+                        name="walletPrepaymentSplitMode"
+                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 dark:bg-background"
+                        value={config.walletPrepaymentSplitMode}
+                        onChange={handleInputChange}
+                      >
+                        <option value="standard">
+                          Standard — due on or before payment date counts as scheduled (includes same-day installment)
+                        </option>
+                        <option value="arrears_only">
+                          Arrears-only — only installments due before payment date count as scheduled; same-day due counts as
+                          prepayment in wallet
+                        </option>
+                      </select>
+                      <p className="text-xs text-muted-foreground">
+                        Use <strong>Arrears-only</strong> when you want on-time payments (no past arrears) to appear under
+                        prepayment in the wallet. New repayments follow this; existing repayment rows are unchanged.
+                      </p>
                     </div>
                   </div>
 

@@ -126,8 +126,6 @@ const UserManagement = () => {
     fetchData();
   }, [fetchData]);
 
-  const userFormBranchOpts = useMemo(() => branches.map((b) => ({ value: b.id, label: b.name })), [branches]);
-
   const listBranchFilterOptions = useMemo(
     () => [
       { value: ALL, label: 'All branches' },
@@ -466,17 +464,29 @@ const UserManagement = () => {
                       {formData.role && formData.role !== 'admin' && (
                         <div className="space-y-2">
                           <Label htmlFor="branch">Assign Branch</Label>
-                          <SearchableSelect
+                          {/* Native select avoids Popover+Dialog focus/pointer issues (SearchableSelect). */}
+                          <select
                             id="branch"
-                            value={formData.branch_id}
-                            onValueChange={(value) => setFormData({ ...formData, branch_id: value })}
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background"
+                            value={formData.branch_id || ''}
+                            onChange={(e) =>
+                              setFormData({ ...formData, branch_id: e.target.value })
+                            }
                             disabled={!isCreateFlow}
-                            options={userFormBranchOpts}
-                            placeholder="Select a branch"
-                            searchPlaceholder="Search branches…"
-                            emptyText="No branch found."
-                            triggerClassName="w-full"
-                          />
+                          >
+                            <option value="">Select a branch</option>
+                            {branches.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.name}
+                              </option>
+                            ))}
+                          </select>
+                          {branches.length === 0 && (
+                            <p className="text-xs text-amber-700 dark:text-amber-300">
+                              No branches in the system yet. Add at least one branch under{' '}
+                              <span className="font-medium">Admin → Branch Management</span> first, then open this dialog again.
+                            </p>
+                          )}
                         </div>
                       )}
                     </>

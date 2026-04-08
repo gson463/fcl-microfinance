@@ -11,7 +11,8 @@
     "supabase:functions": "bash scripts/deploy-edge-functions.sh",
     "db:push": "supabase db push --yes",
     "db:push:dry": "supabase db push --dry-run --yes",
-    "seed:demo-attendance": "node scripts/seed-attendance-demo.mjs"
+    "seed:demo-attendance": "node scripts/seed-attendance-demo.mjs",
+    "create-admin-user": "node scripts/create-admin-user.mjs"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.3.1",

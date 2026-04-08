@@ -24,7 +24,7 @@ function getInitials(name) {
 }
 
 const Profile = () => {
-  const { user } = useAuth();
+  const { user, effectiveRole } = useAuth();
   const { toast } = useToast();
   const photoInputRef = useRef(null);
 
@@ -35,7 +35,7 @@ const Profile = () => {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoCacheBust, setPhotoCacheBust] = useState(0);
 
-  const role = (user?.user_metadata?.role || '').toString().trim().toLowerCase();
+  const role = (effectiveRole || user?.user_metadata?.role || '').toString().trim().toLowerCase();
   const canUploadProfilePhoto = role === 'admin' || role === 'manager';
 
   const avatarSrc = useMemo(() => {
@@ -279,8 +279,9 @@ const Profile = () => {
                 <Label>Role</Label>
                 <Input
                   value={
-                    user.user_metadata.role
-                      ? user.user_metadata.role.charAt(0).toUpperCase() + user.user_metadata.role.slice(1)
+                    effectiveRole || user?.user_metadata?.role
+                      ? (effectiveRole || user.user_metadata.role).charAt(0).toUpperCase() +
+                        (effectiveRole || user.user_metadata.role).slice(1)
                       : 'N/A'
                   }
                   readOnly

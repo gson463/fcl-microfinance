@@ -42,23 +42,40 @@ const BranchManagement = () => {
     setIsLoading(true);
     const { data: branchesData, error: branchesError } = await supabase
       .from('branches')
-      .select('*, users(id, full_name, role)'); // Select role to filter managers
-      
+      .select('*, users!users_branch_id_fkey(id, full_name, role)');
+
     if (branchesError) {
-      toast({ title: 'Error', description: 'Could not fetch branches.', variant: 'destructive' });
+      console.error('BranchManagement branches:', branchesError);
+      toast({
+        title: 'Error',
+        description: `Could not fetch branches: ${branchesError.message}`,
+        variant: 'destructive',
+      });
     } else {
       setBranches(branchesData);
     }
-    
-    const { data: managersData, error: managersError } = await supabase
-      .from('users')
-      .select('id, full_name, branch_id')
-      .eq('role', 'manager');
+
+    let { data: managersData, error: managersError } = await supabase.rpc('list_users_by_role', {
+      p_role: 'manager',
+    });
+    if (managersError) {
+      const fallback = await supabase
+        .from('users')
+        .select('id, full_name, branch_id')
+        .eq('role', 'manager');
+      managersData = fallback.data;
+      managersError = fallback.error;
+    }
 
     if (managersError) {
-      toast({ title: 'Error', description: 'Could not fetch managers.', variant: 'destructive' });
+      console.error('BranchManagement managers:', managersError);
+      toast({
+        title: 'Error',
+        description: `Could not fetch managers: ${managersError.message}`,
+        variant: 'destructive',
+      });
     } else {
-      setManagers(managersData);
+      setManagers(managersData ?? []);
     }
     setIsLoading(false);
   }, [toast]);
@@ -71,7 +88,7 @@ const BranchManagement = () => {
     if (branch) {
       setEditingBranch(branch);
       setFormData({ name: branch.name, location: branch.location });
-      const manager = branch.users.find(u => u.role === 'manager');
+      const manager = (branch.users || []).find((u) => u.role === 'manager');
       setAssignedManager(manager ? manager.id : 'unassigned'); // Use 'unassigned' for no manager
     } else {
       setEditingBranch(null);

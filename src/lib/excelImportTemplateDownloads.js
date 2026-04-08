@@ -401,3 +401,37 @@ export async function downloadGroupsImportTemplate({ centers }) {
   const buffer = await wb.xlsx.writeBuffer();
   triggerExcelDownload(buffer, 'Groups_Import_Template.xlsx');
 }
+
+/** Template for branch managers: bulk register loan officers (same branch as manager). */
+export async function downloadLoanOfficersImportTemplate() {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Loan Officers', {
+    views: [{ state: 'frozen', ySplit: 1, showGridLines: true }],
+  });
+  ws.addRow(['full_name', 'email', 'password']);
+  ws.getRow(1).font = { bold: true };
+  ws.addRow(['Jane Officer', 'jane.officer@example.com', 'ChangeMe123!']);
+  ws.addRow(['', '', '']);
+  [28, 36, 18].forEach((w, i) => {
+    ws.getColumn(i + 1).width = w;
+  });
+
+  addInstructionsSheet(wb, [
+    'Loan officers — bulk registration (manager)',
+    '',
+    'Sheet "Loan Officers" — one row per new officer. Columns:',
+    'full_name — full name (required).',
+    'email — login email, unique in the system (required).',
+    'password — initial password; officers should change after first login (required).',
+    '',
+    'Rules:',
+    '- All officers are assigned to YOUR branch automatically (no branch column).',
+    '- Empty rows are skipped.',
+    '- Duplicate email in the file or already registered in your branch is skipped.',
+    '- Use strong passwords; minimum length enforced on import.',
+    '- After import, officers appear in this list — you can reset passwords per user if needed.',
+  ]);
+
+  const buffer = await wb.xlsx.writeBuffer();
+  triggerExcelDownload(buffer, 'Loan_Officers_Import_Template.xlsx');
+}

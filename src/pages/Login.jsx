@@ -48,7 +48,7 @@ const Login = () => {
 	const [email, setEmail] = useState('');
 	const [password, setPassword] = useState('');
 	const [isSubmitting, setIsSubmitting] = useState(false);
-	const { signIn, user, loading: authLoading } = useAuth();
+	const { signIn, user, loading: authLoading, profileLoading, effectiveRole } = useAuth();
 	const navigate = useNavigate();
 	const { toast } = useToast();
 	const [systemConfig, setSystemConfig] = useState({ systemName: DEFAULT_SYSTEM_NAME, logoUrl: '' });
@@ -92,22 +92,21 @@ const Login = () => {
 	}, []);
 
 	useEffect(() => {
-		if (user) {
-			switch (user.user_metadata.role) {
-				case 'admin':
-					navigate('/admin/dashboard');
-					break;
-				case 'manager':
-					navigate('/manager/dashboard');
-					break;
-				case 'officer':
-					navigate('/officer/dashboard');
-					break;
-				default:
-					navigate('/');
-			}
+		if (!user || profileLoading) return;
+		switch (effectiveRole) {
+			case 'admin':
+				navigate('/admin/dashboard');
+				break;
+			case 'manager':
+				navigate('/manager/dashboard');
+				break;
+			case 'officer':
+				navigate('/officer/dashboard');
+				break;
+			default:
+				navigate('/');
 		}
-	}, [user, navigate]);
+	}, [user, profileLoading, effectiveRole, navigate]);
 
 	const handleSubmit = async (e) => {
 		e.preventDefault();
@@ -123,7 +122,7 @@ const Login = () => {
 		setIsSubmitting(false);
 	};
 
-	if (authLoading) {
+	if (authLoading || (user && profileLoading)) {
 		return (
 			<div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-100 dark:bg-brand-login-bg">
 				<div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(184,146,58,0.12),transparent)] dark:block" />

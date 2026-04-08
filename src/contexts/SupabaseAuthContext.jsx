@@ -18,6 +18,9 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  /** Row in public.users — source of truth for role when JWT user_metadata is missing/stale. */
+  const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
 
   // Centralized session handler to ensure state consistency
   const handleSession = useCallback((currentSession) => {
@@ -27,6 +30,7 @@ export const AuthProvider = ({ children }) => {
     } else {
       setSession(null);
       setUser(null);
+      setProfile(null);
     }
     setLoading(false);
   }, []);
@@ -101,6 +105,39 @@ export const AuthProvider = ({ children }) => {
       subscription.unsubscribe();
     };
   }, [handleSession, clearAuthState]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setProfile(null);
+      setProfileLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setProfileLoading(true);
+    void (async () => {
+      const { data, error } = await supabase
+        .from('users')
+        .select('role, branch_id, full_name')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.error('Auth profile fetch failed:', error.message);
+        setProfile(null);
+      } else {
+        setProfile(data ?? null);
+      }
+      setProfileLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const effectiveRole = useMemo(() => {
+    const r = profile?.role ?? user?.user_metadata?.role;
+    return typeof r === 'string' && r ? r : null;
+  }, [profile?.role, user?.user_metadata?.role]);
 
   const signUp = useCallback(async (email, password, options) => {
     try {
@@ -209,14 +246,20 @@ export const AuthProvider = ({ children }) => {
     };
   }, [session, signOut, navigate, toast]);
 
-  const value = useMemo(() => ({
-    user,
-    session,
-    loading,
-    signUp,
-    signIn,
-    signOut,
-  }), [user, session, loading, signUp, signIn, signOut]);
+  const value = useMemo(
+    () => ({
+      user,
+      session,
+      loading,
+      profile,
+      profileLoading,
+      effectiveRole,
+      signUp,
+      signIn,
+      signOut,
+    }),
+    [user, session, loading, profile, profileLoading, effectiveRole, signUp, signIn, signOut],
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

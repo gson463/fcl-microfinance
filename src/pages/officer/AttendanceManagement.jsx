@@ -16,6 +16,7 @@ import { format, parseISO } from 'date-fns';
 import { ClipboardList, Plus, FileDown, Save, Loader2, Trash2, Layers } from 'lucide-react';
 import { downloadAttendanceSheetPdf, downloadRecordedAttendancePdf, downloadCompiledAttendancePdf } from '@/lib/attendanceSheetPdf';
 import { DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE, resolveLogoUrl } from '@/lib/brand';
+import { borrowerPublicId } from '@/lib/borrowerPublicId';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -647,8 +648,10 @@ const AttendanceManagement = () => {
                                 className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between dark:border-neutral-700 dark:bg-neutral-900/40"
                               >
                                 <span className="text-sm font-medium">
-                                  {b.first_name} {b.surname}{' '}
-                                  <span className="text-muted-foreground font-normal">({b.borrower_id})</span>
+                                  {b.first_name} {b.surname}
+                                  {borrowerPublicId(b) ? (
+                                    <span className="text-muted-foreground font-normal"> ({borrowerPublicId(b)})</span>
+                                  ) : null}
                                 </span>
                                 <div className="flex flex-wrap gap-1">
                                   {STATUS_KEYS.map((key) => (

@@ -18,6 +18,7 @@ import { generateSchedule } from '@/utils/loanUtils';
 import { recalculateLoanScheduleWithRetry } from '@/lib/loanScheduleRegeneration';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { useUserProfileScope, fetchOfficerIdsForBranch } from '@/hooks/useUserProfileScope';
+import { borrowerPublicId, borrowerPublicIdOrDash } from '@/lib/borrowerPublicId';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -569,8 +570,8 @@ const LoanRequests = () => {
                             {row.borrowers
                               ? `${row.borrowers.first_name} ${row.borrowers.surname}`.trim()
                               : '—'}
-                            {row.borrowers?.borrower_id ? (
-                              <span className="block text-xs text-muted-foreground">ID: {row.borrowers.borrower_id}</span>
+                            {borrowerPublicId(row.borrowers) ? (
+                              <span className="block text-xs text-muted-foreground">ID: {borrowerPublicId(row.borrowers)}</span>
                             ) : null}
                           </TableCell>
                           <TableCell>{row.officer?.full_name ?? '—'}</TableCell>
@@ -664,8 +665,8 @@ const LoanRequests = () => {
                           </TableCell>
                           <TableCell>
                             {row.borrowers ? `${row.borrowers.first_name} ${row.borrowers.surname}`.trim() : '—'}
-                            {row.borrowers?.borrower_id ? (
-                              <span className="block text-xs text-muted-foreground">ID: {row.borrowers.borrower_id}</span>
+                            {borrowerPublicId(row.borrowers) ? (
+                              <span className="block text-xs text-muted-foreground">ID: {borrowerPublicId(row.borrowers)}</span>
                             ) : null}
                           </TableCell>
                           <TableCell className="text-sm">{row.officer?.full_name ?? '—'}</TableCell>
@@ -726,7 +727,7 @@ const LoanRequests = () => {
                     {pagedHistory.map((row) => (
                       <div key={`${row.id}-notes`} className="rounded border border-neutral-200/80 bg-white p-3 dark:border-neutral-700 dark:bg-neutral-950/50">
                         <p className="text-xs font-semibold text-neutral-500">
-                          {row.borrowers?.borrower_id ?? row.id} · {row.status}
+                          {borrowerPublicIdOrDash(row.borrowers)} · {row.status}
                         </p>
                         <p className="mt-1 text-xs text-neutral-600 dark:text-neutral-400">
                           <span className="font-medium">Officer:</span> {row.officer_notes || '—'}

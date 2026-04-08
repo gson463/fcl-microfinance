@@ -24,11 +24,39 @@ const DialogOverlay = React.forwardRef(({ className, ...props }, ref) => (
 ));
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
-const DialogContent = React.forwardRef(({ className, children, ...props }, ref) => (
+/** Clicks/focus on portaled Popover, Select, Dropdown, etc. must not be treated as "outside" the Dialog. */
+function isRadixFloatingLayerTarget(target) {
+  if (!target || typeof target.closest !== 'function') return false;
+  return Boolean(
+    target.closest('[data-radix-popper-content-wrapper]') ||
+      target.closest('[data-radix-select-content]') ||
+      target.closest('[data-radix-dropdown-menu-content]'),
+  );
+}
+
+const DialogContent = React.forwardRef(({ className, children, onPointerDownOutside, onFocusOutside, ...props }, ref) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
       ref={ref}
+      onPointerDownOutside={(event) => {
+        const raw = event.detail?.originalEvent;
+        const t = raw?.target ?? event.target;
+        if (isRadixFloatingLayerTarget(t)) {
+          event.preventDefault();
+        }
+        onPointerDownOutside?.(event);
+      }}
+      onFocusOutside={(event) => {
+        const raw = event.detail?.originalEvent;
+        const related = raw && 'relatedTarget' in raw ? raw.relatedTarget : null;
+        const t =
+          related instanceof Element ? related : raw?.target instanceof Element ? raw.target : event.target;
+        if (isRadixFloatingLayerTarget(t)) {
+          event.preventDefault();
+        }
+        onFocusOutside?.(event);
+      }}
       className={cn(
         /* Mobile: top-anchored + max height so tall forms are not clipped by translate(-50%,-50%). Desktop: centered. */
         'fixed left-1/2 top-4 z-50 grid w-[calc(100vw-1rem)] max-w-lg -translate-x-1/2 translate-y-0 gap-4 border bg-background p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-lg duration-200',

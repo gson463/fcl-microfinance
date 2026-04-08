@@ -106,7 +106,7 @@ const SidebarLink = ({ to, icon: Icon, text, collapsed }) => (
 );
 
 const DashboardLayout = ({ children, title, description = "Microfinance Management System" }) => {
-  const { user, signOut } = useAuth();
+  const { user, signOut, effectiveRole } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { sidebarPreset } = useTheme();
@@ -144,7 +144,7 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
   let links = [];
   let adminSystemSection = null;
   if (user) {
-    switch (user.user_metadata.role) {
+    switch (effectiveRole) {
       case 'admin':
         links = adminMainLinks;
         adminSystemSection = adminSystemLinks;

@@ -4,11 +4,12 @@ import { createClient } from '@supabase/supabase-js';
  * Point to any Supabase project via .env (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY).
  * The other project must expose the same tables, RPCs, RLS, Storage buckets (logos, profile-photos), and Edge Functions this app expects.
  */
+/** Default: Fahari Credits (rlksathvyaxamwctkdhv). Override via .env for another project. */
 const supabaseUrl =
-	import.meta.env.VITE_SUPABASE_URL || 'https://jdwgpfyaygirkqyywvvj.supabase.co';
+	import.meta.env.VITE_SUPABASE_URL || 'https://rlksathvyaxamwctkdhv.supabase.co';
 const supabaseAnonKey =
 	import.meta.env.VITE_SUPABASE_ANON_KEY ||
-	'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impkd2dwZnlheWdpcmtxeXl3dnZqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE1OTA5OTQsImV4cCI6MjA3NzE2Njk5NH0.9Gesydov6DMN4Cp44-0MW6s2pRyBSl0xi1XvuUV6a8w';
+	'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsa3NhdGh2eWF4YW13Y3RrZGh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ3MzY4NDksImV4cCI6MjA5MDMxMjg0OX0._IKlpPBvEozIG28hZlWQfdNto86l6FojHPXSW4Pks1A';
 
 if (!supabaseUrl || !supabaseAnonKey) {
 	console.error(

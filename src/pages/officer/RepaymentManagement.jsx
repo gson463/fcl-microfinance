@@ -15,7 +15,6 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Badge } from '@/components/ui/badge';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
@@ -35,9 +34,16 @@ import {
 } from '@/lib/repaymentInstallmentUnit.js';
 import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
+import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
+import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
+/** Native <select> avoids Popover+Dialog focus issues (same as Admin → Add User → Assign Branch). */
+const NATIVE_SELECT_DIALOG =
+    'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
+const NATIVE_SELECT_FILTER =
+    'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background min-w-[200px]';
 /** How far back officers may set actual payment date (collections / prepayment). */
 const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
 
@@ -98,9 +104,16 @@ const RepaymentManagement = () => {
     const [isRefreshingSchedule, setIsRefreshingSchedule] = useState(false);
     const [currentRepayment, setCurrentRepayment] = useState(null);
     const [editForm, setEditForm] = useState({ amount: '', payment_date: '' });
+    /** Wizard: scheduled first (clears arrears + due per schedule), then optional prepayment (backward from last installment). */
+    const [recordCollectionStep, setRecordCollectionStep] = useState(() => 'scheduled');
+    /** Amount saved in step 1 this session (for banner on step 2); null if user skipped step 1. */
+    const [scheduledRecordedInSession, setScheduledRecordedInSession] = useState(null);
     const [repaymentFormData, setRepaymentFormData] = useState(() => ({
         loanId: '',
-        amount: '',
+        /** Cash toward arrears + due on/before payment date (wallet “scheduled”). */
+        scheduled_portion: '',
+        /** Cash toward future installments from end of schedule (wallet prepayment). */
+        prepayment_portion: '',
         payment_date: getTodayEATDateForForm(),
     }));
     const [pickerCenterFilter, setPickerCenterFilter] = useState('all');
@@ -114,6 +127,8 @@ const RepaymentManagement = () => {
     const [selectedRepayments, setSelectedRepayments] = useState([]);
     const [pendingDeleteRepaymentIds, setPendingDeleteRepaymentIds] = useState(() => new Set());
     const [holidays, setHolidays] = useState([]);
+    /** Matches system_config walletPrepaymentSplitMode — must match record-repayment edge function. */
+    const [walletPrepaymentSplitMode, setWalletPrepaymentSplitMode] = useState(WALLET_PREPAYMENT_ARREARS_ONLY);
 
     // Filters
     const [groupFilter, setGroupFilter] = useState('all');
@@ -136,7 +151,14 @@ const RepaymentManagement = () => {
     const resetRepaymentForm = () => {
         setPickerCenterFilter('all');
         setPickerGroupFilter('all');
-        setRepaymentFormData({ loanId: '', amount: '', payment_date: getTodayEATDateForForm() });
+        setRecordCollectionStep('scheduled');
+        setScheduledRecordedInSession(null);
+        setRepaymentFormData({
+            loanId: '',
+            scheduled_portion: '',
+            prepayment_portion: '',
+            payment_date: getTodayEATDateForForm(),
+        });
         setLoanPickerSearch('');
         setPickerDueOnSelectedDate(null);
         setPickerTotalDueOnOrBefore(null);
@@ -190,6 +212,13 @@ const RepaymentManagement = () => {
             const { data: holidaysData } = await supabase.from('holidays').select('date');
             setHolidays(holidaysData || []);
 
+            const { data: splitRow } = await supabase
+                .from('system_config')
+                .select('value')
+                .eq('key', 'walletPrepaymentSplitMode')
+                .maybeSingle();
+            setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
+
         } catch (error) {
             toast({ title: 'Error fetching data', description: error.message, variant: 'destructive' });
         } finally {
@@ -201,17 +230,31 @@ const RepaymentManagement = () => {
         fetchData();
     }, [fetchData]);
 
+    /** Keep group filter valid when center changes (portfolio table). */
     useEffect(() => {
-        if (centerFilter === 'all') {
+        if (groupFilter === 'all') return;
+        const g = groups.find((x) => x.id === groupFilter);
+        if (!g) {
+            setGroupFilter('all');
+            return;
+        }
+        if (centerFilter !== 'all' && g.center_id !== centerFilter) {
             setGroupFilter('all');
         }
-    }, [centerFilter]);
+    }, [centerFilter, groupFilter, groups]);
 
+    /** Keep record-dialog group valid when center changes. */
     useEffect(() => {
-        if (pickerCenterFilter === 'all') {
+        if (pickerGroupFilter === 'all') return;
+        const g = groups.find((x) => x.id === pickerGroupFilter);
+        if (!g) {
+            setPickerGroupFilter('all');
+            return;
+        }
+        if (pickerCenterFilter !== 'all' && g.center_id !== pickerCenterFilter) {
             setPickerGroupFilter('all');
         }
-    }, [pickerCenterFilter]);
+    }, [pickerCenterFilter, pickerGroupFilter, groups]);
 
     useEffect(() => {
         let cancelled = false;
@@ -234,12 +277,13 @@ const RepaymentManagement = () => {
         }
 
         (async () => {
+            const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
             const [onDateRes, totalRes] = await Promise.all([
                 supabase.rpc('scheduled_due_on_date_only', {
                     p_schedule: loan.schedule ?? null,
                     p_payment_date: payDate,
                 }),
-                supabase.rpc('scheduled_due_for_payment_date', {
+                supabase.rpc(dueRpc, {
                     p_schedule: loan.schedule ?? null,
                     p_payment_date: payDate,
                 }),
@@ -270,19 +314,27 @@ const RepaymentManagement = () => {
                 if (unit == null) {
                     if (onDate > 0) {
                         setRepaymentFormData((prev) =>
-                            prev.loanId === id ? { ...prev, amount: onDate.toFixed(2) } : prev
+                            prev.loanId === id
+                                ? { ...prev, scheduled_portion: onDate.toFixed(2), prepayment_portion: '0' }
+                                : prev
                         );
                     } else {
-                        setRepaymentFormData((prev) => (prev.loanId === id ? { ...prev, amount: '' } : prev));
+                        setRepaymentFormData((prev) =>
+                            prev.loanId === id ? { ...prev, scheduled_portion: '', prepayment_portion: '' } : prev
+                        );
                     }
                 } else {
                     const dueForMin = Math.max(totalDue, onDate);
                     if (dueForMin <= 0) {
-                        setRepaymentFormData((prev) => (prev.loanId === id ? { ...prev, amount: '' } : prev));
-                    } else {
-                        // Default to one installment.
                         setRepaymentFormData((prev) =>
-                            prev.loanId === id ? { ...prev, amount: unit.toFixed(2) } : prev
+                            prev.loanId === id ? { ...prev, scheduled_portion: '', prepayment_portion: '' } : prev
+                        );
+                    } else {
+                        const snapped = roundToValidRepaymentAmount(dueForMin, totalDue, unit);
+                        setRepaymentFormData((prev) =>
+                            prev.loanId === id
+                                ? { ...prev, scheduled_portion: snapped.toFixed(2), prepayment_portion: '0' }
+                                : prev
                         );
                     }
                 }
@@ -292,15 +344,13 @@ const RepaymentManagement = () => {
         return () => {
             cancelled = true;
         };
-    }, [repaymentFormData.loanId, repaymentFormData.payment_date, loans]);
+    }, [repaymentFormData.loanId, repaymentFormData.payment_date, loans, walletPrepaymentSplitMode]);
 
+    /** When center is "all", list all groups so filters work without picking a center first. */
     const groupsForFilter = useMemo(() => {
-        if (centerFilter === 'all') return [];
+        if (centerFilter === 'all') return groups;
         return groups.filter((g) => g.center_id === centerFilter);
     }, [groups, centerFilter]);
-
-    const officerRepCenterOpts = useMemo(() => centers.map((c) => ({ value: c.id, label: c.name })), [centers]);
-    const officerRepGroupFilterOpts = useMemo(() => groupsForFilter.map((g) => ({ value: g.id, label: g.name })), [groupsForFilter]);
 
     const filteredRepayments = useMemo(() => {
         return repayments.filter(r => {
@@ -343,9 +393,9 @@ const RepaymentManagement = () => {
     
     const stats = useMemo(() => {
         const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
-        const totalPrepayment = filteredRepayments.reduce((sum, r) => sum + (Number(r.prepayment_amount) || 0), 0);
+        const totalPrepayment = filteredRepayments.reduce((sum, r) => sum + prepaymentAmount(r), 0);
         const totalScheduledCollection = filteredRepayments.reduce(
-            (sum, r) => sum + Math.max(0, r.amount - (Number(r.prepayment_amount) || 0)),
+            (sum, r) => sum + scheduledCollectionAmount(r),
             0
         );
         const totalInterest = filteredRepayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0);
@@ -465,19 +515,44 @@ const RepaymentManagement = () => {
         }
     };
     
-    const handleRecordRepayment = async () => {
-        const { loanId, amount, payment_date } = repaymentFormData;
+    const parseRecordError = (data, error) => {
+        const bodyError =
+            data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
+                ? String(data.error)
+                : null;
+        return (
+            bodyError ||
+            (error?.context && typeof error.context === 'object' && error.context.body
+                ? (() => {
+                      try {
+                          const j = JSON.parse(String(error.context.body));
+                          return j?.error ? String(j.error) : null;
+                      } catch {
+                          return null;
+                      }
+                  })()
+                : null) ||
+            error?.message ||
+            null
+        );
+    };
+
+    /**
+     * Shared edge invoke. Two-step flow: first record scheduled (forward), then optional prepayment (backward in schedule engine).
+     */
+    const submitRecordRepaymentPortions = async (schedNum, prepNum, { closeDialog = true, successDescription } = {}) => {
+        const { loanId, payment_date } = repaymentFormData;
         if (!loanId) {
             toast({ title: 'Error', description: 'Please select a loan.', variant: 'destructive' });
-            return;
+            return false;
         }
         if (!payment_date) {
             toast({ title: 'Error', description: 'Please select the payment date.', variant: 'destructive' });
-            return;
+            return false;
         }
         if (!user?.id) {
             toast({ title: 'Error', description: 'You must be signed in to record a repayment.', variant: 'destructive' });
-            return;
+            return false;
         }
         const payStr = formatInTimeZone(payment_date, EAT_TIMEZONE, 'yyyy-MM-dd');
         const todayStr = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
@@ -489,7 +564,7 @@ const RepaymentManagement = () => {
                 description: 'Actual payment date cannot be in the future.',
                 variant: 'destructive',
             });
-            return;
+            return false;
         }
         if (payStr < minStr) {
             toast({
@@ -497,31 +572,40 @@ const RepaymentManagement = () => {
                 description: `Actual payment date cannot be more than ${PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} days ago.`,
                 variant: 'destructive',
             });
-            return;
+            return false;
         }
         if (isSundayInTimeZone(payment_date, EAT_TIMEZONE)) {
             toast({ title: 'Invalid date', description: 'Repayments are not recorded on Sundays.', variant: 'destructive' });
-            return;
+            return false;
         }
         if (holidays.some((h) => h.date === payStr)) {
             toast({ title: 'Invalid date', description: 'Repayments are not recorded on public holidays.', variant: 'destructive' });
-            return;
+            return false;
         }
 
-        const raw = String(amount ?? '').trim();
-        const amt = parseFloat(raw.replace(/,/g, ''));
+        if (!Number.isFinite(schedNum) || !Number.isFinite(prepNum) || schedNum < 0 || prepNum < 0) {
+            toast({
+                title: 'Error',
+                description: 'Enter valid non-negative amounts.',
+                variant: 'destructive',
+            });
+            return false;
+        }
+        const amt = schedNum + prepNum;
         if (!Number.isFinite(amt) || amt <= 0) {
-            toast({ title: 'Error', description: 'Enter a repayment amount greater than zero.', variant: 'destructive' });
-            return;
+            toast({ title: 'Error', description: 'Amount must be greater than zero.', variant: 'destructive' });
+            return false;
         }
 
         const loan = loans.find((l) => l.id === loanId);
         if (!loan) {
             toast({ title: 'Error', description: 'Loan not found. Refresh and try again.', variant: 'destructive' });
-            return;
+            return false;
         }
 
-        const { data: dueRaw, error: dueErr } = await supabase.rpc('scheduled_due_for_payment_date', {
+        const unit = getInstallmentUnitFromSchedule(loan.schedule);
+        const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
+        const { data: dueRaw, error: dueErr } = await supabase.rpc(dueRpc, {
             p_schedule: loan.schedule ?? null,
             p_payment_date: payStr,
         });
@@ -531,10 +615,9 @@ const RepaymentManagement = () => {
                 description: dueErr.message || 'Try again.',
                 variant: 'destructive',
             });
-            return;
+            return false;
         }
         const due = Number(dueRaw ?? 0);
-        const unit = getInstallmentUnitFromSchedule(loan.schedule);
         if (!isValidRepaymentAmount(amt, due, unit)) {
             toast({
                 title: 'Invalid amount',
@@ -543,7 +626,7 @@ const RepaymentManagement = () => {
                     REPAYMENT_AMOUNT_INVALID_FALLBACK,
                 variant: 'destructive',
             });
-            return;
+            return false;
         }
 
         setIsSubmitting(true);
@@ -554,6 +637,9 @@ const RepaymentManagement = () => {
                     body: {
                         loan_id: loanId,
                         amount: amt,
+                        scheduled_portion: schedNum,
+                        prepayment_portion: prepNum,
+                        wallet_split_explicit: true,
                         officer_id: user.id,
                         actual_payment_date: formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
                     },
@@ -561,43 +647,98 @@ const RepaymentManagement = () => {
                 session?.access_token,
             );
 
-            const bodyError =
-                data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
-                    ? String(data.error)
-                    : null;
-
-            if (error || bodyError) {
-                const description =
-                    bodyError ||
-                    (error?.context && typeof error.context === 'object' && error.context.body
-                        ? (() => {
-                              try {
-                                  const j = JSON.parse(String(error.context.body));
-                                  return j?.error ? String(j.error) : null;
-                              } catch {
-                                  return null;
-                              }
-                          })()
-                        : null) ||
-                    error?.message ||
-                    'Could not record repayment.';
-                toast({ title: 'Repayment failed', description, variant: 'destructive' });
-                return;
+            const description = parseRecordError(data, error);
+            if (error || description) {
+                toast({
+                    title: 'Repayment failed',
+                    description: description || 'Could not record repayment.',
+                    variant: 'destructive',
+                });
+                return false;
             }
 
-            toast({ title: 'Success', description: 'Collection recorded successfully!' });
-            setRepaymentDialogOpen(false);
-            resetRepaymentForm();
+            const w = data && typeof data === 'object' && data !== null && 'wallet' in data ? data.wallet : null;
+            const walletLine =
+                w && typeof w === 'object'
+                    ? ` On DB table repayments (before schedule spread): scheduled bucket ${currency} ${Number(w.scheduled_due_snapshot ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, prepayment ${currency} ${Number(w.prepayment_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+                    : '';
+
+            toast({
+                title: 'Success',
+                description: (successDescription ?? 'Collection recorded successfully!') + walletLine,
+            });
             await fetchData();
+            if (closeDialog) {
+                setRepaymentDialogOpen(false);
+                resetRepaymentForm();
+            }
+            return true;
         } catch (e) {
             toast({
                 title: 'Repayment failed',
                 description: e?.message || 'Unexpected error. Check your connection and try again.',
                 variant: 'destructive',
             });
+            return false;
         } finally {
             setIsSubmitting(false);
         }
+    };
+
+    const handleRecordScheduledContinue = async () => {
+        const rawS = String(repaymentFormData.scheduled_portion ?? '').trim();
+        const s = rawS === '' ? 0 : parseFloat(rawS.replace(/,/g, ''));
+        if (!Number.isFinite(s) || s <= 0) {
+            toast({
+                title: 'Enter scheduled amount',
+                description: 'Enter the scheduled collection amount (arrears + due today), or use “Prepayment only” below.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const ok = await submitRecordRepaymentPortions(s, 0, {
+            closeDialog: false,
+            successDescription:
+                'Scheduled collection saved. Next: enter prepayment (optional), or tap Done.',
+        });
+        if (ok) {
+            setScheduledRecordedInSession(s);
+            setRecordCollectionStep('prepayment');
+            setRepaymentFormData((prev) => ({ ...prev, scheduled_portion: '', prepayment_portion: '' }));
+        }
+    };
+
+    const handleSkipToPrepaymentOnly = () => {
+        setScheduledRecordedInSession(null);
+        setRecordCollectionStep('prepayment');
+        setRepaymentFormData((prev) => ({ ...prev, scheduled_portion: '', prepayment_portion: '' }));
+    };
+
+    const handleBackToScheduledStep = () => {
+        setRecordCollectionStep('scheduled');
+    };
+
+    const handleRecordPrepaymentFinish = async () => {
+        const rawP = String(repaymentFormData.prepayment_portion ?? '').trim();
+        const p = rawP === '' ? 0 : parseFloat(rawP.replace(/,/g, ''));
+        if (!Number.isFinite(p) || p < 0) {
+            toast({ title: 'Error', description: 'Enter a valid prepayment amount.', variant: 'destructive' });
+            return;
+        }
+        if (p <= 0) {
+            setRepaymentDialogOpen(false);
+            resetRepaymentForm();
+            return;
+        }
+        await submitRecordRepaymentPortions(0, p, {
+            closeDialog: true,
+            successDescription: 'Prepayment recorded.',
+        });
+    };
+
+    const handleWizardDoneNoPrepayment = () => {
+        setRepaymentDialogOpen(false);
+        resetRepaymentForm();
     };
 
     const handleRequestDelete = async (repaymentId) => {
@@ -708,8 +849,8 @@ const RepaymentManagement = () => {
             { header: 'Principal Paid', accessor: (r) => String(r.principal_paid ?? '') },
             { header: 'Interest Paid', accessor: (r) => String(r.interest_paid ?? '') },
             { header: 'Total Paid', accessor: (r) => String(r.amount ?? '') },
-            { header: 'Scheduled collection', accessor: (r) => String(Math.max(0, (r.amount ?? 0) - (Number(r.prepayment_amount) || 0))) },
-            { header: 'Prepayment', accessor: (r) => String(r.prepayment_amount ?? '0') },
+            { header: 'Scheduled collection', accessor: (r) => String(scheduledCollectionAmount(r)) },
+            { header: 'Prepayment', accessor: (r) => String(prepaymentAmount(r)) },
         ], rows);
         toast({ title: 'Exported', description: `${rows.length} repayment(s) to CSV.` });
     };
@@ -771,14 +912,9 @@ const RepaymentManagement = () => {
     };
 
     const groupsForRecordPicker = useMemo(() => {
-        if (pickerCenterFilter === 'all') return [];
+        if (pickerCenterFilter === 'all') return groups;
         return groups.filter((g) => g.center_id === pickerCenterFilter);
     }, [groups, pickerCenterFilter]);
-
-    const recordPickerGroupOpts = useMemo(
-        () => groupsForRecordPicker.map((g) => ({ value: g.id, label: g.name })),
-        [groupsForRecordPicker],
-    );
 
     const loansForRecordPicker = useMemo(() => {
         return loans.filter((l) => {
@@ -821,34 +957,86 @@ const RepaymentManagement = () => {
         return loan ? getInstallmentUnitFromSchedule(loan.schedule) : null;
     }, [repaymentFormData.loanId, loans]);
 
-    const minAmountForRecordInput =
-        repaymentFormData.loanId && pickerInstallmentUnit != null
-            ? pickerInstallmentUnit
-            : repaymentFormData.loanId && pickerTotalDueOnOrBefore != null
-              ? minimumRepaymentForDue(pickerTotalDueOnOrBefore)
-              : 0.01;
-
-    /** Inline English message when the typed amount does not pass installment rules (blocks submit). */
-    const recordRepaymentAmountError = useMemo(() => {
-        if (!repaymentFormData.loanId || !String(repaymentFormData.amount ?? '').trim()) return '';
+    /** Step 1: scheduled amount only — must be valid installment multiple when &gt; 0. */
+    const scheduledStepError = useMemo(() => {
+        if (recordCollectionStep !== 'scheduled') return '';
+        if (!repaymentFormData.loanId) return '';
         const loan = loans.find((l) => l.id === repaymentFormData.loanId);
         if (!loan || pickerInstallmentUnit == null || pickerTotalDueOnOrBefore == null) return '';
-        const amt = parseFloat(String(repaymentFormData.amount ?? '').replace(/,/g, ''));
-        if (!Number.isFinite(amt) || amt <= 0) return '';
+        const rawS = String(repaymentFormData.scheduled_portion ?? '').trim();
+        const s = rawS === '' ? 0 : parseFloat(rawS.replace(/,/g, ''));
+        if (!Number.isFinite(s) || s < 0) return '';
+        if (s <= 0) return '';
         const due = Number(pickerTotalDueOnOrBefore ?? 0);
-        if (isValidRepaymentAmount(amt, due, pickerInstallmentUnit)) return '';
+        if (isValidRepaymentAmount(s, due, pickerInstallmentUnit)) return '';
         return (
-            repaymentAmountValidationMessage(amt, due, pickerInstallmentUnit, currency) ||
+            repaymentAmountValidationMessage(s, due, pickerInstallmentUnit, currency) ||
             REPAYMENT_AMOUNT_INVALID_FALLBACK
         );
     }, [
+        recordCollectionStep,
         repaymentFormData.loanId,
-        repaymentFormData.amount,
+        repaymentFormData.scheduled_portion,
         loans,
         pickerInstallmentUnit,
         pickerTotalDueOnOrBefore,
         currency,
     ]);
+
+    /** Step 2: prepayment line only — valid multiple when &gt; 0. */
+    const prepaymentStepError = useMemo(() => {
+        if (recordCollectionStep !== 'prepayment') return '';
+        if (!repaymentFormData.loanId) return '';
+        const loan = loans.find((l) => l.id === repaymentFormData.loanId);
+        if (!loan || pickerInstallmentUnit == null || pickerTotalDueOnOrBefore == null) return '';
+        const rawP = String(repaymentFormData.prepayment_portion ?? '').trim();
+        const p = rawP === '' ? 0 : parseFloat(rawP.replace(/,/g, ''));
+        if (!Number.isFinite(p) || p < 0) return '';
+        if (p <= 0) return '';
+        const due = Number(pickerTotalDueOnOrBefore ?? 0);
+        if (isValidRepaymentAmount(p, due, pickerInstallmentUnit)) return '';
+        return (
+            repaymentAmountValidationMessage(p, due, pickerInstallmentUnit, currency) ||
+            REPAYMENT_AMOUNT_INVALID_FALLBACK
+        );
+    }, [
+        recordCollectionStep,
+        repaymentFormData.loanId,
+        repaymentFormData.prepayment_portion,
+        loans,
+        pickerInstallmentUnit,
+        pickerTotalDueOnOrBefore,
+        currency,
+    ]);
+
+    const recordCollectionTotal = useMemo(() => {
+        const rawS = String(repaymentFormData.scheduled_portion ?? '').trim();
+        const rawP = String(repaymentFormData.prepayment_portion ?? '').trim();
+        const s = rawS === '' ? 0 : parseFloat(rawS.replace(/,/g, ''));
+        const p = rawP === '' ? 0 : parseFloat(rawP.replace(/,/g, ''));
+        if (!Number.isFinite(s) || !Number.isFinite(p) || s < 0 || p < 0) return null;
+        return recordCollectionStep === 'scheduled' ? s : p;
+    }, [repaymentFormData.scheduled_portion, repaymentFormData.prepayment_portion, recordCollectionStep]);
+
+    const snapScheduledField = useCallback(() => {
+        setRepaymentFormData((prev) => {
+            if (!prev.loanId || pickerInstallmentUnit == null) return prev;
+            const s = parseFloat(String(prev.scheduled_portion ?? '').replace(/,/g, '')) || 0;
+            if (s <= 0) return prev;
+            const snapped = roundToValidRepaymentAmount(s, pickerTotalDueOnOrBefore ?? 0, pickerInstallmentUnit);
+            return { ...prev, scheduled_portion: snapped.toFixed(2) };
+        });
+    }, [pickerInstallmentUnit, pickerTotalDueOnOrBefore]);
+
+    const snapPrepaymentField = useCallback(() => {
+        setRepaymentFormData((prev) => {
+            if (!prev.loanId || pickerInstallmentUnit == null) return prev;
+            const p = parseFloat(String(prev.prepayment_portion ?? '').replace(/,/g, '')) || 0;
+            if (p <= 0) return prev;
+            const snapped = roundToValidRepaymentAmount(p, pickerTotalDueOnOrBefore ?? 0, pickerInstallmentUnit);
+            return { ...prev, prepayment_portion: snapped.toFixed(2) };
+        });
+    }, [pickerInstallmentUnit, pickerTotalDueOnOrBefore]);
 
     const handleSelectAll = (checked) => {
         const pageIds = pagedRepayments.map(r => r.id);
@@ -900,51 +1088,66 @@ const RepaymentManagement = () => {
                             <DialogHeader>
                                 <DialogTitle>Record New Collection</DialogTitle>
                                 <DialogDescription>
-                                    Filter by center and group (optional), search for a loan, enter amount. Payment date is
-                                    today (Africa/Nairobi).
+                                    {recordCollectionStep === 'scheduled'
+                                        ? 'Step 1: Record scheduled collection first — it clears arrears and installments due on or before the payment date (forward on the schedule).'
+                                        : 'Step 2: Optionally record prepayment — the system applies it from the last installment backward (same rules as the loan schedule engine).'}
                                 </DialogDescription>
+                                <div className="flex items-center gap-2 pt-2 text-xs font-medium text-muted-foreground">
+                                    <span className={recordCollectionStep === 'scheduled' ? 'text-foreground' : ''}>
+                                        1 · Scheduled
+                                    </span>
+                                    <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+                                    <span className={recordCollectionStep === 'prepayment' ? 'text-foreground' : ''}>
+                                        2 · Prepayment
+                                    </span>
+                                </div>
                             </DialogHeader>
                             <div className="space-y-4 py-2">
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <div className="space-y-2">
                                         <Label htmlFor="record-center">Center</Label>
-                                        <SearchableSelect
+                                        <select
                                             id="record-center"
+                                            className={NATIVE_SELECT_DIALOG}
+                                            disabled={recordCollectionStep === 'prepayment'}
                                             value={pickerCenterFilter}
-                                            onValueChange={(v) => {
+                                            onChange={(e) => {
+                                                const v = e.target.value;
                                                 setPickerCenterFilter(v);
                                                 setPickerGroupFilter('all');
                                                 setRepaymentFormData((prev) => ({ ...prev, loanId: '' }));
                                             }}
-                                            options={officerRepCenterOpts}
-                                            allLabel="All centers"
-                                            allValue="all"
-                                            placeholder="All centers"
-                                            searchPlaceholder="Search centers…"
-                                            emptyText="No center found."
-                                            triggerClassName="w-full"
-                                        />
+                                        >
+                                            <option value="all">All centers</option>
+                                            {centers.map((c) => (
+                                                <option key={c.id} value={c.id}>
+                                                    {c.name}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
                                     <div className="space-y-2">
                                         <Label htmlFor="record-group">Group</Label>
-                                        <SearchableSelect
+                                        <select
                                             id="record-group"
+                                            className={NATIVE_SELECT_DIALOG}
                                             value={pickerGroupFilter}
-                                            disabled={pickerCenterFilter === 'all'}
-                                            onValueChange={(v) => {
+                                            disabled={groups.length === 0 || recordCollectionStep === 'prepayment'}
+                                            onChange={(e) => {
+                                                const v = e.target.value;
                                                 setPickerGroupFilter(v);
                                                 setRepaymentFormData((prev) => ({ ...prev, loanId: '' }));
                                             }}
-                                            options={recordPickerGroupOpts}
-                                            allLabel="All groups"
-                                            allValue="all"
-                                            placeholder={
-                                                pickerCenterFilter === 'all' ? 'Pick center first' : 'All groups'
-                                            }
-                                            searchPlaceholder="Search groups…"
-                                            emptyText="No group found."
-                                            triggerClassName="w-full"
-                                        />
+                                        >
+                                            <option value="all">
+                                                {groups.length === 0 ? 'No groups yet' : 'All groups'}
+                                            </option>
+                                            {groupsForRecordPicker.map((g) => (
+                                                <option key={g.id} value={g.id}>
+                                                    {g.name}
+                                                </option>
+                                            ))}
+                                        </select>
                                     </div>
                                 </div>
                                 <div className="space-y-2">
@@ -958,6 +1161,7 @@ const RepaymentManagement = () => {
                                             onChange={(e) => setLoanPickerSearch(e.target.value)}
                                             className="pl-9"
                                             autoComplete="off"
+                                            disabled={recordCollectionStep === 'prepayment'}
                                         />
                                     </div>
                                     <div
@@ -977,12 +1181,13 @@ const RepaymentManagement = () => {
                                                     key={opt.value}
                                                     type="button"
                                                     role="option"
+                                                    disabled={recordCollectionStep === 'prepayment'}
                                                     aria-selected={repaymentFormData.loanId === opt.value}
                                                     onClick={() =>
                                                         setRepaymentFormData((prev) => ({ ...prev, loanId: opt.value }))
                                                     }
                                                     className={cn(
-                                                        'flex w-full items-start gap-2 border-b border-border/60 px-3 py-2.5 text-left text-sm last:border-0 transition-colors hover:bg-accent',
+                                                        'flex w-full items-start gap-2 border-b border-border/60 px-3 py-2.5 text-left text-sm last:border-0 transition-colors hover:bg-accent disabled:pointer-events-none disabled:opacity-50',
                                                         repaymentFormData.loanId === opt.value && 'bg-accent font-medium'
                                                     )}
                                                 >
@@ -1000,97 +1205,12 @@ const RepaymentManagement = () => {
                                     )}
                                 </div>
                                 <div>
-                                    <Label htmlFor="repayment-amount">Collection amount ({currency})</Label>
-                                    <Input
-                                        id="repayment-amount"
-                                        type="number"
-                                        step="0.01"
-                                        min={minAmountForRecordInput}
-                                        value={repaymentFormData.amount}
-                                        aria-invalid={recordRepaymentAmountError ? true : undefined}
-                                        className={cn(recordRepaymentAmountError && 'border-destructive')}
-                                        onChange={(e) =>
-                                            setRepaymentFormData({ ...repaymentFormData, amount: e.target.value })
-                                        }
-                                        onBlur={() => {
-                                            if (!repaymentFormData.loanId || pickerTotalDueOnOrBefore == null) return;
-                                            const v = parseFloat(String(repaymentFormData.amount ?? '').replace(/,/g, ''));
-                                            if (!Number.isFinite(v) || v <= 0) return;
-                                            if (pickerInstallmentUnit != null) {
-                                                const snapped = roundToValidRepaymentAmount(
-                                                    v,
-                                                    pickerTotalDueOnOrBefore,
-                                                    pickerInstallmentUnit
-                                                );
-                                                setRepaymentFormData((prev) => ({ ...prev, amount: snapped.toFixed(2) }));
-                                            } else {
-                                                const floor = minimumRepaymentForDue(pickerTotalDueOnOrBefore);
-                                                if (v + 1e-8 < floor) {
-                                                    setRepaymentFormData((prev) => ({ ...prev, amount: floor.toFixed(2) }));
-                                                }
-                                            }
-                                        }}
-                                        placeholder="Fills with amount due on this date; add more for arrears or prepayment"
-                                    />
-                                    {recordRepaymentAmountError && (
-                                        <p className="mt-1 text-sm text-destructive" role="alert">
-                                            {recordRepaymentAmountError}
-                                        </p>
-                                    )}
-                                    {repaymentFormData.loanId &&
-                                        pickerDueOnSelectedDate != null &&
-                                        pickerTotalDueOnOrBefore != null && (
-                                        <div className="mt-1 space-y-1 text-xs text-muted-foreground">
-                                            {pickerTotalDueOnOrBefore <= 0 && pickerDueOnSelectedDate <= 0 ? (
-                                                <p>
-                                                    No scheduled amount due — for a prepayment, enter a multiple of the
-                                                    installment amount
-                                                    {pickerInstallmentUnit != null
-                                                        ? ` (minimum ${currency} ${pickerInstallmentUnit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-                                                        : '.'}
-                                                </p>
-                                            ) : (
-                                                <>
-                                                    <p>
-                                                        Due on this payment date (installments only):{' '}
-                                                        <span className="font-medium text-foreground">
-                                                            {currency}{' '}
-                                                            {pickerDueOnSelectedDate.toLocaleString(undefined, {
-                                                                minimumFractionDigits: 2,
-                                                                maximumFractionDigits: 2,
-                                                            })}
-                                                        </span>
-                                                    </p>
-                                                    {pickerTotalDueOnOrBefore > pickerDueOnSelectedDate + 1e-8 && (
-                                                        <p>
-                                                            Total due on/before this date (incl. arrears) — minimum
-                                                            payment:{' '}
-                                                            <span className="font-medium text-foreground">
-                                                                {currency}{' '}
-                                                                {pickerTotalDueOnOrBefore.toLocaleString(undefined, {
-                                                                    minimumFractionDigits: 2,
-                                                                    maximumFractionDigits: 2,
-                                                                })}
-                                                            </span>
-                                                        </p>
-                                                    )}
-                                                    {pickerTotalDueOnOrBefore > 0 && (
-                                                        <p className="text-[11px]">
-                                                            Amount must be a multiple of the installment size; minimum is one
-                                                            installment.
-                                                        </p>
-                                                    )}
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                <div>
                                     <Label htmlFor="payment-date">Actual payment date</Label>
                                     <Input
                                         id="payment-date"
                                         type="date"
                                         className="font-mono"
+                                        disabled={recordCollectionStep === 'prepayment'}
                                         min={minPaymentDateStrEAT}
                                         max={todayStrEAT}
                                         value={
@@ -1114,19 +1234,226 @@ const RepaymentManagement = () => {
                                         }}
                                     />
                                     <p className="mt-1 text-xs text-muted-foreground">
-                                        The date you choose is saved as <strong>actual payment date</strong> and drives scheduled
-                                        vs prepayment (due on/before that day). Last {PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} working
-                                        days in Africa/Nairobi; Sundays and holidays blocked on submit.
+                                        Drives which installments count as “due” for this visit. Locked after step 1. Last{' '}
+                                        {PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} working days (Africa/Nairobi); Sundays and holidays
+                                        blocked on submit.
                                     </p>
                                 </div>
-                                <Button type="button" onClick={handleRecordRepayment} className="w-full" disabled={isSubmitting}>
-                                    {isSubmitting ? (
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    ) : (
-                                        <HandCoins className="mr-2 h-4 w-4" />
-                                    )}
-                                    Record Collection
-                                </Button>
+                                {recordCollectionStep === 'scheduled' ? (
+                                    <div className="space-y-3">
+                                        <div>
+                                            <Label htmlFor="scheduled-portion">
+                                                Scheduled collection ({currency}) — arrears + due on/before payment date
+                                            </Label>
+                                            <Input
+                                                id="scheduled-portion"
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={repaymentFormData.scheduled_portion}
+                                                aria-invalid={scheduledStepError ? true : undefined}
+                                                className={cn(scheduledStepError && 'border-destructive')}
+                                                onChange={(e) =>
+                                                    setRepaymentFormData({
+                                                        ...repaymentFormData,
+                                                        scheduled_portion: e.target.value,
+                                                    })
+                                                }
+                                                onBlur={snapScheduledField}
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                        {recordCollectionTotal != null && recordCollectionTotal > 0 && (
+                                            <p className="text-sm font-medium text-foreground">
+                                                This step: {currency}{' '}
+                                                {recordCollectionTotal.toLocaleString(undefined, {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{' '}
+                                                <span className="text-xs font-normal text-muted-foreground">
+                                                    (multiple of one installment)
+                                                </span>
+                                            </p>
+                                        )}
+                                        {scheduledStepError && (
+                                            <p className="mt-1 text-sm text-destructive" role="alert">
+                                                {scheduledStepError}
+                                            </p>
+                                        )}
+                                        {repaymentFormData.loanId &&
+                                            pickerDueOnSelectedDate != null &&
+                                            pickerTotalDueOnOrBefore != null && (
+                                                <div className="mt-1 space-y-1 text-xs text-muted-foreground">
+                                                    {pickerTotalDueOnOrBefore <= 0 && pickerDueOnSelectedDate <= 0 ? (
+                                                        <p>
+                                                            No scheduled due for this date — use “Prepayment only” below, or enter
+                                                            0 here and skip to step 2.
+                                                        </p>
+                                                    ) : (
+                                                        <>
+                                                            <p>
+                                                                Due on this payment date (installments only):{' '}
+                                                                <span className="font-medium text-foreground">
+                                                                    {currency}{' '}
+                                                                    {pickerDueOnSelectedDate.toLocaleString(undefined, {
+                                                                        minimumFractionDigits: 2,
+                                                                        maximumFractionDigits: 2,
+                                                                    })}
+                                                                </span>
+                                                            </p>
+                                                            {pickerTotalDueOnOrBefore > pickerDueOnSelectedDate + 1e-8 && (
+                                                                <p>
+                                                                    Total due on/before this date (incl. arrears):{' '}
+                                                                    <span className="font-medium text-foreground">
+                                                                        {currency}{' '}
+                                                                        {pickerTotalDueOnOrBefore.toLocaleString(undefined, {
+                                                                            minimumFractionDigits: 2,
+                                                                            maximumFractionDigits: 2,
+                                                                        })}
+                                                                    </span>
+                                                                </p>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                            <Button
+                                                type="button"
+                                                className="flex-1"
+                                                onClick={handleRecordScheduledContinue}
+                                                disabled={
+                                                    isSubmitting ||
+                                                    !!scheduledStepError ||
+                                                    recordCollectionTotal == null ||
+                                                    recordCollectionTotal <= 0 ||
+                                                    (!!repaymentFormData.loanId &&
+                                                        (pickerTotalDueOnOrBefore == null || pickerInstallmentUnit == null))
+                                                }
+                                            >
+                                                {isSubmitting ? (
+                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <HandCoins className="mr-2 h-4 w-4" />
+                                                )}
+                                                Record scheduled &amp; continue
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                className="flex-1"
+                                                onClick={handleSkipToPrepaymentOnly}
+                                                disabled={isSubmitting || !repaymentFormData.loanId}
+                                            >
+                                                Prepayment only
+                                                <ChevronRight className="ml-2 h-4 w-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {scheduledRecordedInSession != null && scheduledRecordedInSession > 0 && (
+                                            <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+                                                <span className="font-medium text-foreground">Scheduled saved:</span>{' '}
+                                                {currency}{' '}
+                                                {scheduledRecordedInSession.toLocaleString(undefined, {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{' '}
+                                                <span className="text-muted-foreground">
+                                                    (loan schedule updated — arrears / due today covered first)
+                                                </span>
+                                            </div>
+                                        )}
+                                        {scheduledRecordedInSession == null && (
+                                            <p className="text-sm text-muted-foreground">
+                                                No scheduled line in this visit — enter prepayment only, or tap Back to step 1.
+                                            </p>
+                                        )}
+                                        <div>
+                                            <Label htmlFor="prepayment-portion">
+                                                Prepayment ({currency}) — from last installment backward
+                                            </Label>
+                                            <Input
+                                                id="prepayment-portion"
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                value={repaymentFormData.prepayment_portion}
+                                                aria-invalid={prepaymentStepError ? true : undefined}
+                                                className={cn(prepaymentStepError && 'border-destructive')}
+                                                onChange={(e) =>
+                                                    setRepaymentFormData({
+                                                        ...repaymentFormData,
+                                                        prepayment_portion: e.target.value,
+                                                    })
+                                                }
+                                                onBlur={snapPrepaymentField}
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                        {recordCollectionTotal != null && recordCollectionTotal > 0 && (
+                                            <p className="text-sm font-medium text-foreground">
+                                                Prepayment line: {currency}{' '}
+                                                {recordCollectionTotal.toLocaleString(undefined, {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2,
+                                                })}{' '}
+                                                <span className="text-xs font-normal text-muted-foreground">
+                                                    (multiple of one installment)
+                                                </span>
+                                            </p>
+                                        )}
+                                        {prepaymentStepError && (
+                                            <p className="mt-1 text-sm text-destructive" role="alert">
+                                                {prepaymentStepError}
+                                            </p>
+                                        )}
+                                        <div className="flex flex-col gap-2 sm:flex-row">
+                                            <Button
+                                                type="button"
+                                                className="flex-1"
+                                                onClick={handleRecordPrepaymentFinish}
+                                                disabled={
+                                                    isSubmitting ||
+                                                    !!prepaymentStepError ||
+                                                    recordCollectionTotal == null ||
+                                                    recordCollectionTotal <= 0 ||
+                                                    (!!repaymentFormData.loanId &&
+                                                        (pickerTotalDueOnOrBefore == null || pickerInstallmentUnit == null))
+                                                }
+                                            >
+                                                {isSubmitting ? (
+                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <HandCoins className="mr-2 h-4 w-4" />
+                                                )}
+                                                Record prepayment
+                                            </Button>
+                                            <Button
+                                                type="button"
+                                                variant="secondary"
+                                                className="flex-1"
+                                                onClick={handleWizardDoneNoPrepayment}
+                                                disabled={isSubmitting}
+                                            >
+                                                Done (no prepayment)
+                                            </Button>
+                                            {scheduledRecordedInSession == null && (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    className="flex-1"
+                                                    onClick={handleBackToScheduledStep}
+                                                    disabled={isSubmitting}
+                                                >
+                                                    <ChevronLeft className="mr-2 h-4 w-4" />
+                                                    Back
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </DialogContent>
                     </Dialog>
@@ -1162,43 +1489,51 @@ const RepaymentManagement = () => {
                                 className="pl-8 w-[280px]"
                             />
                         </div>
-                        <SearchableSelect
+                        <select
+                            className={NATIVE_SELECT_FILTER}
                             value={centerFilter}
-                            onValueChange={(v) => {
-                                setCenterFilter(v);
+                            onChange={(e) => {
+                                setCenterFilter(e.target.value);
                                 setGroupFilter('all');
                             }}
-                            options={officerRepCenterOpts}
-                            allLabel="All centers"
-                            allValue="all"
-                            placeholder="Center"
-                            searchPlaceholder="Search centers…"
-                            emptyText="No center found."
-                            triggerClassName="w-[220px]"
-                        />
-                        <SearchableSelect
+                            aria-label="Filter by center"
+                        >
+                            <option value="all">All centers</option>
+                            {centers.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                    {c.name}
+                                </option>
+                            ))}
+                        </select>
+                        <select
+                            className={NATIVE_SELECT_FILTER}
                             value={groupFilter}
-                            onValueChange={setGroupFilter}
-                            disabled={centerFilter === 'all'}
-                            options={officerRepGroupFilterOpts}
-                            allLabel="All groups"
-                            allValue="all"
-                            placeholder={centerFilter === 'all' ? 'Pick center first' : 'Group'}
-                            searchPlaceholder="Search groups…"
-                            emptyText="No group found."
-                            triggerClassName="w-[220px]"
-                        />
-                        <SearchableSelect
+                            onChange={(e) => setGroupFilter(e.target.value)}
+                            disabled={groupsForFilter.length === 0}
+                            aria-label="Filter by group"
+                        >
+                            <option value="all">
+                                {groupsForFilter.length === 0 ? 'No groups' : 'All groups'}
+                            </option>
+                            {groupsForFilter.map((g) => (
+                                <option key={g.id} value={g.id}>
+                                    {g.name}
+                                </option>
+                            ))}
+                        </select>
+                        <select
+                            className={`${NATIVE_SELECT_FILTER} min-w-[240px]`}
                             value={borrowerStatusFilter}
-                            onValueChange={setBorrowerStatusFilter}
-                            options={BORROWER_STATUS_FILTER_OPTIONS}
-                            allLabel="All borrower statuses"
-                            allValue="all"
-                            placeholder="Borrower status"
-                            searchPlaceholder="Search status…"
-                            emptyText="No match."
-                            triggerClassName="w-[240px]"
-                        />
+                            onChange={(e) => setBorrowerStatusFilter(e.target.value)}
+                            aria-label="Filter by borrower status"
+                        >
+                            <option value="all">All borrower statuses</option>
+                            {BORROWER_STATUS_FILTER_OPTIONS.map((o) => (
+                                <option key={o.value} value={o.value}>
+                                    {o.label}
+                                </option>
+                            ))}
+                        </select>
                         <Popover>
                             <PopoverTrigger asChild>
                                 <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
@@ -1298,14 +1633,14 @@ const RepaymentManagement = () => {
                                         </TableCell>
                                         <TableCell className="text-muted-foreground">
                                             {currency}{' '}
-                                            {Math.max(0, r.amount - (Number(r.prepayment_amount) || 0)).toLocaleString(undefined, {
+                                            {scheduledCollectionAmount(r).toLocaleString(undefined, {
                                                 minimumFractionDigits: 2,
                                                 maximumFractionDigits: 2,
                                             })}
                                         </TableCell>
                                         <TableCell className="font-medium text-emerald-700 dark:text-emerald-400">
                                             {currency}{' '}
-                                            {(Number(r.prepayment_amount) || 0).toLocaleString(undefined, {
+                                            {prepaymentAmount(r).toLocaleString(undefined, {
                                                 minimumFractionDigits: 2,
                                                 maximumFractionDigits: 2,
                                             })}

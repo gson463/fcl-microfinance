@@ -9,13 +9,14 @@ import { Calendar } from '@/components/ui/calendar';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
-import { Calendar as CalendarIcon, Printer, Users, Briefcase, DollarSign, TrendingUp, AlertTriangle } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Users, Briefcase, DollarSign, TrendingUp, AlertTriangle, PiggyBank } from 'lucide-react';
 import { format as formatDate, startOfMonth, endOfMonth, eachMonthOfInterval, startOfDay, endOfDay, startOfWeek, endOfWeek, startOfYear, endOfYear, differenceInDays, eachDayOfInterval } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isRepaymentInReportsRange, repaymentReportDateYyyyMmDd } from '@/lib/repaymentReportDate';
 import { useUserProfileScope, fetchOfficerIdsForBranch } from '@/hooks/useUserProfileScope';
+import { prepaymentAmount, scheduledCollectionAmount } from '@/lib/repaymentPrepayment';
 
 const REPAYMENT_REPORT_SELECT =
     '*, loans(id, borrower_id, loan_id, product_id, status, borrowers(*, groups(*)))';
@@ -407,7 +408,8 @@ const Reports = () => {
         // Use EXACT same summation as Repayment Management page
         // const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
         const repaymentsCollected = repayments.reduce((sum, r) => sum + (r.amount || 0), 0);
-        
+        const prepaymentsCollected = repayments.reduce((sum, r) => sum + prepaymentAmount(r), 0);
+
         const interestCollected = repayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0); 
         const activeLoans = loans.filter(l => ['active', 'delinquent'].includes(l.status)).length;
         const totalBorrowers = new Set(loans.map(l => l.borrower_id)).size;
@@ -415,7 +417,16 @@ const Reports = () => {
         const portfolioAtRisk = loans.filter(l => ['delinquent', 'defaulted'].includes(l.status)).reduce((sum, l) => sum + (l.balance || 0), 0);
         const par = totalPortfolio > 0 ? (portfolioAtRisk / totalPortfolio) * 100 : 0;
 
-        return { totalPortfolio, principalDisbursed, repaymentsCollected, interestCollected, activeLoans, totalBorrowers, par };
+        return {
+            totalPortfolio,
+            principalDisbursed,
+            repaymentsCollected,
+            prepaymentsCollected,
+            interestCollected,
+            activeLoans,
+            totalBorrowers,
+            par,
+        };
     }, [filteredData]);
 
      const chartData = useMemo(() => {
@@ -444,15 +455,15 @@ const Reports = () => {
                     })
                     .reduce((sum, l) => sum + l.principal, 0);
 
-                const collected = repayments
-                    .filter((r) => {
-                        const d = repaymentReportDateYyyyMmDd(r);
-                        if (!d) return false;
-                        return d === formatDate(day, 'yyyy-MM-dd');
-                    })
-                    .reduce((sum, r) => sum + r.amount, 0);
+                const dayRepayments = repayments.filter((r) => {
+                    const d = repaymentReportDateYyyyMmDd(r);
+                    if (!d) return false;
+                    return d === formatDate(day, 'yyyy-MM-dd');
+                });
+                const scheduled = dayRepayments.reduce((sum, r) => sum + scheduledCollectionAmount(r), 0);
+                const prepay = dayRepayments.reduce((sum, r) => sum + prepaymentAmount(r), 0);
 
-                return { name: dayLabel, Disbursed: disbursed, Collected: collected };
+                return { name: dayLabel, Disbursed: disbursed, Scheduled: scheduled, Prepayment: prepay };
             });
         } else {
             barChartData = eachMonthOfInterval({ start: from, end: to }).map(monthStart => {
@@ -470,15 +481,15 @@ const Reports = () => {
 
                 const monthStartStr = formatDate(monthStart, 'yyyy-MM-dd');
                 const monthEndStr = formatDate(monthEnd, 'yyyy-MM-dd');
-                const collected = repayments
-                    .filter((r) => {
-                        const d = repaymentReportDateYyyyMmDd(r);
-                        if (!d) return false;
-                        return d >= monthStartStr && d <= monthEndStr;
-                    })
-                    .reduce((sum, r) => sum + r.amount, 0);
+                const monthRepayments = repayments.filter((r) => {
+                    const d = repaymentReportDateYyyyMmDd(r);
+                    if (!d) return false;
+                    return d >= monthStartStr && d <= monthEndStr;
+                });
+                const scheduled = monthRepayments.reduce((sum, r) => sum + scheduledCollectionAmount(r), 0);
+                const prepay = monthRepayments.reduce((sum, r) => sum + prepaymentAmount(r), 0);
 
-                return { name: monthLabel, Disbursed: disbursed, Collected: collected };
+                return { name: monthLabel, Disbursed: disbursed, Scheduled: scheduled, Prepayment: prepay };
             });
         }
 
@@ -548,6 +559,12 @@ const Reports = () => {
         { title: 'Total Portfolio', value: `${currency} ${reportStats.totalPortfolio.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, icon: Briefcase, color: 'text-blue-600' },
         { title: 'Principal Disbursed', value: `${currency} ${reportStats.principalDisbursed.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, icon: TrendingUp, color: 'text-green-600' },
         { title: 'Repayments Collected', value: `${currency} ${reportStats.repaymentsCollected.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, icon: DollarSign, color: 'text-yellow-600' },
+        {
+            title: 'Prepayment (in range)',
+            value: `${currency} ${reportStats.prepaymentsCollected.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            icon: PiggyBank,
+            color: 'text-emerald-600',
+        },
         { title: 'Active Loans', value: reportStats.activeLoans, icon: Briefcase, color: 'text-indigo-600' },
         { title: 'Borrowers', value: reportStats.totalBorrowers, icon: Users, color: 'text-pink-600' },
         { title: 'Portfolio at Risk (PAR)', value: `${reportStats.par.toFixed(2)}%`, icon: AlertTriangle, color: 'text-red-600' },
@@ -589,7 +606,7 @@ const Reports = () => {
                             </Popover>
                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-                            {user?.user_metadata.role === 'admin' && (
+                            {effectiveRole === 'admin' && (
                                 <SearchableSelect
                                     value={selectedBranch}
                                     onValueChange={setSelectedBranch}
@@ -602,7 +619,7 @@ const Reports = () => {
                                     triggerClassName="w-full"
                                 />
                             )}
-                            {(user?.user_metadata.role === 'admin' || user?.user_metadata.role === 'manager') && (
+                            {(effectiveRole === 'admin' || effectiveRole === 'manager') && (
                                 <SearchableSelect
                                     value={selectedOfficer}
                                     onValueChange={setSelectedOfficer}
@@ -662,13 +679,19 @@ const Reports = () => {
                         </div>
                     </CardContent></Card>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-6">
                         {statsCardsData.map(stat => <StatCard key={stat.title} {...stat} />)}
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <Card className="lg:col-span-2">
-                            <CardHeader><CardTitle>Disbursed vs. Repayments</CardTitle></CardHeader>
+                            <CardHeader>
+                                <CardTitle>Disbursed vs. scheduled collection vs. prepayment</CardTitle>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Scheduled and prepayment split uses stored repayment rows (same as field wallet when
+                                    prepayment columns are set).
+                                </p>
+                            </CardHeader>
                             <CardContent>
                                 <ResponsiveContainer width="100%" height={300}>
                                     <BarChart data={chartData.barChartData}>
@@ -678,7 +701,8 @@ const Reports = () => {
                                         <Tooltip formatter={(value) => `${currency} ${value.toLocaleString()}`} />
                                         <Legend />
                                         <Bar dataKey="Disbursed" fill="#8884d8" />
-                                        <Bar dataKey="Collected" fill="#82ca9d" />
+                                        <Bar dataKey="Scheduled" fill="#82ca9d" />
+                                        <Bar dataKey="Prepayment" fill="#34d399" />
                                     </BarChart>
                                 </ResponsiveContainer>
                             </CardContent>
@@ -717,7 +741,7 @@ const Reports = () => {
                         </CardContent>
                     </Card>
 
-                    {user?.user_metadata.role === 'admin' && (
+                    {effectiveRole === 'admin' && (
                         <Card>
                             <CardHeader className="flex flex-row justify-between items-center"><CardTitle>Branch Performance</CardTitle><Button variant="outline" size="sm" onClick={() => handleExport(branchPerformanceData, 'Branch_Performance')}><Printer className="mr-2 h-4 w-4" /> Export</Button></CardHeader>
                             <CardContent>
@@ -726,7 +750,7 @@ const Reports = () => {
                         </Card>
                     )}
 
-                    {(user?.user_metadata.role === 'admin' || user?.user_metadata.role === 'manager') && (
+                    {(effectiveRole === 'admin' || effectiveRole === 'manager') && (
                         <Card>
                             <CardHeader className="flex flex-row justify-between items-center"><CardTitle>Loan Officer Performance</CardTitle><Button variant="outline" size="sm" onClick={() => handleExport(officerPerformanceData, 'Officer_Performance')}><Printer className="mr-2 h-4 w-4" /> Export</Button></CardHeader>
                             <CardContent>

@@ -17,7 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Calendar } from '@/components/ui/calendar';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Input } from '@/components/ui/input';
-import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingUp, TrendingDown, Scale, ChevronLeft, ChevronRight, CheckCircle, XCircle, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Loader2, FileDown, Eye, ArrowRightLeft, TrendingDown, Scale, ChevronLeft, ChevronRight, CheckCircle, XCircle, Search } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import * as XLSX from 'xlsx';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -251,7 +251,6 @@ const ManagerRepaymentManagement = () => {
                 accessor: (r) => branchOfficers.find((o) => o.id === r.officer_id)?.full_name || '',
             },
             { header: 'Principal Paid', accessor: (r) => String(r.principal_paid ?? '') },
-            { header: 'Interest Paid', accessor: (r) => String(r.interest_paid ?? '') },
             { header: 'Total Paid', accessor: (r) => String(r.amount ?? '') },
         ], rows);
         toast({ title: 'Exported', description: `${rows.length} repayment(s) to CSV.` });
@@ -259,9 +258,8 @@ const ManagerRepaymentManagement = () => {
 
     const stats = useMemo(() => {
         const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
-        const totalInterest = filteredRepayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0);
         const totalPrincipalPaid = filteredRepayments.reduce((sum, r) => sum + (r.principal_paid || 0), 0);
-        return { totalPaid, totalInterest, totalPrincipalPaid };
+        return { totalPaid, totalPrincipalPaid };
     }, [filteredRepayments]);
 
     const handleViewSchedule = async (loan) => {
@@ -364,7 +362,6 @@ const ManagerRepaymentManagement = () => {
             'Group': r.loans?.borrowers?.groups?.name || 'N/A',
             'Loan Officer': branchOfficers.find(o => o.id === r.officer_id)?.full_name || 'N/A',
             'Principal Paid': r.principal_paid || 0,
-            'Interest Paid': r.interest_paid || 0,
             'Total Paid': r.amount,
         }));
         const ws = XLSX.utils.json_to_sheet(dataToExport);
@@ -480,9 +477,8 @@ const ManagerRepaymentManagement = () => {
                         <CardDescription>Summary of repayments for your branch based on selected filters.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        <div className="grid gap-4 md:grid-cols-2">
                             <StatCard title="Total Repayments (Filtered)" value={`${currency} ${stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={ArrowRightLeft} color="text-blue-500" />
-                            <StatCard title="Interest Collected" value={`${currency} ${stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingUp} color="text-green-500" />
                             <StatCard title="Principal Repaid" value={`${currency} ${stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingDown} color="text-orange-500" />
                         </div>
                     </CardContent>
@@ -592,7 +588,6 @@ const ManagerRepaymentManagement = () => {
                                     <TableHead>Group</TableHead>
                                     <TableHead>Loan Officer</TableHead>
                                     <TableHead>Principal Paid</TableHead>
-                                    <TableHead>Interest Paid</TableHead>
                                     <TableHead>Total Paid</TableHead>
                                     <TableHead>Actions</TableHead>
                                 </TableRow>
@@ -621,7 +616,6 @@ const ManagerRepaymentManagement = () => {
                                         <TableCell>{r.loans?.borrowers?.groups?.name || 'N/A'}</TableCell>
                                         <TableCell>{branchOfficers.find(o => o.id === r.officer_id)?.full_name || 'N/A'}</TableCell>
                                         <TableCell>{currency} {(r.principal_paid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                        <TableCell>{currency} {(r.interest_paid || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                         <TableCell className="font-semibold">{currency} {r.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                                         <TableCell>
                                             <Button variant="ghost" size="icon" onClick={() => handleViewSchedule(r.loans)}><Eye className="h-4 w-4" /></Button>
@@ -630,7 +624,7 @@ const ManagerRepaymentManagement = () => {
                                 ))}
                                 {filteredRepayments.length === 0 && (
                                     <TableRow>
-                                        <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
+                                        <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
                                 )}
                             </TableBody>
@@ -638,8 +632,8 @@ const ManagerRepaymentManagement = () => {
                                 <TableRow>
                                     <TableCell colSpan={6} className="font-bold text-right">Totals</TableCell>
                                     <TableCell className="font-bold">{currency} {stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                    <TableCell className="font-bold">{currency} {stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
-                                    <TableCell className="font-bold" colSpan={2}>{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                    <TableCell className="font-bold">{currency} {stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                                    <TableCell />
                                 </TableRow>
                             </TableFooter>
                         </Table>

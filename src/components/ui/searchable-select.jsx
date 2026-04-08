@@ -59,6 +59,8 @@ export function SearchableSelect({
       <PopoverContent
         className="z-[200] w-[var(--radix-popover-trigger-width)] min-w-[var(--radix-popover-trigger-width)] p-0"
         align="start"
+        // Avoid Radix Dialog focus trap blocking interaction with the combobox list
+        onOpenAutoFocus={(e) => e.preventDefault()}
       >
         <Command>
           <CommandInput placeholder={searchPlaceholder} />
