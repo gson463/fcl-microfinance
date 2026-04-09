@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { format, startOfDay } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
-import { ArrowLeft, Loader2, Wallet, CalendarIcon, CheckCircle2, CircleDashed, Download } from 'lucide-react';
+import { ArrowLeft, Loader2, Wallet, CalendarIcon, CheckCircle2, CircleDashed, Download, RefreshCw } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -125,6 +125,34 @@ const FieldWalletTrace = () => {
 		fetchData();
 	}, [fetchData]);
 
+	/** Live updates when an officer records withdraw (requires migration: officer_withdraw_to_bank in supabase_realtime). */
+	useEffect(() => {
+		const ch = supabase
+			.channel(`field-wallet-withdraw-${walletDate}`)
+			.on(
+				'postgres_changes',
+				{
+					event: '*',
+					schema: 'public',
+					table: 'officer_withdraw_to_bank',
+					filter: `business_date=eq.${walletDate}`,
+				},
+				() => {
+					fetchData();
+				}
+			)
+			.subscribe();
+		return () => {
+			supabase.removeChannel(ch);
+		};
+	}, [walletDate, fetchData]);
+
+	useEffect(() => {
+		const onFocus = () => fetchData();
+		window.addEventListener('focus', onFocus);
+		return () => window.removeEventListener('focus', onFocus);
+	}, [fetchData]);
+
 	const walletDateObj = useMemo(() => {
 		const [y, m, d] = walletDate.split('-').map(Number);
 		return new Date(y, m - 1, d);
@@ -194,6 +222,10 @@ const FieldWalletTrace = () => {
 					<Button type="button" variant="outline" size="sm" onClick={() => navigate('/admin/dashboard')}>
 						<ArrowLeft className="mr-2 h-4 w-4" />
 						Admin dashboard
+					</Button>
+					<Button type="button" variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
+						{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+						Refresh status
 					</Button>
 				</div>
 
@@ -339,7 +371,8 @@ const FieldWalletTrace = () => {
 							</Button>
 						</CardHeader>
 						<CardContent className="overflow-x-auto">
-							<Table>
+							{/* default variant: excel zebra was overriding pending-withdraw amber on many rows */}
+							<Table variant="default">
 								<TableHeader>
 									<TableRow>
 										<TableHead>Officer</TableHead>
@@ -357,12 +390,13 @@ const FieldWalletTrace = () => {
 										const t = block.totals;
 										const totalRep = repaymentTotalsByOfficer.get(block.officer.id) ?? 0;
 										const wAt = withdrawByOfficer.get(block.officer.id);
+										const dep = Number(t.deposit) || 0;
 										return (
 											<TableRow
 												key={block.officer.id}
 												className={cn(
 													!wAt &&
-														'bg-amber-50/95 border-l-4 border-l-amber-400 dark:bg-amber-950/35 dark:border-l-amber-500'
+														'!bg-amber-50/95 hover:!bg-amber-100/90 border-l-4 border-l-amber-400 dark:!bg-amber-950/40 dark:hover:!bg-amber-950/55 dark:border-l-amber-500'
 												)}
 											>
 												<TableCell className="font-medium">{block.officer.full_name || '—'}</TableCell>
@@ -384,10 +418,17 @@ const FieldWalletTrace = () => {
 															</span>
 														</span>
 													) : (
-														<span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
-															<CircleDashed className="h-4 w-4 shrink-0" />
-															Not recorded
-														</span>
+														<div className="text-sm text-muted-foreground">
+															<span className="inline-flex items-center gap-1.5">
+																<CircleDashed className="h-4 w-4 shrink-0" />
+																Not recorded
+															</span>
+															{dep <= 0 && (
+																<p className="mt-1 max-w-[14rem] text-xs text-amber-900/80 dark:text-amber-200/90">
+																	Officer must open Field wallet (same day) and tap &quot;Withdraw to bank&quot; — including when deposit is 0.
+																</p>
+															)}
+														</div>
 													)}
 												</TableCell>
 											</TableRow>

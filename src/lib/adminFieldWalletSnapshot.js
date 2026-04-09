@@ -70,8 +70,8 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 	if (loanRes.error) throw loanRes.error;
 	if (expRes.error) throw expRes.error;
 	if (takenRes.error) throw takenRes.error;
-	// Table may be missing before migration — treat as no withdraw rows.
-	const withdrawRowsRaw = withdrawRes.error ? [] : withdrawRes.data || [];
+	if (withdrawRes.error) throw withdrawRes.error;
+	const withdrawRowsRaw = withdrawRes.data || [];
 
 	const { data: centersData } = await supabase
 		.from('centers')

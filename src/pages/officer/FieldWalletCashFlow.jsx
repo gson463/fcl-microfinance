@@ -180,7 +180,7 @@ const FieldWalletCashFlow = () => {
 
       const withdrawQ = supabase
         .from('officer_withdraw_to_bank')
-        .select('id, officer_id, business_date')
+        .select('id, officer_id, business_date, created_at')
         .gte('business_date', fromStr)
         .lte('business_date', toStr);
 
@@ -351,18 +351,43 @@ const FieldWalletCashFlow = () => {
     return withdrawRows.some((w) => w.officer_id === user.id && w.business_date === walletDateFromStr);
   }, [role, user?.id, isSingleWalletDay, walletDateFromStr, withdrawRows]);
 
+  /** Single-day manager: sum per-officer deposit, 0 in hand for officers who withdrew (aligns with officer UI). */
+  const managerSingleDayNetInHand = useMemo(() => {
+    if (role !== 'manager' || !isSingleWalletDay) return null;
+    const withdrawSet = new Set(
+      withdrawRows.filter((w) => w.business_date === walletDateFromStr).map((w) => w.officer_id)
+    );
+    return reportBlocks.reduce((s, b) => {
+      const d = Number(b.totals.deposit) || 0;
+      return s + (withdrawSet.has(b.officer.id) ? 0 : d);
+    }, 0);
+  }, [role, isSingleWalletDay, withdrawRows, walletDateFromStr, reportBlocks]);
+
+  /** Manager wallet table: show 0 balance for officers who confirmed withdraw on this day (Excel still uses full DEPOSIT). */
+  const managerSingleDayBlocks = useMemo(() => {
+    if (role !== 'manager' || !isSingleWalletDay) return reportBlocks;
+    const withdrawSet = new Set(
+      withdrawRows.filter((w) => w.business_date === walletDateFromStr).map((w) => w.officer_id)
+    );
+    return reportBlocks.map((block) => {
+      if (!withdrawSet.has(block.officer.id)) return block;
+      return { ...block, totals: { ...block.totals, deposit: 0 } };
+    });
+  }, [role, isSingleWalletDay, reportBlocks, withdrawRows, walletDateFromStr]);
+
   /** After withdraw-to-bank, UI shows 0; Excel/PDF still use computed DEPOSIT. */
   const displayNet = useMemo(() => {
     if (role === 'officer' && officerWithdrawForDay) return 0;
+    if (role === 'manager' && managerSingleDayNetInHand != null) return managerSingleDayNetInHand;
     return totals.net;
-  }, [role, officerWithdrawForDay, totals.net]);
+  }, [role, officerWithdrawForDay, managerSingleDayNetInHand, totals.net]);
 
   const handleWithdrawToBank = useCallback(async () => {
     if (role !== 'officer' || !user?.id || !isSingleWalletDay || officerWithdrawForDay) return;
-    if (totals.net <= 0) {
+    if (totals.net < 0) {
       toast({
-        title: 'Nothing to withdraw',
-        description: 'Wallet balance is not positive.',
+        title: 'Cannot confirm yet',
+        description: 'Wallet is negative for this day — reconcile before confirming to bank.',
         variant: 'destructive',
       });
       return;
@@ -374,7 +399,13 @@ const FieldWalletCashFlow = () => {
         business_date: walletDateFromStr,
       });
       if (error) throw error;
-      toast({ title: 'Recorded', description: 'Marked as withdrawn to bank. Balance shows 0; Excel still shows DEPOSIT for today.' });
+      const zero = (Number(totals.net) || 0) <= 0;
+      toast({
+        title: 'Recorded',
+        description: zero
+          ? 'End-of-day confirmed (0 in hand to bank). Excel still shows DEPOSIT for today if any.'
+          : 'Marked as withdrawn to bank. Balance shows 0; Excel still shows DEPOSIT for today.',
+      });
       await fetchData();
     } catch (e) {
       const msg = e?.message || String(e);
@@ -543,7 +574,7 @@ const FieldWalletCashFlow = () => {
                   <CardTitle className="text-base">Wallet balance</CardTitle>
                   <CardDescription className="text-xs">
                     {isSingleWalletDay
-                      ? 'Single day view. After withdraw to bank, balance shows 0; Excel export still shows DEPOSIT for this day.'
+                      ? 'Single day view. Use Withdraw even when balance is 0 to confirm nothing left in hand. Excel export still shows DEPOSIT for this day.'
                       : 'Select a single day to withdraw to bank.'}
                   </CardDescription>
                 </CardHeader>
@@ -555,7 +586,7 @@ const FieldWalletCashFlow = () => {
                   {officerWithdrawForDay && (
                     <p className="text-sm font-medium text-muted-foreground">Withdrawn to bank — cash no longer in hand.</p>
                   )}
-                  {isSingleWalletDay && !officerWithdrawForDay && totals.net > 0 && (
+                  {isSingleWalletDay && !officerWithdrawForDay && totals.net >= 0 && (
                     <Button
                       type="button"
                       variant="default"
@@ -579,6 +610,12 @@ const FieldWalletCashFlow = () => {
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Wallet balance</CardTitle>
+                  {isSingleWalletDay && (
+                    <CardDescription className="text-xs">
+                      Officers who withdrew to bank show 0 in hand for this day (same as their screen). Excel still shows full
+                      deposit.
+                    </CardDescription>
+                  )}
                 </CardHeader>
                 <CardContent className="overflow-x-auto">
                   <Table>
@@ -589,7 +626,7 @@ const FieldWalletCashFlow = () => {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {reportBlocks.map((block) => {
+                      {managerSingleDayBlocks.map((block) => {
                         const bal = Number(block.totals.deposit);
                         return (
                           <TableRow key={block.officer.id}>

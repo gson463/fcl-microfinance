@@ -207,6 +207,11 @@ const AdminDashboard = () => {
 				if (!cancelled) setWalletSnap(snap);
 			} catch (e) {
 				console.warn('fetchAdminFieldWalletSnapshot', e);
+				toast({
+					title: 'Field wallet snapshot failed',
+					description: e?.message || 'Could not load withdraw status. Check connection and migrations.',
+					variant: 'destructive',
+				});
 				if (!cancelled) setWalletSnap(null);
 			} finally {
 				if (!cancelled) setWalletSnapLoading(false);
@@ -215,7 +220,7 @@ const AdminDashboard = () => {
 		return () => {
 			cancelled = true;
 		};
-	}, [walletFocusDate, officersInScope, officers.length, dateRange?.to]);
+	}, [walletFocusDate, officersInScope, officers.length, dateRange?.to, toast]);
 
 	const formatCurrency = (value) => {
 		const number = Number(value || 0);
