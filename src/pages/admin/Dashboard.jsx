@@ -25,6 +25,7 @@ import {
 	Building2,
 	Users2,
 	Target,
+	Sunrise,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -40,6 +41,7 @@ import {
 	quickActionIconWrapClass,
 } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
+import { fetchAdminFieldWalletSnapshot } from '@/lib/adminFieldWalletSnapshot';
 
 const CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
@@ -72,6 +74,8 @@ const AdminDashboard = () => {
 	const [branchId, setBranchId] = useState('');
 	const [officerId, setOfficerId] = useState('');
 	const [expandedCardId, setExpandedCardId] = useState(null);
+	const [walletSnap, setWalletSnap] = useState(null);
+	const [walletSnapLoading, setWalletSnapLoading] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -129,6 +133,14 @@ const AdminDashboard = () => {
 		return officers.filter((o) => o.branch_id === branchId);
 	}, [officers, branchId]);
 
+	const officersInScope = useMemo(() => {
+		if (officerId) return officers.filter((o) => o.id === officerId);
+		if (branchId) return officers.filter((o) => o.branch_id === branchId);
+		return officers;
+	}, [officers, branchId, officerId]);
+
+	const walletFocusDate = useMemo(() => format(dateRange.to, 'yyyy-MM-dd'), [dateRange.to]);
+
 	const adminDashBranchOptions = useMemo(
 		() => branches.map((b) => ({ value: b.id, label: b.name })),
 		[branches]
@@ -182,6 +194,29 @@ const AdminDashboard = () => {
 		fetchDashboardData();
 	}, [fetchDashboardData]);
 
+	useEffect(() => {
+		let cancelled = false;
+		if (!dateRange?.to || officers.length === 0) {
+			setWalletSnap(null);
+			return;
+		}
+		(async () => {
+			setWalletSnapLoading(true);
+			try {
+				const snap = await fetchAdminFieldWalletSnapshot(supabase, walletFocusDate, officersInScope);
+				if (!cancelled) setWalletSnap(snap);
+			} catch (e) {
+				console.warn('fetchAdminFieldWalletSnapshot', e);
+				if (!cancelled) setWalletSnap(null);
+			} finally {
+				if (!cancelled) setWalletSnapLoading(false);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [walletFocusDate, officersInScope, officers.length, dateRange?.to]);
+
 	const formatCurrency = (value) => {
 		const number = Number(value || 0);
 		return `${currency} ${number.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -206,6 +241,13 @@ const AdminDashboard = () => {
 	};
 
 	const navigatePath = (path) => {
+		if (path === '/admin/field-wallet-trace') {
+			const q = new URLSearchParams({ date: walletFocusDate });
+			if (branchId) q.set('branch', branchId);
+			if (officerId) q.set('officer', officerId);
+			navigate(`/admin/field-wallet-trace?${q.toString()}`);
+			return;
+		}
 		navigate(withFilterQuery(path));
 	};
 
@@ -230,6 +272,141 @@ const AdminDashboard = () => {
 	};
 
 	const portfolioTotal = Number(s.portfolio_general) || 0;
+
+	/** Same day-level KPIs as loan officer dashboard; totals follow branch / officer filters. */
+	const dailyFocusCards = useMemo(() => {
+		const z = stats || {};
+		const fc = (v) =>
+			`${currency} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+		return [
+			{
+				id: 'df_disb',
+				title: 'Today disbursements',
+				value: fc(z.disbursed_today ?? 0),
+				icon: TrendingUp,
+				shell: CARD_SHELLS[3],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — disbursements today',
+						metricKey: DRILLDOWN_METRICS.disbursed_today,
+						key: 'df-disb-drill',
+					},
+				],
+			},
+			{
+				id: 'df_clients_today',
+				title: 'Clients disbursed today',
+				value: String(z.borrowers_disbursed_today ?? 0),
+				icon: Users,
+				shell: CARD_SHELLS[2],
+				progressPct: 0,
+				subItems: [{ label: 'View borrowers', path: '/admin/borrowers', key: 'df-cli-bor' }],
+			},
+			{
+				id: 'df_coll',
+				title: 'Today collection',
+				value: fc(z.collected_today ?? 0),
+				icon: Banknote,
+				shell: CARD_SHELLS[4],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — collected today',
+						metricKey: DRILLDOWN_METRICS.collected_today,
+						key: 'df-coll-drill',
+					},
+				],
+			},
+			{
+				id: 'df_exp',
+				title: 'Expected today',
+				value: fc(z.expected_today ?? 0),
+				icon: CalendarClock,
+				shell: CARD_SHELLS[10],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — expected today',
+						metricKey: DRILLDOWN_METRICS.expected_today,
+						key: 'df-exp-drill',
+					},
+				],
+			},
+			{
+				id: 'df_proj',
+				title: 'Projected tomorrow',
+				value: fc(z.expected_tomorrow ?? 0),
+				icon: Sunrise,
+				shell: CARD_SHELLS[11],
+				progressPct: 0,
+				subItems: [
+					{
+						label: 'Drilldown — projected tomorrow',
+						metricKey: DRILLDOWN_METRICS.expected_tomorrow,
+						key: 'df-proj-drill',
+					},
+				],
+			},
+			{
+				id: 'df_bor',
+				title: 'Total borrowers',
+				value: String(z.total_borrowers ?? 0),
+				icon: User,
+				shell: CARD_SHELLS[0],
+				progressPct: 0,
+				subItems: [
+					{ label: 'View all borrowers', path: '/admin/borrowers', key: 'df-bor-path' },
+					{
+						label: 'Drilldown — borrowers in scope',
+						metricKey: DRILLDOWN_METRICS.my_borrowers,
+						key: 'df-bor-drill',
+					},
+				],
+			},
+		];
+	}, [stats, currency]);
+
+	/** End date of the dashboard range = single “trace day” for field wallet (same formula as officer Field wallet). */
+	const fieldWalletCards = useMemo(() => {
+		const net = walletSnap?.totalNetDeposit ?? 0;
+		const wo = walletSnap?.withdrawnOfficerCount ?? 0;
+		const oc = walletSnap?.officerCount ?? 0;
+		const fc = (v) =>
+			`${currency} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+		return [
+			{
+				id: 'fw_net',
+				title: 'Field wallet — net deposit',
+				value: walletSnapLoading ? '…' : fc(net),
+				icon: Wallet,
+				shell: CARD_SHELLS[12],
+				progressPct: 0,
+				subItems: [
+					{
+						label: `Open trace (${walletFocusDate})`,
+						path: '/admin/field-wallet-trace',
+						key: 'fw-tr',
+					},
+				],
+			},
+			{
+				id: 'fw_withdraw',
+				title: 'Withdrawn to bank',
+				value: walletSnapLoading ? '…' : oc === 0 ? '0 officers' : `${wo} / ${oc} officers`,
+				icon: Landmark,
+				shell: CARD_SHELLS[13],
+				progressPct: oc > 0 ? Math.min(100, Math.round((wo / oc) * 100)) : 0,
+				subItems: [
+					{
+						label: 'Open trace (who banked, timestamps)',
+						path: '/admin/field-wallet-trace',
+						key: 'fw-w',
+					},
+				],
+			},
+		];
+	}, [walletSnap, walletSnapLoading, walletFocusDate, currency]);
 
 	const metricCards = [
 		{
@@ -513,6 +690,28 @@ const AdminDashboard = () => {
 			],
 		},
 		{
+			id: 'expected_tomorrow',
+			title: 'Projected Tomorrow',
+			value: formatCurrency(s.expected_tomorrow ?? 0),
+			icon: Sunrise,
+			shell: CARD_SHELLS[11],
+			progressPct: pct(s.expected_tomorrow, s.expected_today),
+			subItems: [
+				{
+					label: 'Due tomorrow (installments)',
+					value: formatCurrency(s.expected_tomorrow ?? 0),
+					metricKey: DRILLDOWN_METRICS.expected_tomorrow,
+					key: 'ex-tm',
+				},
+				{
+					label: 'Due today (compare)',
+					value: formatCurrency(s.expected_today ?? 0),
+					metricKey: DRILLDOWN_METRICS.expected_today,
+					key: 'ex-tm-cmp',
+				},
+			],
+		},
+		{
 			id: 'nearing_completion',
 			title: 'Nearing loan completion',
 			value: String(s.nearing_completion ?? 0),
@@ -693,6 +892,68 @@ const AdminDashboard = () => {
 					</div>
 				) : (
 					<>
+						<div className="space-y-2">
+							<h3 className="font-display text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+								Today&apos;s portfolio focus
+							</h3>
+							<p className="text-xs text-neutral-500 dark:text-neutral-400">
+								Day-level metrics (same as loan officer cards). Branch and officer filters above apply. Expand a card for
+								the drilldown list.
+							</p>
+							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+								{dailyFocusCards.map((c) => {
+									const Icon = c.icon;
+									return (
+										<AdminExpandableMetricCard
+											key={c.id}
+											cardId={c.id}
+											expandedId={expandedCardId}
+											onToggle={toggleCard}
+											title={c.title}
+											value={c.value}
+											icon={Icon}
+											shellClass={c.shell}
+											progressPct={c.progressPct}
+											subItems={c.subItems}
+											onDrillMetric={openMetric}
+											onNavigatePath={navigatePath}
+										/>
+									);
+								})}
+							</div>
+						</div>
+
+						<div className="space-y-2">
+							<h3 className="font-display text-sm font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
+								Field wallet (officers)
+							</h3>
+							<p className="text-xs text-neutral-500 dark:text-neutral-400">
+								Net deposit and “withdrawn to bank” for the calendar day matching the <strong>end</strong> of your date
+								range ({walletFocusDate}), with branch and officer filters above.
+							</p>
+							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-2 lg:max-w-3xl">
+								{fieldWalletCards.map((c) => {
+									const Icon = c.icon;
+									return (
+										<AdminExpandableMetricCard
+											key={c.id}
+											cardId={c.id}
+											expandedId={expandedCardId}
+											onToggle={toggleCard}
+											title={c.title}
+											value={c.value}
+											icon={Icon}
+											shellClass={c.shell}
+											progressPct={c.progressPct}
+											subItems={c.subItems}
+											onDrillMetric={openMetric}
+											onNavigatePath={navigatePath}
+										/>
+									);
+								})}
+							</div>
+						</div>
+
 						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 							{metricCards.map((c) => (
 								<AdminExpandableMetricCard

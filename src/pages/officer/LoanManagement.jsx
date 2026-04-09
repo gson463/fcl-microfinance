@@ -39,6 +39,7 @@ import { downloadLoansImportTemplate } from '@/lib/excelImportTemplateDownloads'
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 import { borrowerPublicId } from '@/lib/borrowerPublicId';
+import { logAudit } from '@/lib/auditLog';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
@@ -417,7 +418,11 @@ const LoanManagement = () => {
         setIsDisbursingLoan(true);
 
         try {
-            const { data: borrower, error: borrowerError } = await supabase.from('borrowers').select('status').eq('id', borrowerId).single();
+            const { data: borrower, error: borrowerError } = await supabase
+                .from('borrowers')
+                .select('status, borrower_id')
+                .eq('id', borrowerId)
+                .single();
             if (borrowerError || !borrower) {
                 throw new Error('Borrower not found');
             }
@@ -548,7 +553,21 @@ const LoanManagement = () => {
             }
 
             await supabase.from('borrowers').update({ status: 'active_loan' }).eq('id', borrowerId);
-            
+
+            if (insertedLoan?.id) {
+                void logAudit({
+                    action: 'loan.disburse',
+                    entityType: 'loan',
+                    entityId: insertedLoan.id,
+                    metadata: {
+                        loan_public_id: newLoan.loan_id,
+                        borrower_public_id: borrower.borrower_id ?? '',
+                        principal: principalAmount,
+                        disbursement_date: disbursementDate,
+                    },
+                });
+            }
+
             toast({ title: 'Success!', description: 'Loan disbursed successfully!', variant: 'default' });
             setDialogOpen(false);
             resetFormData();
@@ -798,6 +817,17 @@ const LoanManagement = () => {
                     }
                     const borrowerIdsToUpdate = newLoans.map(l => l.borrower_id);
                     await supabase.from('borrowers').update({ status: 'active_loan' }).in('id', borrowerIdsToUpdate);
+                    if (insertedRows?.length) {
+                        void logAudit({
+                            action: 'loan.disburse_bulk',
+                            entityType: 'batch',
+                            entityId: insertedRows[0].id,
+                            metadata: {
+                                count: insertedRows.length,
+                                disbursement_date: newLoans[0]?.disbursement_date ?? null,
+                            },
+                        });
+                    }
                 }
                 const skipLines = skippedLoans.map(
                     (s) => `${s.borrower_id ?? '?'}: ${s.reason}`,

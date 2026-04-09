@@ -91,7 +91,15 @@ export const AuthProvider = ({ children }) => {
           handleSession(newSession);
         } else if (event === 'SIGNED_IN') {
           handleSession(newSession);
-          void logAudit({ action: 'auth.login' }, newSession);
+          void logAudit(
+            {
+              action: 'auth.login',
+              metadata: {
+                email: newSession?.user?.email ?? null,
+              },
+            },
+            newSession,
+          );
         } else if (event === 'USER_UPDATED') {
           handleSession(newSession);
         } else if (event === 'INITIAL_SESSION') {
@@ -194,11 +202,12 @@ export const AuthProvider = ({ children }) => {
     }
   }, [toast]);
 
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async (options = {}) => {
+    const reason = options?.reason ?? 'manual';
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
-        await logAudit({ action: 'auth.logout' });
+        await logAudit({ action: 'auth.logout', metadata: { reason } });
       }
     } catch {
       /* still sign out */
@@ -216,7 +225,7 @@ export const AuthProvider = ({ children }) => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
         void (async () => {
-          await signOut();
+          await signOut({ reason: 'idle_timeout' });
           toast({
             title: 'Session ended',
             description: 'You were signed out after 5 minutes of inactivity.',

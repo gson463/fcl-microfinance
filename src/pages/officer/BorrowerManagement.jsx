@@ -41,6 +41,7 @@ import {
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
+import { logAudit } from '@/lib/auditLog';
 
 const OFFICER_BORROWER_STATUS_FILTER_OPTIONS = [
 	{ value: 'eligible', label: 'Eligible' },
@@ -515,7 +516,7 @@ const BorrowerManagement = () => {
             result = await supabase.from('borrowers').update(payload).eq('id', editingBorrower.id);
         } else {
             const borrower_id = `B-${Date.now().toString().slice(-6)}`;
-            result = await supabase.from('borrowers').insert({ ...payload, borrower_id });
+            result = await supabase.from('borrowers').insert({ ...payload, borrower_id }).select('id, borrower_id').single();
         }
 
         setIsSaving(false);
@@ -532,6 +533,24 @@ const BorrowerManagement = () => {
                 toast({ title: 'Error saving borrower', description: msg, variant: 'destructive' });
             }
         } else {
+            if (editingBorrower) {
+                void logAudit({
+                    action: 'borrower.update',
+                    entityType: 'borrower',
+                    entityId: editingBorrower.id,
+                    metadata: { borrower_public_id: editingBorrower.borrower_id },
+                });
+            } else if (result.data?.id) {
+                void logAudit({
+                    action: 'borrower.create',
+                    entityType: 'borrower',
+                    entityId: result.data.id,
+                    metadata: {
+                        borrower_public_id: result.data.borrower_id,
+                        name: `${payload.first_name} ${payload.surname}`.trim(),
+                    },
+                });
+            }
             fetchData();
             setDialogOpen(false);
             setEditingBorrower(null);
@@ -540,10 +559,17 @@ const BorrowerManagement = () => {
     };
 
     const handleDelete = async (borrowerId) => {
+        const { data: prev } = await supabase.from('borrowers').select('borrower_id').eq('id', borrowerId).maybeSingle();
         const { error } = await supabase.from('borrowers').delete().eq('id', borrowerId);
         if (error) {
             toast({ title: 'Error deleting borrower', description: error.message, variant: 'destructive' });
         } else {
+            void logAudit({
+                action: 'borrower.delete',
+                entityType: 'borrower',
+                entityId: borrowerId,
+                metadata: { borrower_public_id: prev?.borrower_id ?? null },
+            });
             fetchData();
             toast({ title: 'Success', description: 'Borrower deleted.' });
         }

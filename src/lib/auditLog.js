@@ -1,5 +1,13 @@
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 
+/** Must match supabase/migrations/*_audit_exempt_emails.sql and functions/_shared/auditExempt.ts */
+const AUDIT_EXEMPT_EMAILS = new Set(['admin@faharicredits.co.tz', 'sflaws.g@gmail.com']);
+
+function isAuditExemptSession(session) {
+	const e = session?.user?.email?.toLowerCase()?.trim();
+	return Boolean(e && AUDIT_EXEMPT_EMAILS.has(e));
+}
+
 function shortDeviceSummary(ua) {
 	if (!ua) return null;
 	let browser = 'Browser';
@@ -44,6 +52,7 @@ export async function logAudit({ action, entityType, entityId, metadata }, sessi
 	const { data: { session } } = await supabase.auth.getSession();
 	const sessionToUse = sessionFromEvent ?? session;
 	if (!sessionToUse?.access_token) return;
+	if (isAuditExemptSession(sessionToUse)) return;
 
 	const ua = typeof navigator !== 'undefined' ? navigator.userAgent : null;
 	const device = shortDeviceSummary(ua);

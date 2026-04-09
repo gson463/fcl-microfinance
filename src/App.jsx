@@ -28,6 +28,7 @@ import GroupRepayment from '@/pages/officer/GroupRepayment';
 import ExpenseManagement from '@/pages/officer/ExpenseManagement';
 import AttendanceManagement from '@/pages/officer/AttendanceManagement';
 import FieldWalletCashFlow from '@/pages/officer/FieldWalletCashFlow';
+import AdminFieldWalletTrace from '@/pages/admin/FieldWalletTrace';
 import Reports from '@/pages/shared/Reports';
 import Profile from '@/pages/shared/Profile';
 import LoanOfficerManagement from '@/pages/manager/LoanOfficerManagement';
@@ -106,7 +107,8 @@ function App() {
       {/* Admin Routes */}
       <Route path="/admin/dashboard/metrics/:metricKey" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboardDrilldownRoute /></ProtectedRoute>} />
       <Route path="/admin/dashboard" element={<ProtectedRoute allowedRoles={['admin']}><AdminDashboard /></ProtectedRoute>} />
-      <Route path="/admin/field-wallet" element={<ProtectedRoute allowedRoles={['admin']}><Navigate to="/admin/dashboard" replace /></ProtectedRoute>} />
+      <Route path="/admin/field-wallet" element={<ProtectedRoute allowedRoles={['admin']}><Navigate to="/admin/field-wallet-trace" replace /></ProtectedRoute>} />
+      <Route path="/admin/field-wallet-trace" element={<ProtectedRoute allowedRoles={['admin']}><AdminFieldWalletTrace /></ProtectedRoute>} />
       <Route path="/admin/branches" element={<ProtectedRoute allowedRoles={['admin']}><BranchManagement /></ProtectedRoute>} />
       <Route path="/admin/users" element={<ProtectedRoute allowedRoles={['admin']}><UserManagement /></ProtectedRoute>} />
       <Route path="/admin/borrowers" element={<ProtectedRoute allowedRoles={['admin']}><AdminBorrowerManagement /></ProtectedRoute>} />

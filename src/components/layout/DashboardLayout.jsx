@@ -41,6 +41,7 @@ const adminMainLinks = [
   { to: '/admin/loan-products', icon: Briefcase, text: 'Loan Products' },
   { to: '/admin/data-history', icon: Archive, text: 'History & audit' },
   { to: '/admin/repayment-management', icon: DollarSign, text: 'Prepayments' },
+  { to: '/admin/field-wallet-trace', icon: Wallet, text: 'Field wallet trace' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
   { to: '/admin/holidays', icon: Calendar, text: 'Holidays' },

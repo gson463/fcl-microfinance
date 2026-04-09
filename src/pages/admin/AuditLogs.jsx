@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Loader2, ChevronLeft, ChevronRight, ScrollText, Filter, RotateCcw } from 'lucide-react';
+import { formatAuditEventSummary, auditMetadataJsonString } from '@/lib/auditEventDisplay';
 
 const PAGE_SIZE = 50;
 
@@ -206,15 +207,10 @@ const AuditLogs = () => {
 
 	const fmtMeta = useMemo(
 		() => (m) => {
-			if (m == null) return '—';
-			if (typeof m !== 'object') return '—';
-			try {
-				return JSON.stringify(m);
-			} catch {
-				return '—';
-			}
+			const s = auditMetadataJsonString(m);
+			return s || '—';
 		},
-		[]
+		[],
 	);
 
 	const exportAuditCsv = () => {
@@ -226,13 +222,14 @@ const AuditLogs = () => {
 		exportObjectsToCsv(`audit_log_${Date.now()}.csv`, [
 			{ header: 'Time', accessor: (r) => safeFormatDate(r.created_at) },
 			{ header: 'User ID', accessor: (r) => String(r.user_id ?? '') },
+			{ header: 'What happened', accessor: (r) => formatAuditEventSummary(r) },
 			{ header: 'Action', accessor: (r) => String(r.action ?? '') },
 			{ header: 'Entity type', accessor: (r) => String(r.entity_type ?? '') },
 			{ header: 'Entity ID', accessor: (r) => String(r.entity_id ?? '') },
 			{ header: 'IP', accessor: (r) => String(r.ip_address ?? '') },
 			{ header: 'Location', accessor: (r) => String(r.location_label ?? '') },
 			{ header: 'Device', accessor: (r) => String(r.device_summary ?? (r.user_agent ? String(r.user_agent).slice(0, 120) : '') ?? '') },
-			{ header: 'Metadata', accessor: (r) => fmtMeta(r.metadata) },
+			{ header: 'Metadata (JSON)', accessor: (r) => fmtMeta(r.metadata) },
 		], selected);
 		toast({ title: 'Exported', description: `${selected.length} row(s) to CSV.` });
 	};
@@ -259,8 +256,8 @@ const AuditLogs = () => {
 					<ScrollText className="h-8 w-8 shrink-0 text-brand-blue" aria-hidden />
 					<div>
 						<p className="text-sm text-neutral-600 max-w-2xl">
-							Audit trail of sign-ins and other recorded actions (IP, approximate location from IP, device summary).
-							Only administrators can view this page.
+							Plain-language summary of each event plus technical codes, IDs, IP, location, and device. Only
+							administrators can view this page.
 						</p>
 					</div>
 				</div>
@@ -477,18 +474,19 @@ const AuditLogs = () => {
 												</TableHead>
 												<TableHead className="whitespace-nowrap">Time</TableHead>
 												<TableHead>User</TableHead>
+												<TableHead className="min-w-[200px] max-w-[min(380px,35vw)]">What happened</TableHead>
 												<TableHead>Action</TableHead>
 												<TableHead>Entity</TableHead>
 												<TableHead>IP</TableHead>
 												<TableHead>Location</TableHead>
 												<TableHead>Device</TableHead>
-												<TableHead className="max-w-[200px]">Details</TableHead>
+												<TableHead className="max-w-[200px]">Raw metadata</TableHead>
 											</TableRow>
 										</TableHeader>
 										<TableBody>
 											{rows.length === 0 ? (
 												<TableRow>
-													<TableCell colSpan={9} className="text-center py-10 text-muted-foreground">
+													<TableCell colSpan={10} className="text-center py-10 text-muted-foreground">
 														No audit entries yet.
 													</TableCell>
 												</TableRow>
@@ -508,6 +506,9 @@ const AuditLogs = () => {
 															<TableCell className="text-sm">
 																<div className="font-medium">{u?.full_name ?? '—'}</div>
 																<div className="text-xs text-muted-foreground">{u?.email ?? row.user_id ?? ''}</div>
+															</TableCell>
+															<TableCell className="text-sm text-neutral-800 dark:text-neutral-100">
+																{formatAuditEventSummary(row)}
 															</TableCell>
 															<TableCell className="font-mono text-xs">{row.action}</TableCell>
 															<TableCell className="text-xs">

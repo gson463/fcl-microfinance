@@ -22,6 +22,7 @@ import {
   FileSpreadsheet,
   FileDown,
   BadgePercent,
+  Landmark,
 } from 'lucide-react';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
@@ -75,6 +76,8 @@ const FieldWalletCashFlow = () => {
   const [expenses, setExpenses] = useState([]);
   const [disbursements, setDisbursements] = useState([]);
   const [fieldTakenRows, setFieldTakenRows] = useState([]);
+  const [withdrawRows, setWithdrawRows] = useState([]);
+  const [withdrawSaving, setWithdrawSaving] = useState(false);
   const [centers, setCenters] = useState([]);
   const [officerRows, setOfficerRows] = useState([]);
   const [exportingExcel, setExportingExcel] = useState(false);
@@ -120,6 +123,7 @@ const FieldWalletCashFlow = () => {
       setExpenses([]);
       setDisbursements([]);
       setFieldTakenRows([]);
+      setWithdrawRows([]);
       setCenters([]);
       setOfficerRows([]);
       setLoading(false);
@@ -174,34 +178,45 @@ const FieldWalletCashFlow = () => {
         .gte('business_date', fromStr)
         .lte('business_date', toStr);
 
+      const withdrawQ = supabase
+        .from('officer_withdraw_to_bank')
+        .select('id, officer_id, business_date')
+        .gte('business_date', fromStr)
+        .lte('business_date', toStr);
+
       if (officerIdsFilter) {
         repQ.in('officer_id', officerIdsFilter);
         loanQ.in('officer_id', officerIdsFilter);
         expQ.in('officer_id', officerIdsFilter);
         takenQ.in('officer_id', officerIdsFilter);
+        withdrawQ.in('officer_id', officerIdsFilter);
       }
 
-      const [repRes, loanRes, expRes, takenRes] = await Promise.all([
+      const [repRes, loanRes, expRes, takenRes, withdrawRes] = await Promise.all([
         repQ.order('actual_payment_date', { ascending: false }),
         loanQ.order('disbursement_date', { ascending: false }),
         expQ.order('expense_date', { ascending: false }),
         takenQ.order('business_date', { ascending: false }),
+        withdrawQ.order('business_date', { ascending: false }),
       ]);
 
       if (repRes.error) throw repRes.error;
       if (loanRes.error) throw loanRes.error;
       if (expRes.error) throw expRes.error;
       if (takenRes.error) throw takenRes.error;
+      if (withdrawRes.error) throw withdrawRes.error;
 
       const reps = repRes.data || [];
       const loans = loanRes.data || [];
       const exps = expRes.data || [];
       const taken = takenRes.data || [];
+      const withdraws = withdrawRes.data || [];
 
       setRepayments(reps);
       setExpenses(exps);
       setDisbursements(loans);
       setFieldTakenRows(taken);
+      setWithdrawRows(withdraws);
 
       const oid = new Set();
       reps.forEach((r) => r.officer_id && oid.add(r.officer_id));
@@ -326,6 +341,52 @@ const FieldWalletCashFlow = () => {
       net: cashInTotal - outExp - outDisb,
     };
   }, [repayments, expenses, disbursements, applicationFee, fieldTakenRows]);
+
+  const walletDateFromStr = useMemo(() => format(range.from, 'yyyy-MM-dd'), [range.from]);
+  const walletDateToStr = useMemo(() => format(range.to, 'yyyy-MM-dd'), [range.to]);
+  const isSingleWalletDay = walletDateFromStr === walletDateToStr;
+
+  const officerWithdrawForDay = useMemo(() => {
+    if (role !== 'officer' || !user?.id || !isSingleWalletDay) return false;
+    return withdrawRows.some((w) => w.officer_id === user.id && w.business_date === walletDateFromStr);
+  }, [role, user?.id, isSingleWalletDay, walletDateFromStr, withdrawRows]);
+
+  /** After withdraw-to-bank, UI shows 0; Excel/PDF still use computed DEPOSIT. */
+  const displayNet = useMemo(() => {
+    if (role === 'officer' && officerWithdrawForDay) return 0;
+    return totals.net;
+  }, [role, officerWithdrawForDay, totals.net]);
+
+  const handleWithdrawToBank = useCallback(async () => {
+    if (role !== 'officer' || !user?.id || !isSingleWalletDay || officerWithdrawForDay) return;
+    if (totals.net <= 0) {
+      toast({
+        title: 'Nothing to withdraw',
+        description: 'Wallet balance is not positive.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setWithdrawSaving(true);
+    try {
+      const { error } = await supabase.from('officer_withdraw_to_bank').insert({
+        officer_id: user.id,
+        business_date: walletDateFromStr,
+      });
+      if (error) throw error;
+      toast({ title: 'Recorded', description: 'Marked as withdrawn to bank. Balance shows 0; Excel still shows DEPOSIT for today.' });
+      await fetchData();
+    } catch (e) {
+      const msg = e?.message || String(e);
+      toast({
+        title: 'Save failed',
+        description: msg.includes('duplicate') || msg.includes('unique') ? 'Withdraw was already recorded for this day.' : msg,
+        variant: 'destructive',
+      });
+    } finally {
+      setWithdrawSaving(false);
+    }
+  }, [role, user?.id, isSingleWalletDay, officerWithdrawForDay, totals.net, walletDateFromStr, toast, fetchData]);
 
   const toggleDate = (dateKey) => {
     setExpandedDates((prev) => {
@@ -480,12 +541,36 @@ const FieldWalletCashFlow = () => {
               <Card className="border-l-4 border-l-brand-gold bg-brand-gold/[0.04] dark:bg-brand-gold/[0.06]">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">Wallet balance</CardTitle>
+                  <CardDescription className="text-xs">
+                    {isSingleWalletDay
+                      ? 'Single day view. After withdraw to bank, balance shows 0; Excel export still shows DEPOSIT for this day.'
+                      : 'Select a single day to withdraw to bank.'}
+                  </CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
                   <p className="text-3xl font-bold tabular-nums tracking-tight">
                     {currency}{' '}
-                    {totals.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {displayNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
+                  {officerWithdrawForDay && (
+                    <p className="text-sm font-medium text-muted-foreground">Withdrawn to bank — cash no longer in hand.</p>
+                  )}
+                  {isSingleWalletDay && !officerWithdrawForDay && totals.net > 0 && (
+                    <Button
+                      type="button"
+                      variant="default"
+                      className="w-full sm:w-auto"
+                      onClick={handleWithdrawToBank}
+                      disabled={withdrawSaving}
+                    >
+                      {withdrawSaving ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Landmark className="mr-2 h-4 w-4" />
+                      )}
+                      {withdrawSaving ? 'Saving…' : 'Withdraw to bank'}
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -628,9 +713,13 @@ const FieldWalletCashFlow = () => {
                   <CardTitle className="text-sm font-medium">Net (cash in − out)</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className={`text-2xl font-bold ${totals.net >= 0 ? '' : 'text-destructive'}`}>
-                    {currency} {totals.net.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <p className={`text-2xl font-bold ${displayNet >= 0 ? '' : 'text-destructive'}`}>
+                    {currency}{' '}
+                    {displayNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
+                  {role === 'officer' && officerWithdrawForDay && (
+                    <p className="text-xs text-muted-foreground mt-1">Shown as 0 after withdraw; export uses full figures.</p>
+                  )}
                 </CardContent>
               </Card>
             </div>

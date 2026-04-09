@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
 import { getClientIp, geoLabelFromIp } from "../_shared/audit.ts";
+import { isAuditExemptEmail } from "../_shared/auditExempt.ts";
 
 type Body = {
   action: string;
@@ -42,6 +43,11 @@ Deno.serve(async (req: Request) => {
     if (userErr || !userData.user) {
       return new Response(JSON.stringify({ error: "Invalid token" }), {
         status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (isAuditExemptEmail(userData.user.email)) {
+      return new Response(JSON.stringify({ ok: true, skipped: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

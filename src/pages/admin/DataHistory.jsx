@@ -16,6 +16,7 @@ import { exportObjectsToCsv } from '@/lib/tableExport';
 import { HierarchyFilterBar } from '@/components/filters/HierarchyFilterBar';
 import { ALL } from '@/lib/hierarchyFilterUtils';
 import { borrowerPublicId, borrowerPublicIdOrDash } from '@/lib/borrowerPublicId';
+import { formatAuditEventSummary, auditMetadataJsonString } from '@/lib/auditEventDisplay';
 
 const PAGE_SIZE = 25;
 const AUDIT_PAGE_SIZE = 40;
@@ -486,14 +487,9 @@ const AdminDataHistory = () => {
 
   const auditTotalPages = Math.max(1, Math.ceil(auditTotal / AUDIT_PAGE_SIZE));
 
-  const fmtMeta = (m) => {
-    if (m == null) return '—';
-    if (typeof m !== 'object') return '—';
-    try {
-      return JSON.stringify(m);
-    } catch {
-      return '—';
-    }
+  const rawMetaLine = (m) => {
+    const s = auditMetadataJsonString(m);
+    return s || '—';
   };
 
   return (
@@ -896,7 +892,8 @@ const AdminDataHistory = () => {
                   <CardTitle className="text-base">Activity log (preview)</CardTitle>
                 </div>
                 <CardDescription>
-                  Each row shows when something happened, who did it, and the <strong>action</strong> (what was done). Use Apply, then change page.
+                  Each row shows <strong>what happened</strong> in plain language (plus technical action code and IDs). Filters
+                  match the actor&apos;s branch, center, group, user, and role. Use Apply, then change page.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1055,15 +1052,16 @@ const AdminDataHistory = () => {
                           <TableRow>
                             <TableHead className="whitespace-nowrap">Time</TableHead>
                             <TableHead>User</TableHead>
-                            <TableHead>Action (what happened)</TableHead>
+                            <TableHead className="min-w-[220px] max-w-[min(420px,40vw)]">What happened</TableHead>
+                            <TableHead>Action (code)</TableHead>
                             <TableHead>Entity</TableHead>
-                            <TableHead className="min-w-[180px]">Details</TableHead>
+                            <TableHead className="min-w-[180px]">Raw metadata</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {auditRows.length === 0 ? (
                             <TableRow>
-                              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                              <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                                 No rows for this page / filters.
                               </TableCell>
                             </TableRow>
@@ -1078,12 +1076,18 @@ const AdminDataHistory = () => {
                                       ? '—'
                                       : '—'}
                                 </TableCell>
-                                <TableCell className="font-medium text-sm">{r.action || '—'}</TableCell>
+                                <TableCell className="text-sm text-neutral-800 dark:text-neutral-100">
+                                  {formatAuditEventSummary(r)}
+                                </TableCell>
+                                <TableCell className="font-mono text-xs">{r.action || '—'}</TableCell>
                                 <TableCell className="text-xs">
                                   {[r.entity_type, r.entity_id].filter(Boolean).join(' / ') || '—'}
                                 </TableCell>
-                                <TableCell className="text-xs font-mono max-w-[280px] truncate" title={fmtMeta(r.metadata)}>
-                                  {fmtMeta(r.metadata)}
+                                <TableCell
+                                  className="text-xs font-mono max-w-[280px] truncate align-top"
+                                  title={rawMetaLine(r.metadata)}
+                                >
+                                  {rawMetaLine(r.metadata)}
                                 </TableCell>
                               </TableRow>
                             ))

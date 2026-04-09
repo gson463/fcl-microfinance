@@ -5,6 +5,7 @@ import {
   installmentUnitFromSchedule,
   isValidRepaymentAmount,
 } from "../_shared/repaymentAmount.ts";
+import { isAuditExemptEmail } from "../_shared/auditExempt.ts";
 
 /** Fire-and-forget audit so the client gets a fast response (geo lookup can be slow). */
 function scheduleRepaymentAudit(
@@ -22,6 +23,14 @@ function scheduleRepaymentAudit(
 ) {
   const run = async () => {
     try {
+      const { data: actorRow } = await supabaseAdmin
+        .from("users")
+        .select("email")
+        .eq("id", params.officer_id)
+        .maybeSingle();
+      if (isAuditExemptEmail(actorRow?.email)) {
+        return;
+      }
       const ip = getClientIp(req);
       let location_label: string | null = null;
       try {
