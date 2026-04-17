@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock, Building2 } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
@@ -132,6 +132,16 @@ const BorrowerManagement = () => {
     const [importReportOpen, setImportReportOpen] = useState(false);
     const [importReportSummary, setImportReportSummary] = useState('');
     const [importReportDetails, setImportReportDetails] = useState('');
+    const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+    const [transferBorrower, setTransferBorrower] = useState(null);
+    const [transferCenterId, setTransferCenterId] = useState('');
+    const [transferGroupId, setTransferGroupId] = useState('');
+    const [transferSaving, setTransferSaving] = useState(false);
+    const [bulkTransferDialogOpen, setBulkTransferDialogOpen] = useState(false);
+    const [bulkTransferIds, setBulkTransferIds] = useState([]);
+    const [bulkTransferCenterId, setBulkTransferCenterId] = useState('');
+    const [bulkTransferGroupId, setBulkTransferGroupId] = useState('');
+    const [bulkTransferSaving, setBulkTransferSaving] = useState(false);
 
     const defaultFormState = {
         first_name: '',
@@ -185,7 +195,7 @@ const BorrowerManagement = () => {
             .select('*')
             .eq('loan_officer_id', user.id);
 
-        let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
+        let centersQuery = supabase.from('centers').select('id, name, branch_id').eq('loan_officer_id', user.id).order('name');
         if (branchId) {
             centersQuery = centersQuery.eq('branch_id', branchId);
         }
@@ -826,7 +836,183 @@ const BorrowerManagement = () => {
             'paid_up': 'Paid Up',
         };
         return statusTextMap[status] || status;
-    }
+    };
+
+    const transferGroupsInCenter = useMemo(() => {
+        if (!transferCenterId) return [];
+        return groups.filter((g) => g.center_id === transferCenterId);
+    }, [groups, transferCenterId]);
+
+    const bulkTransferGroupsInCenter = useMemo(() => {
+        if (!bulkTransferCenterId) return [];
+        return groups.filter((g) => g.center_id === bulkTransferCenterId);
+    }, [groups, bulkTransferCenterId]);
+
+    const selectedGroupBorrowerCount = useMemo(() => {
+        return borrowers.filter((b) => selectedBorrowers.has(b.id) && b.borrower_type === 'group').length;
+    }, [borrowers, selectedBorrowers]);
+
+    const getCenterName = (id) => (id ? centers.find((c) => c.id === id)?.name : null) || '—';
+
+    const openTransferCenter = (b) => {
+        if (b.borrower_type !== 'group') return;
+        setTransferBorrower(b);
+        let cid = b.center_id || null;
+        if (!cid && b.group_id) {
+            const g = groups.find((x) => x.id === b.group_id);
+            cid = g?.center_id ?? null;
+        }
+        setTransferCenterId(cid || '');
+        setTransferGroupId(b.group_id || '');
+        setTransferDialogOpen(true);
+    };
+
+    const handleTransferCenterSave = async () => {
+        if (!transferBorrower || !user?.id || !transferGroupId) {
+            toast({
+                title: 'Select a group',
+                description: 'Choose the centre and group for this borrower.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const g = groups.find((x) => x.id === transferGroupId);
+        if (!g || g.loan_officer_id !== user.id) {
+            toast({ title: 'Invalid group', description: 'The group must belong to you.', variant: 'destructive' });
+            return;
+        }
+        if (transferCenterId && g.center_id !== transferCenterId) {
+            toast({ title: 'Mismatch', description: 'Pick a group under the selected centre.', variant: 'destructive' });
+            return;
+        }
+        const ctr = centers.find((c) => c.id === g.center_id);
+        const newBranchId = ctr?.branch_id ?? officerBranchId ?? user.user_metadata?.branch_id;
+        if (!newBranchId) {
+            toast({
+                title: 'Branch missing',
+                description: 'Your profile or centre has no branch — contact an admin.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        setTransferSaving(true);
+        try {
+            const { error } = await supabase
+                .from('borrowers')
+                .update({
+                    group_id: transferGroupId,
+                    center_id: g.center_id,
+                    branch_id: newBranchId,
+                })
+                .eq('id', transferBorrower.id)
+                .eq('loan_officer_id', user.id);
+            if (error) throw error;
+            void logAudit({
+                action: 'borrower.update',
+                entityType: 'borrower',
+                entityId: transferBorrower.id,
+                metadata: {
+                    borrower_public_id: transferBorrower.borrower_id,
+                    transfer_center: true,
+                    to_center_id: g.center_id,
+                    to_group_id: transferGroupId,
+                },
+            });
+            toast({ title: 'Centre updated', description: 'Borrower moved to the selected centre and group (same officer).' });
+            setTransferDialogOpen(false);
+            setTransferBorrower(null);
+            fetchData();
+        } catch (err) {
+            toast({ title: 'Transfer failed', description: err.message, variant: 'destructive' });
+        } finally {
+            setTransferSaving(false);
+        }
+    };
+
+    const openBulkTransferCenter = () => {
+        const ids = borrowers
+            .filter((b) => selectedBorrowers.has(b.id) && b.borrower_type === 'group')
+            .map((b) => b.id);
+        if (ids.length === 0) {
+            toast({
+                title: 'No group borrowers selected',
+                description: 'Bulk transfer applies to group borrowers only. Individual borrowers are skipped.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        setBulkTransferIds(ids);
+        setBulkTransferCenterId('');
+        setBulkTransferGroupId('');
+        setBulkTransferDialogOpen(true);
+    };
+
+    const handleBulkTransferSave = async () => {
+        if (!user?.id || bulkTransferIds.length === 0 || !bulkTransferGroupId) {
+            toast({
+                title: 'Select a group',
+                description: 'Choose the centre and destination group for all selected borrowers.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const g = groups.find((x) => x.id === bulkTransferGroupId);
+        if (!g || g.loan_officer_id !== user.id) {
+            toast({ title: 'Invalid group', description: 'The group must belong to you.', variant: 'destructive' });
+            return;
+        }
+        if (bulkTransferCenterId && g.center_id !== bulkTransferCenterId) {
+            toast({ title: 'Mismatch', description: 'Pick a group under the selected centre.', variant: 'destructive' });
+            return;
+        }
+        const ctr = centers.find((c) => c.id === g.center_id);
+        const newBranchId = ctr?.branch_id ?? officerBranchId ?? user.user_metadata?.branch_id;
+        if (!newBranchId) {
+            toast({
+                title: 'Branch missing',
+                description: 'Your profile or centre has no branch — contact an admin.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        setBulkTransferSaving(true);
+        try {
+            const { error } = await supabase
+                .from('borrowers')
+                .update({
+                    group_id: bulkTransferGroupId,
+                    center_id: g.center_id,
+                    branch_id: newBranchId,
+                })
+                .in('id', bulkTransferIds)
+                .eq('loan_officer_id', user.id);
+            if (error) throw error;
+            void logAudit({
+                action: 'borrower.update',
+                entityType: 'borrower',
+                entityId: bulkTransferIds[0],
+                metadata: {
+                    transfer_center_bulk: true,
+                    count: bulkTransferIds.length,
+                    borrower_ids: bulkTransferIds,
+                    to_center_id: g.center_id,
+                    to_group_id: bulkTransferGroupId,
+                },
+            });
+            toast({
+                title: 'Bulk transfer complete',
+                description: `${bulkTransferIds.length} borrower(s) moved to the selected centre and group.`,
+            });
+            setBulkTransferDialogOpen(false);
+            setBulkTransferIds([]);
+            setSelectedBorrowers(new Set());
+            fetchData();
+        } catch (err) {
+            toast({ title: 'Bulk transfer failed', description: err.message, variant: 'destructive' });
+        } finally {
+            setBulkTransferSaving(false);
+        }
+    };
 
 
     if (loading) return <DashboardLayout title="Borrower Management"><div className="flex justify-center items-center h-full">Loading...</div></DashboardLayout>;
@@ -1068,9 +1254,28 @@ const BorrowerManagement = () => {
                     </CardHeader>
                     <CardContent>
                        {selectedBorrowers.size > 0 && (
-                            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded-r-lg flex justify-between items-center">
-                                <p className="font-medium text-blue-800">{selectedBorrowers.size} borrower(s) selected.</p>
+                            <div className="bg-blue-50 border-l-4 border-blue-500 p-4 mb-4 rounded-r-lg flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-center">
+                                <div>
+                                    <p className="font-medium text-blue-800">{selectedBorrowers.size} borrower(s) selected.</p>
+                                    {selectedBorrowers.size !== selectedGroupBorrowerCount && (
+                                        <p className="mt-1 text-sm text-blue-800/90">
+                                            {selectedGroupBorrowerCount} group borrower(s) — bulk centre transfer uses group rows only.
+                                        </p>
+                                    )}
+                                </div>
                                 <div className="flex flex-wrap gap-2">
+                                    {selectedGroupBorrowerCount > 0 && (
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={openBulkTransferCenter}
+                                            disabled={centers.length === 0 || groups.length === 0}
+                                            title="Move all selected group borrowers to one centre/group"
+                                        >
+                                            <Building2 className="mr-2 h-4 w-4" />
+                                            Transfer centre (bulk)
+                                        </Button>
+                                    )}
                                     <Button type="button" variant="outline" onClick={handleExportBorrowersCsv}>
                                         <Download className="mr-2 h-4 w-4"/>
                                         Export CSV
@@ -1144,6 +1349,19 @@ const BorrowerManagement = () => {
                                                     )}
                                                 </Button>
                                             )}
+                                            {b.borrower_type === 'group' && (
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="icon"
+                                                    className="h-8"
+                                                    title="Transfer to another centre or group (same officer)"
+                                                    onClick={() => openTransferCenter(b)}
+                                                    disabled={centers.length === 0 || groups.length === 0}
+                                                >
+                                                    <Building2 className="h-4 w-4" />
+                                                </Button>
+                                            )}
                                             <Button variant="outline" size="icon" onClick={() => navigate(`/officer/borrowers/${b.id}`)}><Eye className="h-4 w-4" /></Button>
                                             <Button variant="outline" size="icon" onClick={() => handleEdit(b)}><Edit className="h-4 w-4" /></Button>
                                             <AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" size="icon"><Trash2 className="h-4 w-4" /></Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Are you sure?</AlertDialogTitle><AlertDialogDescription>This will delete the borrower and related records.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleDelete(b.id)}>Delete</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
@@ -1176,6 +1394,175 @@ const BorrowerManagement = () => {
                     </CardContent>
                 </Card>
             </div>
+            <Dialog
+                open={transferDialogOpen}
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setTransferBorrower(null);
+                    }
+                    setTransferDialogOpen(open);
+                }}
+            >
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Transfer centre / group</DialogTitle>
+                        <DialogDescription>
+                            Move this group borrower to another centre (or another group under your portfolio). The borrower stays with you as loan officer.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {transferBorrower && (
+                        <div className="space-y-4 py-2">
+                            <p className="text-sm text-muted-foreground">
+                                <span className="font-medium text-foreground">{transferBorrower.first_name} {transferBorrower.surname}</span>
+                                {' '}
+                                ({transferBorrower.borrower_id}) — current centre:{' '}
+                                <span className="font-medium text-foreground">
+                                    {getCenterName(transferBorrower.center_id || groups.find((x) => x.id === transferBorrower.group_id)?.center_id)}
+                                </span>
+                            </p>
+                            <div className="space-y-2">
+                                <Label>Centre</Label>
+                                <Select
+                                    value={transferCenterId || undefined}
+                                    onValueChange={(v) => {
+                                        setTransferCenterId(v);
+                                        setTransferGroupId('');
+                                    }}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Select centre" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {centers.map((c) => (
+                                            <SelectItem key={c.id} value={c.id}>
+                                                {c.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label>Group</Label>
+                                <Select
+                                    value={transferGroupId || undefined}
+                                    onValueChange={(v) => setTransferGroupId(v)}
+                                    disabled={!transferCenterId || transferGroupsInCenter.length === 0}
+                                >
+                                    <SelectTrigger>
+                                        <SelectValue
+                                            placeholder={
+                                                !transferCenterId
+                                                    ? 'Select centre first'
+                                                    : transferGroupsInCenter.length === 0
+                                                      ? 'No groups in this centre'
+                                                      : 'Select group'
+                                            }
+                                        />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {transferGroupsInCenter.map((g) => (
+                                            <SelectItem key={g.id} value={g.id}>
+                                                {g.name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="flex justify-end gap-2 pt-2">
+                                <Button type="button" variant="outline" onClick={() => setTransferDialogOpen(false)}>
+                                    Cancel
+                                </Button>
+                                <Button type="button" onClick={handleTransferCenterSave} disabled={transferSaving || !transferGroupId}>
+                                    {transferSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                    Save transfer
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
+            <Dialog
+                open={bulkTransferDialogOpen}
+                onOpenChange={(open) => {
+                    if (!open) setBulkTransferIds([]);
+                    setBulkTransferDialogOpen(open);
+                }}
+            >
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Bulk transfer — centre / group</DialogTitle>
+                        <DialogDescription>
+                            Move <strong>{bulkTransferIds.length}</strong> group borrower(s) to the same centre and group. You remain
+                            the loan officer. Individual borrowers in the selection are not included.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-2">
+                        <div className="space-y-2">
+                            <Label>Centre</Label>
+                            <Select
+                                value={bulkTransferCenterId || undefined}
+                                onValueChange={(v) => {
+                                    setBulkTransferCenterId(v);
+                                    setBulkTransferGroupId('');
+                                }}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select centre" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {centers.map((c) => (
+                                        <SelectItem key={c.id} value={c.id}>
+                                            {c.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Group</Label>
+                            <Select
+                                value={bulkTransferGroupId || undefined}
+                                onValueChange={(v) => setBulkTransferGroupId(v)}
+                                disabled={!bulkTransferCenterId || bulkTransferGroupsInCenter.length === 0}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue
+                                        placeholder={
+                                            !bulkTransferCenterId
+                                                ? 'Select centre first'
+                                                : bulkTransferGroupsInCenter.length === 0
+                                                  ? 'No groups in this centre'
+                                                  : 'Select group'
+                                        }
+                                    />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {bulkTransferGroupsInCenter.map((gr) => (
+                                        <SelectItem key={gr.id} value={gr.id}>
+                                            {gr.name}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="flex justify-end gap-2 pt-2">
+                            <Button type="button" variant="outline" onClick={() => setBulkTransferDialogOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button
+                                type="button"
+                                onClick={handleBulkTransferSave}
+                                disabled={bulkTransferSaving || !bulkTransferGroupId || bulkTransferIds.length === 0}
+                            >
+                                {bulkTransferSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                                Transfer {bulkTransferIds.length} borrower(s)
+                            </Button>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
             <ImportResultDialog
                 open={importReportOpen}
                 onOpenChange={setImportReportOpen}

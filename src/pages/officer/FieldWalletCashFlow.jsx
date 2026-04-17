@@ -7,6 +7,9 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
@@ -23,6 +26,7 @@ import {
   FileDown,
   BadgePercent,
   Landmark,
+  Plus,
 } from 'lucide-react';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
@@ -32,6 +36,15 @@ import { downloadFieldWalletPdf } from '@/lib/fieldWalletReportPdf';
 import { resolveLogoUrl, DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE } from '@/lib/brand';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
+
+function parseAdditionalTakenInput(s) {
+  const t = String(s ?? '')
+    .trim()
+    .replace(/,/g, '');
+  if (t === '') return 0;
+  const n = Number.parseFloat(t);
+  return Number.isNaN(n) ? NaN : n;
+}
 
 /** Default filter: current calendar date in Africa/Nairobi (single day). */
 function getDefaultWalletDateRange() {
@@ -84,6 +97,11 @@ const FieldWalletCashFlow = () => {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [range, setRange] = useState(() => getDefaultWalletDateRange());
   const [expandedDates, setExpandedDates] = useState(() => new Set());
+  const [todayTakenRow, setTodayTakenRow] = useState(null);
+  const [todayTakenLoading, setTodayTakenLoading] = useState(false);
+  const [addTakenOpen, setAddTakenOpen] = useState(false);
+  const [additionalTakenInput, setAdditionalTakenInput] = useState('');
+  const [addTakenSaving, setAddTakenSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -249,17 +267,83 @@ const FieldWalletCashFlow = () => {
     }
   }, [user, role, range.from, range.to, profileLoading, managerBranchId, toast]);
 
+  const fetchTodayTaken = useCallback(async () => {
+    if (!user?.id || role !== 'officer') {
+      setTodayTakenRow(null);
+      return;
+    }
+    setTodayTakenLoading(true);
+    const d = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+    const { data, error } = await supabase
+      .from('officer_field_taken')
+      .select('id, amount_taken')
+      .eq('officer_id', user.id)
+      .eq('business_date', d)
+      .maybeSingle();
+    setTodayTakenLoading(false);
+    if (error) {
+      console.error(error);
+      setTodayTakenRow(null);
+      return;
+    }
+    setTodayTakenRow(data ?? null);
+  }, [user?.id, role]);
+
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   useEffect(() => {
+    fetchTodayTaken();
+  }, [fetchTodayTaken]);
+
+  useEffect(() => {
     const onTaken = () => {
       fetchData();
+      fetchTodayTaken();
     };
     window.addEventListener('officer-field-taken-updated', onTaken);
     return () => window.removeEventListener('officer-field-taken-updated', onTaken);
-  }, [fetchData]);
+  }, [fetchData, fetchTodayTaken]);
+
+  const handleSaveAdditionalTaken = useCallback(async () => {
+    if (!user?.id || !todayTakenRow?.id) return;
+    const add = parseAdditionalTakenInput(additionalTakenInput);
+    if (Number.isNaN(add) || add < 0) {
+      toast({
+        title: 'Invalid amount',
+        description: 'Enter a valid number (zero or more).',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const current = Number(todayTakenRow.amount_taken) || 0;
+    const next = current + add;
+    setAddTakenSaving(true);
+    try {
+      const { error } = await supabase
+        .from('officer_field_taken')
+        .update({ amount_taken: next })
+        .eq('id', todayTakenRow.id)
+        .eq('officer_id', user.id);
+      if (error) throw error;
+      window.dispatchEvent(new CustomEvent('officer-field-taken-updated'));
+      toast({
+        title: 'Updated',
+        description: `Total taken today is now ${currency} ${next.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}.`,
+      });
+      setAddTakenOpen(false);
+      setAdditionalTakenInput('');
+      await fetchTodayTaken();
+    } catch (e) {
+      toast({ title: 'Save failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setAddTakenSaving(false);
+    }
+  }, [user?.id, todayTakenRow, additionalTakenInput, currency, toast, fetchTodayTaken]);
 
   const branchLabel = useMemo(() => {
     if (role === 'admin') return 'Scope: All branches';
@@ -568,6 +652,58 @@ const FieldWalletCashFlow = () => {
           </div>
         ) : (
           <>
+            {role === 'officer' && (
+              <Card className="border-emerald-200/80 dark:border-emerald-900/50">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Today&apos;s float (taken)</CardTitle>
+                  <CardDescription className="text-xs">
+                    Business date (Africa/Nairobi):{' '}
+                    {formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd')}. After you save your first taken (login screen),
+                    you can add more cash from the office here anytime.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  {todayTakenLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading today&apos;s taken…
+                    </div>
+                  ) : (
+                    <>
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total taken today</p>
+                        <p className="text-xl font-bold tabular-nums">
+                          {currency}{' '}
+                          {(todayTakenRow?.amount_taken != null
+                            ? Number(todayTakenRow.amount_taken)
+                            : 0
+                          ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                        {!todayTakenRow?.id && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Record today&apos;s float on the login screen first — then you can add more here.
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="shrink-0"
+                        onClick={() => {
+                          setAdditionalTakenInput('');
+                          setAddTakenOpen(true);
+                        }}
+                        disabled={!todayTakenRow?.id}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        Add more taken
+                      </Button>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {role === 'officer' && (
               <Card className="border-l-4 border-l-brand-gold bg-brand-gold/[0.04] dark:bg-brand-gold/[0.06]">
                 <CardHeader className="pb-2">
@@ -975,6 +1111,63 @@ const FieldWalletCashFlow = () => {
           </>
         )}
       </div>
+
+      <Dialog open={addTakenOpen} onOpenChange={setAddTakenOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add more taken today</DialogTitle>
+            <DialogDescription>
+              Enter extra cash received from the office. It will be added to your total taken for today (same business date).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Current total taken: </span>
+              <span className="font-semibold tabular-nums">
+                {currency}{' '}
+                {(todayTakenRow?.amount_taken != null ? Number(todayTakenRow.amount_taken) : 0).toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </span>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="additional-taken">Additional amount from office</Label>
+              <Input
+                id="additional-taken"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="0"
+                value={additionalTakenInput}
+                onChange={(e) => setAdditionalTakenInput(e.target.value)}
+                className="tabular-nums text-lg"
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              New total:{' '}
+              <span className="font-semibold tabular-nums text-foreground">
+                {currency}{' '}
+                {(() => {
+                  const cur = Number(todayTakenRow?.amount_taken) || 0;
+                  const add = parseAdditionalTakenInput(additionalTakenInput);
+                  const sum = Number.isNaN(add) ? cur : cur + add;
+                  return sum.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                })()}
+              </span>
+            </p>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setAddTakenOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleSaveAdditionalTaken} disabled={addTakenSaving}>
+              {addTakenSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 };
