@@ -1,0 +1,274 @@
+% Software Delivery & Acceptance — compile on Overleaf (pdfLaTeX or XeLaTeX)
+% Leaf codes: prefix LC (same as docs/Client-Software-Delivery-and-Acceptance.md)
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.2cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{parskip}
+\setlist[itemize]{leftmargin=*,nosep,topsep=0.4em}
+\hypersetup{pdftitle={Software Delivery and Acceptance},pdfauthor={Plusnology / Fahari Credits}}
+
+\title{Software Delivery \& Acceptance}
+\author{}
+\date{}
+
+\newcommand{\LC}[1]{\textbf{\texttt{#1}}}
+
+\begin{document}
+\maketitle
+
+\noindent\textbf{Document reference:} [Insert reference number, e.g.\ FCL-DEL-2026-001]\\
+\textbf{Version of software delivered:} v1.0 (login/app branding label; align with your release tag if different)\\
+\textbf{Leaf code prefix:} \texttt{LC} (see Appendix A)
+
+\hrule height 0.4pt
+\vspace{0.8em}
+
+\section*{LC-1 · Parties}
+
+\subsection*{LC-1.1 · Supplier (vendor) --- full details}
+
+\begin{tabular}{@{}>{\raggedright}p{4.2cm}p{9.5cm}@{}}
+\toprule
+\textbf{Field} & \textbf{Detail} \\
+\midrule
+Legal name & Plusnology Company Limited \\
+Country / jurisdiction & United Republic of Tanzania \\
+Registered office / postal address & \textit{[Insert from Supplier letterhead.]} \\
+Website & \url{https://plusnology.tech} \\
+Primary professional email & \href{mailto:develop@plusnology.tech}{develop@plusnology.tech} \\
+Phone & +255 785 059 140 \\
+WhatsApp & +255 748 847 367 \\
+Company registration / TIN & \textit{[Insert if required.]} \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.5em}
+\noindent\textit{These contacts match the login-screen support block where configured.}
+
+\subsection*{LC-1.2 · Security partner}
+
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Field} & \textbf{Detail} \\
+\midrule
+Organisation & Vogu Ethics Limited \\
+Website & \url{https://voguethics.org} \\
+Address & \textit{[Insert if required.]} \\
+\bottomrule
+\end{tabular}
+
+\vspace{0.3em}
+\noindent\textit{Referenced in product branding; not a signatory unless separately agreed.}
+
+\subsection*{LC-1.3 · Client}
+
+\begin{tabular}{@{}>{\raggedright}p{4.2cm}p{9.5cm}@{}}
+\toprule
+\textbf{Field} & \textbf{Detail} \\
+\midrule
+Legal name & Fahari Credits Limited \\
+Address & \textit{[Insert client registered address.]} \\
+Default product name in app & FAHARI CREDIT LIMITED / Fahari Credits (configurable) \\
+Default tagline & Your Financial Friends. (configurable) \\
+\bottomrule
+\end{tabular}
+
+\section*{LC-2 · Description of delivered software}
+
+The Supplier has developed and is delivering to the Client the following software (the \textbf{``Software''}).
+
+\noindent\textbf{Working title:} Microfinance Management System
+
+\LC{LC-2.0} --- \textbf{Summary.} A single system for microfinance operations spanning branches, loan officers, loans, repayments, arrears, reporting, and governance of users and products. What each user depends on their \textbf{role} (Administrator, Branch Manager, or Loan Officer) and on \textbf{organisation settings}.
+
+\LC{LC-2.0} --- \textbf{Scope note.} The list below describes the \textbf{functional scope} implemented in this delivery. Commercial terms, service levels, and any items outside this list remain subject to the \textbf{statement of work or main contract} referenced in Section 5.
+
+\subsection*{LC-2.1 · Access, profile, and organisation branding}
+\begin{itemize}
+  \item \LC{LC-2.1.01} --- Secure sign-in; access controlled by user role.
+  \item \LC{LC-2.1.02} --- Configurable organisation \textbf{name} and \textbf{logo} for the application.
+  \item \LC{LC-2.1.03} --- \textbf{User profile:} name, email, phone, password change; \textbf{profile photo} where enabled for the role.
+  \item \LC{LC-2.1.04} --- Display preferences (for example light/dark \textbf{theme} and sidebar styling).
+  \item \LC{LC-2.1.05} --- Flow for \textbf{initial administrator account} registration where enabled (\texttt{/admin-signup} or equivalent).
+  \item \LC{LC-2.1.06} --- Login page: support contacts, Supplier and partner links, app version, clock and network status.
+\end{itemize}
+
+\subsection*{LC-2.2 · Administrator features}
+\begin{itemize}
+  \item \LC{LC-2.2.01} --- \textbf{Dashboard} with portfolio and operations indicators (including active and defaulted portfolio, disbursements, interest, collections, outstanding and default amounts, expected collections, daily activity, field wallet position, borrower counts, loans nearing completion, and related drill-down lists).
+  \item \LC{LC-2.2.02} --- Dashboard \textbf{filters} by date range, branch, and loan officer where applicable.
+  \item \LC{LC-2.2.03} --- \textbf{Branches:} create and maintain branch records.
+  \item \LC{LC-2.2.04} --- \textbf{Users:} create and manage staff accounts and roles.
+  \item \LC{LC-2.2.05} --- \textbf{Borrowers:} search and view borrower records across the organisation.
+  \item \LC{LC-2.2.06} --- \textbf{Loans and disbursements:} manage loans and disbursement-related actions in line with the product rules configured in the system.
+  \item \LC{LC-2.2.07} --- \textbf{Officer transfer (reassignment):} move borrowers between loan officers (admin workflow).
+  \item \LC{LC-2.2.08} --- \textbf{Loan products:} define and maintain loan products.
+  \item \LC{LC-2.2.09} --- \textbf{History and audit:} archived deleted loans, archived deleted repayments, loan increase approval history, and activity preview; \textbf{full activity log} for oversight.
+  \item \LC{LC-2.2.10} --- \textbf{Prepayments:} manage repayments recorded ahead of the normal schedule.
+  \item \LC{LC-2.2.11} --- \textbf{Field wallet trace:} oversight of field wallet movements and balances.
+  \item \LC{LC-2.2.12} --- \textbf{Arrears} and \textbf{defaulters:} portfolio views for follow-up.
+  \item \LC{LC-2.2.13} --- \textbf{Holidays:} public and business holidays used in schedules and officer workflows.
+  \item \LC{LC-2.2.14} --- \textbf{System settings:} organisation-wide configuration (currency, fees, branding, tagline, etc.).
+\end{itemize}
+
+\subsection*{LC-2.3 · Branch Manager features}
+\begin{itemize}
+  \item \LC{LC-2.3.01} --- \textbf{Dashboard} with branch-level KPIs and drill-downs, subject to visibility rules (for example some interest detail may be restricted).
+  \item \LC{LC-2.3.02} --- \textbf{Loan officers:} manage loan officers assigned to the branch.
+  \item \LC{LC-2.3.03} --- \textbf{Borrowers} and \textbf{loans and disbursements} for the branch.
+  \item \LC{LC-2.3.04} --- \textbf{Loan requests:} review and action requests that require manager approval.
+  \item \LC{LC-2.3.05} --- \textbf{Prepayments} for the branch.
+  \item \LC{LC-2.3.06} --- \textbf{Arrears} and \textbf{defaulters} for the branch.
+  \item \LC{LC-2.3.07} --- \textbf{Settings} relevant to the branch manager role.
+\end{itemize}
+
+\subsection*{LC-2.4 · Loan Officer features}
+\begin{itemize}
+  \item \LC{LC-2.4.01} --- \textbf{Dashboard} with officer-scoped KPIs and drill-downs (portfolio, collections, registrations, and related metrics).
+  \item \LC{LC-2.4.02} --- \textbf{Daily field cash (float):} on working days, confirmation of cash taken into the field before full use of the app; simplified flow on Sundays and configured public holidays.
+  \item \LC{LC-2.4.03} --- \textbf{Field wallet \& cash flow:} daily wallet, repayments, disbursements, expenses, taken (float), withdraw-to-bank where applicable; CSV/Excel/PDF export (officer $\times$ centre).
+  \item \LC{LC-2.4.04} --- \textbf{Centres and groups:} maintain centre and group structure used for borrowers and meetings.
+  \item \LC{LC-2.4.05} --- \textbf{Borrowers:} register/edit; \textbf{bulk import}; duplicate checks; guarantor; CSV export of selection; prepared loan template; re-loan approval request for defaulted where applicable.
+  \item \LC{LC-2.4.06} --- \textbf{Borrower details:} full borrower and loan view; PDF/Excel statement export where available.
+  \item \LC{LC-2.4.07} --- \textbf{Loans and disbursements:} originate loans, schedules, and disbursements according to configured products.
+  \item \LC{LC-2.4.08} --- \textbf{Requests:} submit and track requests (for example loan increases) that follow approval workflows.
+  \item \LC{LC-2.4.09} --- \textbf{Group prepayments} and \textbf{prepayments} (scheduled and advance repayments).
+  \item \LC{LC-2.4.10} --- \textbf{Expenses:} officer expense recording.
+  \item \LC{LC-2.4.11} --- \textbf{Attendance:} centre meeting attendance.
+  \item \LC{LC-2.4.12} --- \textbf{Arrears} and \textbf{defaulters} for the officer's portfolio.
+  \item \LC{LC-2.4.13} --- \textbf{Transfer centre/group (same officer):} move a \textbf{group} borrower to another centre/group (single row).
+  \item \LC{LC-2.4.14} --- \textbf{Bulk transfer centre/group:} move multiple selected group borrowers to one centre/group.
+  \item \LC{LC-2.4.15} --- \textbf{Additional float (taken):} add more office cash the same day after first taken (Field wallet).
+\end{itemize}
+
+\subsection*{LC-2.5 · Reports, arrears, and defaulters (scope varies by role)}
+\begin{itemize}
+  \item \LC{LC-2.5.01} --- \textbf{Reports:} operational analytics with summary figures. \textbf{Administrators} see organisation-wide data; \textbf{branch managers} see their branch; \textbf{loan officers} see their own portfolio.
+  \item \LC{LC-2.5.02} --- \textbf{Date presets} and \textbf{custom date ranges}; \textbf{filters} by branch, product, centre, group, and loan status, and by officer---only where the role allows.
+  \item \LC{LC-2.5.03} --- \textbf{Charts} and \textbf{export} of report tables to spreadsheet format.
+  \item \LC{LC-2.5.04} --- \textbf{Branch-level} performance comparison on Reports: \textbf{administrators} only. \textbf{Officer-level} performance: \textbf{administrators} and \textbf{branch managers}.
+  \item \LC{LC-2.5.05} --- \textbf{Arrears management} and \textbf{defaulters management} in the navigation, with lists scoped to the user's role and branch rules.
+\end{itemize}
+
+\subsection*{LC-2.6 · General behaviours}
+\begin{itemize}
+  \item \LC{LC-2.6.01} --- \textbf{Repayment schedules} and recording of repayments, including principal and interest split where the product rules require it.
+  \item \LC{LC-2.6.02} --- \textbf{Printed and exportable} documents from relevant screens.
+  \item \LC{LC-2.6.03} --- \textbf{Audit logging} of important actions for accountability.
+  \item \LC{LC-2.6.04} --- \textbf{Role-based access} and \textbf{row-level security} aligned to branch and officer scope in the deployed backend.
+  \item \LC{LC-2.6.05} --- \textbf{Data export} (CSV, Excel, PDF) where the screen provides an export control.
+\end{itemize}
+
+\noindent\LC{LC-2.6.06} --- Some labels, workflows, or metrics may depend on \textbf{configuration} and \textbf{data} in the live environment. If a feature is tied to a specific contract deliverable, cross-check against the main agreement.
+
+\section*{LC-3 · Deliverables included in this handover}
+
+The Supplier confirms that the following are delivered to the Client (tick or amend as applicable):
+
+\begin{itemize}
+  \item \LC{LC-3.01} --- $\square$ The Software and access or deployment arrangements as agreed with the Client
+  \item \LC{LC-3.02} --- $\square$ User-facing documentation or training materials, if included in the agreement
+  \item \LC{LC-3.03} --- $\square$ Any other agreed items: [free text]
+\end{itemize}
+
+\section*{LC-4 · Client review period}
+
+\noindent\LC{LC-4.01} --- The Client may test the Software against the agreed requirements for a review period of \textbf{[number] calendar days]} from the date of this document (or from first access to production, if different: \textbf{[specify]}).
+
+\vspace{0.4em}
+\noindent\LC{LC-4.02} --- During this period, the Client may report \textbf{material defects} through \textbf{email} (\href{mailto:develop@plusnology.tech}{develop@plusnology.tech}), \textbf{phone} (+255 785 059 140), or \textbf{WhatsApp} (+255 748 847 367), unless another channel is agreed in writing.
+
+\section*{LC-5 · Intellectual property and licensing}
+
+\noindent\LC{LC-5.01} --- The rights to the Software are governed by \textbf{[the contract / SOW / licence agreement dated [date]]}. If nothing is attached, attach or sign a separate licence or assignment before relying on this section.
+
+\section*{LC-6 · Warranties and support (optional)}
+
+\noindent\LC{LC-6.01} --- \textbf{As per separate agreement:} [fill as agreed].
+
+\section*{LC-7 · Acceptance}
+
+By signing below, the \textbf{Client} confirms that:
+
+\begin{itemize}
+  \item \LC{LC-7.01} --- They have received the deliverables listed in Section 3 (as ticked or amended).
+  \item \LC{LC-7.02} --- They accept the Software for the purpose agreed in the underlying contract, \textbf{subject to} any open items or review period stated in Section 4 and in \textbf{[annex / email / ticket list]}.
+\end{itemize}
+
+By signing below, the \textbf{Supplier} confirms that:
+
+\begin{itemize}
+  \item \LC{LC-7.03} --- They have supplied the deliverables listed in Section 3 in accordance with the agreement between the parties.
+  \item \LC{LC-7.04} --- They are authorised to make this delivery on behalf of \textbf{Plusnology Company Limited}, the Supplier named in Section LC-1.1.
+\end{itemize}
+
+\section*{LC-8 · Signatures}
+
+\noindent\LC{LC-8.01} --- This document may be executed in counterparts (including scanned or electronic signatures) with the same effect as originals.
+
+\subsection*{LC-8A · Signature block --- Supplier (Plusnology Company Limited)}
+
+\begin{tabular}{@{}p{4cm}p{9cm}@{}}
+\toprule
+\textbf{Name (print)} & \rule{0pt}{2.2em}\hrulefill \\
+\textbf{Title} & \rule{0pt}{2.2em}\hrulefill \\
+\textbf{Organisation} & Plusnology Company Limited \\
+\textbf{Signature} & \rule{0pt}{2.2em}\hrulefill \\
+\textbf{Date} & \rule{0pt}{2.2em}\hrulefill \\
+\bottomrule
+\end{tabular}
+
+\subsection*{LC-8B · Signature block --- Client (Fahari Credits Limited)}
+
+\begin{tabular}{@{}p{4cm}p{9cm}@{}}
+\toprule
+\textbf{Name (print)} & \rule{0pt}{2.2em}\hrulefill \\
+\textbf{Title} & \rule{0pt}{2.2em}\hrulefill \\
+\textbf{Organisation} & Fahari Credits Limited \\
+\textbf{Signature} & \rule{0pt}{2.2em}\hrulefill \\
+\textbf{Date} & \rule{0pt}{2.2em}\hrulefill \\
+\bottomrule
+\end{tabular}
+
+\section*{Appendix A --- Leaf code register}
+
+Use \textbf{leaf codes} to refer to exact clauses (e.g.\ ``We confirm acceptance of \texttt{LC-7.01}--\texttt{LC-7.02}''.)
+
+\begin{tabular}{@{}p{4.2cm}p{9.2cm}@{}}
+\toprule
+\textbf{Leaf code} & \textbf{Short description} \\
+\midrule
+LC-1.1 & Supplier (Plusnology) full vendor details \\
+LC-1.2 & Security partner (Vogu Ethics) \\
+LC-1.3 & Client (Fahari Credits) \\
+LC-2 & Description of software (section) \\
+LC-2.0 & Summary and scope note \\
+LC-2.1.01--LC-2.1.06 & Access, profile, branding, login UX \\
+LC-2.2.01--LC-2.2.14 & Administrator features \\
+LC-2.3.01--LC-2.3.07 & Branch Manager features \\
+LC-2.4.01--LC-2.4.15 & Loan Officer features (incl.\ centre transfer, bulk, extra float) \\
+LC-2.5.01--LC-2.5.05 & Reports, arrears, defaulters (cross-role) \\
+LC-2.6.01--LC-2.6.06 & General behaviours, exports, configuration note \\
+LC-3.01--LC-3.03 & Deliverables checklist \\
+LC-4.01--LC-4.02 & Review period and defect reporting \\
+LC-5.01 & Intellectual property and licensing \\
+LC-6.01 & Warranties and support \\
+LC-7.01--LC-7.04 & Acceptance statements \\
+LC-8.01 & Counterparts / execution \\
+LC-8A & Supplier signature block \\
+LC-8B & Client signature block \\
+\bottomrule
+\end{tabular}
+
+\vspace{1em}
+\begin{center}
+\textit{End of document.}
+\end{center}
+
+\end{document}
