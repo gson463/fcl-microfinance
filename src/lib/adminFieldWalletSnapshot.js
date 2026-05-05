@@ -90,12 +90,22 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 		fieldTakenRows: takenRes.data || [],
 	});
 
-	const totalNetDeposit = blocks.reduce((s, b) => s + (Number(b.totals.deposit) || 0), 0);
-
 	const withdrawByOfficer = new Map();
 	for (const w of withdrawRowsRaw) {
 		withdrawByOfficer.set(w.officer_id, w.created_at);
 	}
+
+	// Align with officer_wallet_balance_for_period: once withdraw-to-bank exists for that day,
+	// carry-forward / enforcement treats the day as closed (0), not the raw formula deposit.
+	for (const b of blocks) {
+		const raw = Number(b.totals.deposit) || 0;
+		b.totals.rawDeposit = raw;
+		if (withdrawByOfficer.has(b.officer.id)) {
+			b.totals.deposit = 0;
+		}
+	}
+
+	const totalNetDeposit = blocks.reduce((s, b) => s + (Number(b.totals.deposit) || 0), 0);
 	let withdrawnOfficerCount = 0;
 	for (const b of blocks) {
 		if (withdrawByOfficer.has(b.officer.id)) withdrawnOfficerCount += 1;

@@ -189,7 +189,7 @@ const FieldWalletTrace = () => {
 				return {
 					officer_name: block.officer.full_name || '—',
 					branch: branchName,
-					net_deposit: Number(block.totals.deposit) || 0,
+					net_deposit: Number(block.totals.rawDeposit ?? block.totals.deposit) || 0,
 					business_date: walletDate,
 				};
 			});
@@ -237,8 +237,9 @@ const FieldWalletTrace = () => {
 						</CardTitle>
 						<CardDescription>
 							Single calendar day (EAT). Formula per officer: taken + collections + application fees − disbursements −
-							expenses = <strong>deposit</strong> (closing in hand). <strong>Withdrawn to bank</strong> is recorded when
-							the officer confirms end-of-day banking; carry-forward becomes 0 for the next gate.
+							expenses = <strong>deposit</strong> (closing in hand). After <strong>Withdrawn to bank</strong>, the deposit
+							column shows <strong>0</strong> (cash no longer in hand), matching the officer screen and{' '}
+							<code className="text-xs">officer_wallet_balance_for_period</code> for that day — same as manager view.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
@@ -390,6 +391,7 @@ const FieldWalletTrace = () => {
 										const t = block.totals;
 										const totalRep = repaymentTotalsByOfficer.get(block.officer.id) ?? 0;
 										const wAt = withdrawByOfficer.get(block.officer.id);
+										const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
 										const dep = Number(t.deposit) || 0;
 										return (
 											<TableRow
@@ -423,7 +425,7 @@ const FieldWalletTrace = () => {
 																<CircleDashed className="h-4 w-4 shrink-0" />
 																Not recorded
 															</span>
-															{dep <= 0 && (
+															{rawDep <= 0 && (
 																<p className="mt-1 max-w-[14rem] text-xs text-amber-900/80 dark:text-amber-200/90">
 																	Officer must open Field wallet (same day) and tap &quot;Withdraw to bank&quot; — including when deposit is 0.
 																</p>
