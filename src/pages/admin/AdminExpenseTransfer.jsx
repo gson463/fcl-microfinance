@@ -34,7 +34,8 @@ const AdminExpenseTransfer = () => {
 	const [fromOfficerId, setFromOfficerId] = useState('');
 	const [toOfficerId, setToOfficerId] = useState('');
 	const [expenses, setExpenses] = useState([]);
-	const [transferAll, setTransferAll] = useState(true);
+	const [transferMode, setTransferMode] = useState('all'); // all | single | selected
+	const [singleExpenseId, setSingleExpenseId] = useState('');
 	const [currency, setCurrency] = useState('TZS');
 
 	const fetchOfficers = useCallback(async () => {
@@ -102,25 +103,49 @@ const AdminExpenseTransfer = () => {
 
 	useEffect(() => {
 		fetchExpensesForSource();
-		setTransferAll(true);
+		setTransferMode('all');
+		setSingleExpenseId('');
 	}, [fetchExpensesForSource]);
+
+	useEffect(() => {
+		if (!singleExpenseId) return;
+		if (!expenses.some((e) => e.id === singleExpenseId)) {
+			setSingleExpenseId('');
+		}
+	}, [expenses, singleExpenseId]);
 
 	const expenseIds = useMemo(() => expenses.map((e) => e.id), [expenses]);
 	const bulk = useBulkSelection(expenseIds);
+	const selectedTotal = useMemo(
+		() => expenses.reduce((s, e) => s + (bulk.isSelected(e.id) ? Number(e.amount || 0) : 0), 0),
+		[expenses, bulk]
+	);
+	const singleRow = useMemo(() => expenses.find((e) => e.id === singleExpenseId) || null, [expenses, singleExpenseId]);
 
 	const canTransfer =
 		fromOfficerId &&
 		toOfficerId &&
 		fromOfficerId !== toOfficerId &&
 		expenses.length > 0 &&
-		(transferAll || bulk.selectedIds.length > 0);
+		((transferMode === 'all' && expenses.length > 0) ||
+			(transferMode === 'selected' && bulk.selectedIds.length > 0) ||
+			(transferMode === 'single' && Boolean(singleExpenseId)));
 
 	const runTransfer = async () => {
 		if (!canTransfer) return;
 		setProcessing(true);
 		let ok = false;
 		try {
-			const ids = transferAll ? null : bulk.selectedIds.length ? [...bulk.selectedIds] : null;
+			const ids =
+				transferMode === 'all'
+					? null
+					: transferMode === 'single'
+						? singleExpenseId
+							? [singleExpenseId]
+							: null
+						: bulk.selectedIds.length
+							? [...bulk.selectedIds]
+							: null;
 			const payload = {
 				p_from_officer_id: fromOfficerId,
 				p_to_officer_id: toOfficerId,
@@ -221,19 +246,41 @@ const AdminExpenseTransfer = () => {
 						</CardHeader>
 						<CardContent className="space-y-4">
 							<div className="flex flex-wrap items-center gap-4 rounded-lg border bg-muted/30 p-4">
-								<label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
-									<Checkbox checked={transferAll} onCheckedChange={(c) => setTransferAll(Boolean(c))} />
-									Transfer all expenses for this officer
-								</label>
-								{!transferAll && (
+								<div className="flex flex-wrap items-center gap-2">
+									<Button type="button" size="sm" variant={transferMode === 'all' ? 'default' : 'outline'} onClick={() => setTransferMode('all')}>
+										Transfer all
+									</Button>
+									<Button
+										type="button"
+										size="sm"
+										variant={transferMode === 'single' ? 'default' : 'outline'}
+										onClick={() => setTransferMode('single')}
+									>
+										Choose one-by-one
+									</Button>
+									<Button
+										type="button"
+										size="sm"
+										variant={transferMode === 'selected' ? 'default' : 'outline'}
+										onClick={() => setTransferMode('selected')}
+									>
+										Choose multiple
+									</Button>
+								</div>
+								{transferMode === 'all' ? <span className="text-sm text-muted-foreground">Will move all {expenses.length} expense rows.</span> : null}
+								{transferMode === 'selected' ? (
 									<span className="text-sm text-muted-foreground">
-										{bulk.count} selected · total{' '}
-										{fmtMoney(expenses.reduce((s, e) => s + (bulk.isSelected(e.id) ? Number(e.amount || 0) : 0), 0))}
+										{bulk.count} selected · total {fmtMoney(selectedTotal)}
 									</span>
-								)}
+								) : null}
+								{transferMode === 'single' ? (
+									<span className="text-sm text-muted-foreground">
+										{singleRow ? `1 selected · ${fmtMoney(singleRow.amount)}` : 'Select one row below.'}
+									</span>
+								) : null}
 							</div>
 
-							{!transferAll && (
+							{transferMode === 'selected' && (
 								<BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={null} disabled={processing}>
 									<span className="text-xs text-muted-foreground">Select rows to transfer only those.</span>
 								</BulkDataTableToolbar>
@@ -243,7 +290,7 @@ const AdminExpenseTransfer = () => {
 								<Table>
 									<TableHeader>
 										<TableRow>
-											{!transferAll ? (
+											{transferMode === 'selected' ? (
 												<TableHead className="w-10">
 													<Checkbox
 														checked={bulk.allSelected ? true : bulk.count > 0 ? 'indeterminate' : false}
@@ -252,6 +299,7 @@ const AdminExpenseTransfer = () => {
 													/>
 												</TableHead>
 											) : null}
+											{transferMode === 'single' ? <TableHead className="w-24">Pick</TableHead> : null}
 											<TableHead>Date</TableHead>
 											<TableHead>Type</TableHead>
 											<TableHead className="text-right">Amount</TableHead>
@@ -261,20 +309,32 @@ const AdminExpenseTransfer = () => {
 									<TableBody>
 										{expenses.length === 0 ? (
 											<TableRow>
-												<TableCell colSpan={transferAll ? 4 : 5} className="text-center text-muted-foreground">
+												<TableCell colSpan={transferMode === 'all' ? 4 : 5} className="text-center text-muted-foreground">
 													No expenses for this officer.
 												</TableCell>
 											</TableRow>
 										) : (
 											expenses.map((row) => (
 												<TableRow key={row.id}>
-													{!transferAll ? (
+													{transferMode === 'selected' ? (
 														<TableCell>
 															<Checkbox
 																checked={bulk.isSelected(row.id)}
 																onCheckedChange={() => bulk.toggle(row.id)}
 																aria-label={`Select expense ${row.id}`}
 															/>
+														</TableCell>
+													) : null}
+													{transferMode === 'single' ? (
+														<TableCell>
+															<Button
+																type="button"
+																size="sm"
+																variant={singleExpenseId === row.id ? 'default' : 'outline'}
+																onClick={() => setSingleExpenseId(row.id)}
+															>
+																{singleExpenseId === row.id ? 'Picked' : 'Pick'}
+															</Button>
 														</TableCell>
 													) : null}
 													<TableCell className="whitespace-nowrap">{formatDate(new Date(row.expense_date), 'yyyy-MM-dd')}</TableCell>
@@ -312,7 +372,7 @@ const AdminExpenseTransfer = () => {
 												<p>
 													This will reassign{' '}
 													<span className="font-medium text-foreground">
-														{transferAll ? `all ${expenses.length}` : `${bulk.selectedIds.length}`} expense row(s)
+														{transferMode === 'all' ? `all ${expenses.length}` : transferMode === 'single' ? '1' : `${bulk.selectedIds.length}`} expense row(s)
 													</span>{' '}
 													from the source officer to the destination officer.
 												</p>
