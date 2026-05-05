@@ -31,12 +31,14 @@ const AdminExpenseTransfer = () => {
 	const [loadingExpenses, setLoadingExpenses] = useState(false);
 	const [processing, setProcessing] = useState(false);
 	const [confirmOpen, setConfirmOpen] = useState(false);
+	const [checkingImpact, setCheckingImpact] = useState(false);
 	const [fromOfficerId, setFromOfficerId] = useState('');
 	const [toOfficerId, setToOfficerId] = useState('');
 	const [expenses, setExpenses] = useState([]);
 	const [transferMode, setTransferMode] = useState('all'); // all | single | selected
 	const [singleExpenseId, setSingleExpenseId] = useState('');
 	const [currency, setCurrency] = useState('TZS');
+	const [impactRows, setImpactRows] = useState([]);
 
 	const fetchOfficers = useCallback(async () => {
 		setLoading(true);
@@ -105,6 +107,7 @@ const AdminExpenseTransfer = () => {
 		fetchExpensesForSource();
 		setTransferMode('all');
 		setSingleExpenseId('');
+		setImpactRows([]);
 	}, [fetchExpensesForSource]);
 
 	useEffect(() => {
@@ -130,6 +133,12 @@ const AdminExpenseTransfer = () => {
 		((transferMode === 'all' && expenses.length > 0) ||
 			(transferMode === 'selected' && bulk.selectedIds.length > 0) ||
 			(transferMode === 'single' && Boolean(singleExpenseId)));
+
+	const selectedRows = useMemo(() => {
+		if (transferMode === 'all') return expenses;
+		if (transferMode === 'single') return expenses.filter((e) => e.id === singleExpenseId);
+		return expenses.filter((e) => bulk.isSelected(e.id));
+	}, [transferMode, expenses, singleExpenseId, bulk]);
 
 	const runTransfer = async () => {
 		if (!canTransfer) return;
@@ -176,6 +185,67 @@ const AdminExpenseTransfer = () => {
 		}
 		if (ok) setConfirmOpen(false);
 	};
+
+	const analyzeImpactByDate = async () => {
+		if (!toOfficerId || selectedRows.length === 0) {
+			setImpactRows([]);
+			return;
+		}
+		setCheckingImpact(true);
+		try {
+			const amountByDate = new Map();
+			for (const row of selectedRows) {
+				const d = row.expense_date;
+				const prev = amountByDate.get(d) || 0;
+				amountByDate.set(d, prev + (Number(row.amount) || 0));
+			}
+			const dates = Array.from(amountByDate.keys()).sort();
+			const rows = [];
+			for (const d of dates) {
+				const transferAmount = Number(amountByDate.get(d) || 0);
+				const { data, error } = await supabase.rpc('officer_wallet_balance_for_period', {
+					p_officer_id: toOfficerId,
+					p_from: d,
+					p_to: d,
+				});
+				if (error) throw error;
+				const balanceBefore = Number(data) || 0;
+				const projectedAfter = Number((balanceBefore - transferAmount).toFixed(2));
+				rows.push({
+					date: d,
+					transferAmount,
+					balanceBefore,
+					projectedAfter,
+					ok: projectedAfter >= 0,
+				});
+			}
+			setImpactRows(rows);
+		} catch (e) {
+			setImpactRows([]);
+			toast({
+				title: 'Could not analyze date impact',
+				description: e.message || String(e),
+				variant: 'destructive',
+			});
+		} finally {
+			setCheckingImpact(false);
+		}
+	};
+
+	useEffect(() => {
+		if (!fromOfficerId || !toOfficerId || fromOfficerId === toOfficerId) {
+			setImpactRows([]);
+			return;
+		}
+		if (selectedRows.length === 0) {
+			setImpactRows([]);
+			return;
+		}
+		const t = setTimeout(() => {
+			analyzeImpactByDate();
+		}, 250);
+		return () => clearTimeout(t);
+	}, [fromOfficerId, toOfficerId, transferMode, singleExpenseId, bulk.selectedIds, expenses]);
 
 	const fmtMoney = (n) =>
 		`${currency} ${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -360,9 +430,46 @@ const AdminExpenseTransfer = () => {
 								</p>
 							</div>
 
-							<Button type="button" disabled={!canTransfer || processing} onClick={() => setConfirmOpen(true)}>
+							<div className="flex flex-wrap items-center gap-2">
+								{checkingImpact ? (
+									<span className="inline-flex items-center text-xs text-muted-foreground">
+										<RotateCw className="mr-2 h-3.5 w-3.5 animate-spin" />
+										Analyzing date impact…
+									</span>
+								) : null}
+								<Button type="button" disabled={!canTransfer || processing} onClick={() => setConfirmOpen(true)}>
 								Transfer expenses
-							</Button>
+								</Button>
+							</div>
+
+							{impactRows.length > 0 ? (
+								<div className="rounded-md border">
+									<Table>
+										<TableHeader>
+											<TableRow>
+												<TableHead>Date</TableHead>
+												<TableHead className="text-right">Transfer amount</TableHead>
+												<TableHead className="text-right">Destination before</TableHead>
+												<TableHead className="text-right">Projected after</TableHead>
+												<TableHead>Status</TableHead>
+											</TableRow>
+										</TableHeader>
+										<TableBody>
+											{impactRows.map((r) => (
+												<TableRow key={r.date}>
+													<TableCell className="whitespace-nowrap">{r.date}</TableCell>
+													<TableCell className="text-right">{fmtMoney(r.transferAmount)}</TableCell>
+													<TableCell className="text-right">{fmtMoney(r.balanceBefore)}</TableCell>
+													<TableCell className="text-right">{fmtMoney(r.projectedAfter)}</TableCell>
+													<TableCell>
+														<Badge variant={r.ok ? 'success' : 'destructive'}>{r.ok ? 'OK' : 'Will fail'}</Badge>
+													</TableCell>
+												</TableRow>
+											))}
+										</TableBody>
+									</Table>
+								</div>
+							) : null}
 							<AlertDialog open={confirmOpen} onOpenChange={(o) => !processing && setConfirmOpen(o)}>
 								<AlertDialogContent>
 									<AlertDialogHeader>
