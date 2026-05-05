@@ -139,14 +139,19 @@ const AdminExpenseTransfer = () => {
 		if (transferMode === 'single') return expenses.filter((e) => e.id === singleExpenseId);
 		return expenses.filter((e) => bulk.isSelected(e.id));
 	}, [transferMode, expenses, singleExpenseId, bulk]);
+	const passingDates = useMemo(() => new Set(impactRows.filter((r) => r.ok).map((r) => r.date)), [impactRows]);
+	const passingRows = useMemo(() => selectedRows.filter((r) => passingDates.has(r.expense_date)), [selectedRows, passingDates]);
+	const failingRows = useMemo(() => selectedRows.filter((r) => !passingDates.has(r.expense_date)), [selectedRows, passingDates]);
 
-	const runTransfer = async () => {
-		if (!canTransfer) return;
+	const runTransfer = async (forcedIds = null) => {
+		const hasForced = Array.isArray(forcedIds);
+		if (!canTransfer && !hasForced) return;
 		setProcessing(true);
 		let ok = false;
 		try {
-			const ids =
-				transferMode === 'all'
+			const ids = hasForced
+				? forcedIds
+				: transferMode === 'all'
 					? null
 					: transferMode === 'single'
 						? singleExpenseId
@@ -165,11 +170,11 @@ const AdminExpenseTransfer = () => {
 			const n = Number(count) || 0;
 			toast({
 				title: 'Expenses transferred',
-				description:
-					n === 0 ? 'No rows were updated (check selection).' : `Updated ${n} expense row(s). Destination field wallet rules were respected.`,
+				description: n === 0 ? 'No rows were updated (check selection).' : `Updated ${n} expense row(s).`,
 			});
 			await fetchExpensesForSource();
 			bulk.clear();
+			setSingleExpenseId('');
 			ok = true;
 		} catch (e) {
 			const msg = e.message || String(e);
@@ -184,6 +189,24 @@ const AdminExpenseTransfer = () => {
 			setProcessing(false);
 		}
 		if (ok) setConfirmOpen(false);
+	};
+	const runTransferPassingOnly = async () => {
+		if (!toOfficerId || passingRows.length === 0) {
+			toast({
+				title: 'No passing rows',
+				description: 'No selected rows pass destination field wallet checks by date.',
+				variant: 'destructive',
+			});
+			return;
+		}
+		await runTransfer(passingRows.map((r) => r.id));
+		if (failingRows.length > 0) {
+			const uniqueFailDates = [...new Set(failingRows.map((r) => r.expense_date))];
+			toast({
+				title: 'Some rows skipped',
+				description: `Skipped ${failingRows.length} row(s) on ${uniqueFailDates.length} date(s) that would fail field wallet check.`,
+			});
+		}
 	};
 
 	const analyzeImpactByDate = async () => {
@@ -264,7 +287,7 @@ const AdminExpenseTransfer = () => {
 	return (
 		<DashboardLayout
 			title="Transfer expenses"
-			description="Reassign posted expenses from one loan officer to another. Field wallet checks apply to the receiving officer by expense date."
+			description="Reassign posted expenses from one loan officer to another. Strict accounting: officer ownership transfer does not create a new expense event on destination historical dates."
 		>
 			<div className="space-y-6">
 				<Card>
@@ -425,8 +448,8 @@ const AdminExpenseTransfer = () => {
 							<div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-amber-950 dark:text-amber-100">
 								<AlertTriangle className="h-5 w-5 shrink-0" />
 								<p>
-									Each row is checked against the <strong>destination</strong> officer&apos;s field wallet on that expense date. If the transfer would make a day
-									negative, the whole operation is rolled back.
+									Recommended mode is <strong>strict transfer</strong> (Transfer expenses): ownership move only. Use rebalance button only when you intentionally
+									want to inject destination taken adjustments.
 								</p>
 							</div>
 
@@ -437,10 +460,71 @@ const AdminExpenseTransfer = () => {
 										Analyzing date impact…
 									</span>
 								) : null}
+								<Button
+									type="button"
+									variant="outline"
+									disabled={processing || checkingImpact || passingRows.length === 0}
+									onClick={runTransferPassingOnly}
+								>
+									Transfer passing rows only
+								</Button>
+								<Button
+									type="button"
+									variant="secondary"
+									disabled={!canTransfer || processing || checkingImpact}
+									onClick={async () => {
+										setProcessing(true);
+										try {
+											const ids =
+												transferMode === 'all'
+													? null
+													: transferMode === 'single'
+														? singleExpenseId
+															? [singleExpenseId]
+															: null
+														: bulk.selectedIds.length
+															? [...bulk.selectedIds]
+															: null;
+											const { data, error } = await supabase.rpc('admin_transfer_officer_expenses_with_rebalance', {
+												p_from_officer_id: fromOfficerId,
+												p_to_officer_id: toOfficerId,
+												p_expense_ids: ids,
+											});
+											if (error) throw error;
+											const updated = Number(data?.updated_count || 0);
+											const topupTotal = Number(data?.topup_total || 0);
+											const topupDates = Number(data?.topup_dates || 0);
+											toast({
+												title: 'Rebalanced transfer complete',
+												description:
+													`Transferred ${updated} row(s). Added ${fmtMoney(topupTotal)} across ${topupDates} date(s) to destination taken.`,
+											});
+											setConfirmOpen(false);
+											bulk.clear();
+											setSingleExpenseId('');
+											await fetchExpensesForSource();
+										} catch (e) {
+											toast({
+												title: 'Rebalanced transfer failed',
+												description: e.message || String(e),
+												variant: 'destructive',
+											});
+										} finally {
+											setProcessing(false);
+										}
+									}}
+								>
+									Fix negatives then transfer (adds taken)
+								</Button>
 								<Button type="button" disabled={!canTransfer || processing} onClick={() => setConfirmOpen(true)}>
-								Transfer expenses
+									Transfer expenses (strict)
 								</Button>
 							</div>
+							{impactRows.length > 0 ? (
+								<p className="text-xs text-muted-foreground">
+									Passing rows: {passingRows.length} · Failing rows: {failingRows.length}
+								</p>
+							) : null}
 
 							{impactRows.length > 0 ? (
 								<div className="rounded-md border">
@@ -479,7 +563,7 @@ const AdminExpenseTransfer = () => {
 												<p>
 													This will reassign{' '}
 													<span className="font-medium text-foreground">
-														{transferMode === 'all' ? `all ${expenses.length}` : transferMode === 'single' ? '1' : `${bulk.selectedIds.length}`} expense row(s)
+														{selectedRows.length} expense row(s)
 													</span>{' '}
 													from the source officer to the destination officer.
 												</p>

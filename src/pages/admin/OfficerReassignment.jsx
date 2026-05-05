@@ -38,6 +38,7 @@ const OfficerReassignment = () => {
   const [targetOfficerId, setTargetOfficerId] = useState('');
 
   const [transferEverything, setTransferEverything] = useState(true);
+  const [transferExpensesWithRebalance, setTransferExpensesWithRebalance] = useState(true);
   const [selectedCenterIds, setSelectedCenterIds] = useState([]);
   const [selectedGroupIds, setSelectedGroupIds] = useState([]);
   const [selectedBorrowerIds, setSelectedBorrowerIds] = useState([]);
@@ -94,6 +95,7 @@ const OfficerReassignment = () => {
         setBorrowers(borrowersData || []);
 
         setTransferEverything(true);
+        setTransferExpensesWithRebalance(true);
         setSelectedCenterIds([]);
         setSelectedGroupIds([]);
         setSelectedBorrowerIds([]);
@@ -274,6 +276,31 @@ const OfficerReassignment = () => {
           p_reassign_all: true,
         });
         if (error) throw error;
+
+        if (transferExpensesWithRebalance) {
+          const { data: rebData, error: rebErr } = await supabase.rpc('admin_transfer_officer_expenses_with_rebalance', {
+            p_from_officer_id: sourceOfficerId,
+            p_to_officer_id: targetOfficerId,
+            p_expense_ids: null,
+          });
+          if (rebErr) {
+            toast({
+              title: 'Loans transferred, expenses not fully transferred',
+              description:
+                `Ownership transfer completed, but expense rebalance step failed: ${rebErr.message || String(rebErr)}. You can finish expenses via Admin → Transfer expenses.`,
+              variant: 'destructive',
+            });
+          } else {
+            const topupTotal = Number(rebData?.topup_total || 0);
+            const topupDates = Number(rebData?.topup_dates || 0);
+            const updatedCount = Number(rebData?.updated_count || 0);
+            toast({
+              title: 'Expenses moved with rebalance',
+              description:
+                `Moved ${updatedCount} expense row(s). Added rebalance taken ${topupTotal.toLocaleString(undefined, { maximumFractionDigits: 2 })} across ${topupDates} date(s).`,
+            });
+          }
+        }
       } else {
         const { error: e1 } = await supabase.rpc('reassign_partial_officer_data', {
           p_old_officer_id: sourceOfficerId,
@@ -297,13 +324,16 @@ const OfficerReassignment = () => {
       toast({
         title: 'Transfer successful',
         description: transferEverything
-          ? 'All centres, groups, borrowers, and loans were transferred.'
+          ? transferExpensesWithRebalance
+            ? 'All centres, groups, borrowers, loans, and expenses (with rebalance) were transferred.'
+            : 'All centres, groups, borrowers, and loans were transferred.'
           : 'Selected centres, groups, and/or borrowers were transferred.',
       });
 
       setSourceOfficerId('');
       setTargetOfficerId('');
       setTransferEverything(true);
+      setTransferExpensesWithRebalance(true);
       setSelectedCenterIds([]);
       setSelectedGroupIds([]);
       setSelectedBorrowerIds([]);
@@ -320,14 +350,21 @@ const OfficerReassignment = () => {
   };
 
   const summaryLines = useMemo(() => {
-    if (transferEverything) return ['Scope: everything under this officer (all centres, groups, borrowers, loans).'];
+    if (transferEverything) {
+      return [
+        'Scope: everything under this officer (all centres, groups, borrowers, loans).',
+        transferExpensesWithRebalance
+          ? 'Expenses: will also move all expenses using auto-rebalance for failing dates.'
+          : 'Expenses: not included in this handover.',
+      ];
+    }
     const lines = [];
     if (selectedCenterIds.length) lines.push(`${selectedCenterIds.length} centre(s)`);
     if (groupIdsForRpc.length) lines.push(`${groupIdsForRpc.length} group(s) (not already covered by a selected centre)`);
     if (borrowerIdsForGranularRpc.length)
       lines.push(`${borrowerIdsForGranularRpc.length} borrower(s) (individual picks or partial group)`);
     return lines;
-  }, [transferEverything, selectedCenterIds.length, groupIdsForRpc.length, borrowerIdsForGranularRpc.length]);
+  }, [transferEverything, transferExpensesWithRebalance, selectedCenterIds.length, groupIdsForRpc.length, borrowerIdsForGranularRpc.length]);
 
   if (loading) {
     return (
@@ -423,6 +460,17 @@ const OfficerReassignment = () => {
                       Transfer everything
                     </Label>
                   </div>
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="transfer-expenses-rebalance"
+                      checked={transferExpensesWithRebalance}
+                      onCheckedChange={(c) => setTransferExpensesWithRebalance(Boolean(c))}
+                      disabled={!transferEverything}
+                    />
+                    <Label htmlFor="transfer-expenses-rebalance" className="text-sm cursor-pointer">
+                      Include expenses (auto-rebalance)
+                    </Label>
+                  </div>
                   {!transferEverything && (
                     <div className="flex flex-wrap gap-2">
                       <Button type="button" variant="outline" size="sm" onClick={selectAllCenters}>
@@ -444,6 +492,11 @@ const OfficerReassignment = () => {
                 When not using &quot;Transfer everything&quot;, tick centres, groups, and/or borrowers below. Quick
                 actions select all items in that category only.
               </CardDescription>
+              {!transferEverything ? (
+                <p className="text-xs text-orange-800/80">
+                  Expense rebalance transfer is available in full handover mode only. For partial handovers, use Admin → Transfer expenses separately.
+                </p>
+              ) : null}
             </CardHeader>
             <CardContent className="p-6">
               {loadingResources ? (
