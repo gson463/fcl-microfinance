@@ -189,16 +189,32 @@ const UserManagement = () => {
         return;
       }
       saveAdminImpersonationBackupSilent(s);
-      const { data, error: invErr } = await invokeEdgeFunction(
-        'impersonate-start',
-        { body: { user_id: row.id } },
+      // Prefer update-user (usually already deployed); fall back to dedicated impersonate-start.
+      let data;
+      let invErr;
+      ({
+        data,
+        error: invErr,
+      } = await invokeEdgeFunction(
+        'update-user',
+        { body: { action: 'impersonate_start', target_user_id: row.id } },
         s.access_token,
-      );
+      ));
+      if (invErr || !data?.token_hash || typeof data?.email !== 'string') {
+        ({
+          data,
+          error: invErr,
+        } = await invokeEdgeFunction(
+          'impersonate-start',
+          { body: { user_id: row.id } },
+          s.access_token,
+        ));
+      }
       if (invErr) {
         await restoreAdminSessionFromSilentBackup();
         toast({
           title: 'Impersonation failed',
-          description: invErr.message || 'Not allowed.',
+          description: `${invErr.message || 'Not allowed.'} Redeploy the latest "update-user" Edge Function for this project (e.g. npm run supabase:functions), then retry. Works only for admin@faharicredits.co.tz.`,
           variant: 'destructive',
         });
         return;

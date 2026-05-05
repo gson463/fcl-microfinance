@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   Home, Users, Briefcase, DollarSign, Settings, LogOut, Building, UserPlus, 
-  BookOpen, GitBranch, ArrowLeftRight, Calendar, Users2, 
+  BookOpen, GitBranch, ArrowLeftRight, Calendar, Users2, Receipt,
   FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText, Archive, ClipboardList, Wallet
 } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
@@ -39,6 +39,7 @@ const adminMainLinks = [
   { to: '/admin/borrowers', icon: Users2, text: 'Borrowers' },
   { to: '/admin/loans', icon: Briefcase, text: 'Loans & Disbursements' },
   { to: '/admin/reassignment', icon: ArrowLeftRight, text: 'Officer transfer' },
+  { to: '/admin/expense-transfer', icon: Receipt, text: 'Transfer expenses' },
   { to: '/admin/loan-products', icon: Briefcase, text: 'Loan Products' },
   { to: '/admin/data-history', icon: Archive, text: 'History & audit' },
   { to: '/admin/repayment-management', icon: DollarSign, text: 'Prepayments' },

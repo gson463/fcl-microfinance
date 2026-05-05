@@ -1,6 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
 
+/** Only this account may start impersonation (same as app + impersonate-start function). */
+const SUPER_ADMIN_IMPERSONATION_EMAIL = "admin@faharicredits.co.tz";
+
 function normUuid(s: string | null | undefined): string | null {
   if (s == null) return null;
   const t = String(s).trim();
@@ -64,6 +67,126 @@ Deno.serve(async (req: Request) => {
     const callerBranchId = callerRow?.branch_id ??
       (typeof meta?.branch_id === "string" ? meta.branch_id : null);
 
+    let body: Record<string, unknown>;
+    try {
+      body = (await req.json()) as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
+
+    // -------------------------------------------------------------------------
+    // Super-admin impersonation (avoids deploying a separate Edge Function)
+    // -------------------------------------------------------------------------
+    if (body?.action === "impersonate_start") {
+      const callerEmail = String(jwtUser.user.email ?? "").trim().toLowerCase();
+      if (callerEmail !== SUPER_ADMIN_IMPERSONATION_EMAIL) {
+        return new Response(
+          JSON.stringify({ error: "Impersonation is limited to the designated admin account." }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      if (callerRow?.role?.trim().toLowerCase() !== "admin") {
+        return new Response(JSON.stringify({ error: "Caller must have an admin profile." }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const targetId = typeof body.target_user_id === "string" ? body.target_user_id.trim() : "";
+      if (!targetId) {
+        return new Response(JSON.stringify({ error: "target_user_id is required" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (targetId === jwtUser.user.id) {
+        return new Response(JSON.stringify({ error: "Cannot impersonate yourself" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { data: pubTarget, error: pubErr } = await supabaseAdmin
+        .from("users")
+        .select("id, full_name, email, role, is_active")
+        .eq("id", targetId)
+        .maybeSingle();
+
+      if (pubErr || !pubTarget?.id) {
+        return new Response(JSON.stringify({ error: "User not found in directory" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (pubTarget.is_active === false) {
+        return new Response(JSON.stringify({ error: "Cannot impersonate an inactive user" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { data: targetAuth, error: targetAuthErr } = await supabaseAdmin.auth.admin.getUserById(targetId);
+      if (targetAuthErr || !targetAuth.user?.email) {
+        return new Response(JSON.stringify({ error: "Target auth user not found or has no email" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const targetEmail = String(targetAuth.user.email).trim();
+
+      const { data: linkOut, error: linkErr } = await supabaseAdmin.auth.admin.generateLink({
+        type: "magiclink",
+        email: targetEmail,
+      });
+
+      if (linkErr || !linkOut?.properties) {
+        console.error("generateLink failed:", linkErr);
+        return new Response(
+          JSON.stringify({ error: linkErr?.message ?? "Could not create impersonation token" }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+
+      const props = linkOut.properties as Record<string, unknown>;
+      const hashed_token =
+        (typeof props.hashed_token === "string" && props.hashed_token) ||
+        (typeof props.token_hash === "string" && props.token_hash) ||
+        null;
+
+      if (!hashed_token) {
+        console.error("generateLink missing hashed_token", props);
+        return new Response(JSON.stringify({ error: "Malformed auth link response" }), {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
+        user_id: jwtUser.user.id,
+        action: "admin.impersonation.start",
+        entity_type: "user",
+        entity_id: targetId,
+        metadata: {
+          target_email: targetEmail,
+          target_name: pubTarget.full_name ?? null,
+          target_role: pubTarget.role ?? null,
+        },
+      });
+      if (auditErr) console.warn("audit_logs impersonation insert:", auditErr);
+
+      return new Response(
+        JSON.stringify({
+          token_hash: hashed_token,
+          email: targetEmail,
+          target_user_id: targetId,
+          target_full_name: pubTarget.full_name ?? "",
+          target_role: pubTarget.role ?? "",
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     if (!callerRole || !["admin", "manager"].includes(callerRole)) {
       return new Response(JSON.stringify({ error: "Forbidden" }), {
         status: 403,
@@ -71,8 +194,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const body = await req.json();
-    const { userId, password } = body;
+    const { userId, password } = body as { userId?: string; password?: string };
     if (!userId || !password) {
       return new Response(JSON.stringify({ error: "userId and password required" }), {
         status: 400,

@@ -15,6 +15,7 @@ import HolidayManagement from '@/pages/admin/HolidayManagement';
 import AdminDataHistory from '@/pages/admin/DataHistory';
 import AdminRepaymentManagement from '@/pages/admin/RepaymentManagement';
 import OfficerReassignment from '@/pages/admin/OfficerReassignment';
+import AdminExpenseTransfer from '@/pages/admin/AdminExpenseTransfer';
 import AuditLogs from '@/pages/admin/AuditLogs';
 import AdminBorrowerManagement from '@/pages/admin/BorrowerManagement';
 import AdminLoanManagement from '@/pages/admin/LoanManagement';
@@ -120,6 +121,7 @@ function App() {
       <Route path="/admin/data-history" element={<ProtectedRoute allowedRoles={['admin']}><AdminDataHistory /></ProtectedRoute>} />
       <Route path="/admin/repayment-management" element={<ProtectedRoute allowedRoles={['admin']}><AdminRepaymentManagement /></ProtectedRoute>} />
       <Route path="/admin/reassignment" element={<ProtectedRoute allowedRoles={['admin']}><OfficerReassignment /></ProtectedRoute>} />
+      <Route path="/admin/expense-transfer" element={<ProtectedRoute allowedRoles={['admin']}><AdminExpenseTransfer /></ProtectedRoute>} />
       <Route path="/admin/audit-logs" element={<ProtectedRoute allowedRoles={['admin']}><AuditLogs /></ProtectedRoute>} />
 
       {/* Manager Routes */}
