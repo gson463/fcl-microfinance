@@ -35,6 +35,7 @@ import {
 	quickActionIconWrapClass,
 } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
+import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
 
 const MANAGER_CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
@@ -142,9 +143,10 @@ const BranchManagerDashboard = () => {
 		[officers]
 	);
 
-	const fetchDashboardData = useCallback(async () => {
+	const fetchDashboardData = useCallback(async (opts = {}) => {
+		const silent = opts.silent === true;
 		if (!dateRange?.from || !dateRange?.to || !managerBranchId || profileLoading) return;
-		setLoading(true);
+		if (!silent) setLoading(true);
 		try {
 			const { data: configData } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
 			if (configData?.value) setCurrency(configData.value);
@@ -162,23 +164,30 @@ const BranchManagerDashboard = () => {
 			else setStats(null);
 		} catch (err) {
 			console.error(err);
-			toast({
-				title: 'Error',
-				description:
-					err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
-						? 'Run the latest database migration (get_admin_dashboard_metrics).'
-						: 'Could not load dashboard metrics for your branch.',
-				variant: 'destructive',
-			});
+			if (!silent) {
+				toast({
+					title: 'Error',
+					description:
+						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
+							? 'Run the latest database migration (get_admin_dashboard_metrics).'
+							: 'Could not load dashboard metrics for your branch.',
+					variant: 'destructive',
+				});
+			}
 			setStats(null);
 		} finally {
-			setLoading(false);
+			if (!silent) setLoading(false);
 		}
 	}, [dateRange, managerBranchId, officerId, profileLoading, toast]);
 
 	useEffect(() => {
 		fetchDashboardData();
 	}, [fetchDashboardData]);
+
+	useDashboardRealtimeRefresh(() => fetchDashboardData({ silent: true }), {
+		enabled: Boolean(dateRange?.from && dateRange?.to && managerBranchId && !profileLoading),
+		officerIdEq: officerId || null,
+	});
 
 	const formatCurrency = (value) => {
 		const number = Number(value || 0);

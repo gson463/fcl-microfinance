@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { useToast } from '@/components/ui/use-toast';
 import { motion } from 'framer-motion';
-import { PlusCircle, Edit, Trash2, RotateCw, ShieldAlert, ChevronLeft, ChevronRight, Building2 } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, RotateCw, ShieldAlert, ChevronLeft, ChevronRight, Building2, Eye } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,10 +32,20 @@ import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { ALL } from '@/lib/hierarchyFilterUtils';
+import {
+	saveAdminImpersonationBackupSilent,
+	clearAdminImpersonationBackup,
+	readAdminImpersonationBackup,
+	hasStoredAdminImpersonationBackup,
+	notifyImpersonationChange,
+	isSuperAdminImpersonator,
+	SUPER_ADMIN_IMPERSONATION_EMAIL,
+} from '@/lib/adminImpersonation';
 
 const PAGE_SIZE = 25;
 
 const UserManagement = () => {
+  const navigate = useNavigate();
   const { session } = useAuth();
   const [users, setUsers] = useState([]);
   const [totalUsers, setTotalUsers] = useState(0);
@@ -50,6 +61,8 @@ const UserManagement = () => {
   const [bulkAssignBranchId, setBulkAssignBranchId] = useState('');
   const [bulkAssigning, setBulkAssigning] = useState(false);
   const { toast } = useToast();
+  const canSuperImpersonate = isSuperAdminImpersonator(session?.user);
+  const [impersonatingId, setImpersonatingId] = useState(null);
 
   const [filterRole, setFilterRole] = useState('all');
   const [filterBranchId, setFilterBranchId] = useState(ALL);
@@ -141,6 +154,89 @@ const UserManagement = () => {
     setFilterActive('all');
     setSearchInput('');
     setDebouncedSearch('');
+  };
+
+  const restoreAdminSessionFromSilentBackup = async () => {
+    const b = readAdminImpersonationBackup();
+    if (b?.access_token && b?.refresh_token) {
+      const { error } = await supabase.auth.setSession({
+        access_token: b.access_token,
+        refresh_token: b.refresh_token,
+      });
+      if (error) console.error(error);
+    }
+    clearAdminImpersonationBackup();
+  };
+
+  const handleImpersonate = async (row) => {
+    if (!canSuperImpersonate) return;
+    if (hasStoredAdminImpersonationBackup()) {
+      toast({
+        title: 'Already impersonating',
+        description: 'End impersonation using the amber banner first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    setImpersonatingId(row.id);
+    try {
+      const {
+        data: { session: s },
+        error: sessErr,
+      } = await supabase.auth.getSession();
+      if (sessErr || !s?.access_token || !s?.refresh_token) {
+        toast({ title: 'Session error', description: 'Sign in again and retry.', variant: 'destructive' });
+        return;
+      }
+      saveAdminImpersonationBackupSilent(s);
+      const { data, error: invErr } = await invokeEdgeFunction(
+        'impersonate-start',
+        { body: { user_id: row.id } },
+        s.access_token,
+      );
+      if (invErr) {
+        await restoreAdminSessionFromSilentBackup();
+        toast({
+          title: 'Impersonation failed',
+          description: invErr.message || 'Not allowed.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      const token_hash = data?.token_hash;
+      const email = data?.email;
+      if (typeof token_hash !== 'string' || typeof email !== 'string') {
+        await restoreAdminSessionFromSilentBackup();
+        toast({
+          title: 'Impersonation failed',
+          description: 'Unexpected response from server.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      const { error: voErr } = await supabase.auth.verifyOtp({
+        token_hash,
+        email,
+        type: 'magiclink',
+      });
+      if (voErr) {
+        await restoreAdminSessionFromSilentBackup();
+        toast({
+          title: 'Could not switch user',
+          description: voErr.message || 'Token verification failed.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      notifyImpersonationChange();
+      toast({
+        title: `Viewing as ${row.full_name}`,
+        description: 'Use “End impersonation” at the top to return to admin.',
+      });
+      navigate('/', { replace: true });
+    } finally {
+      setImpersonatingId(null);
+    }
   };
 
   const handleOpenDialog = (user = null) => {
@@ -502,7 +598,16 @@ const UserManagement = () => {
         <Card>
           <CardHeader>
             <CardTitle>All Users ({totalUsers.toLocaleString()})</CardTitle>
-            <CardDescription>A list of all users in the system.</CardDescription>
+            <CardDescription>
+              A list of all users in the system.
+              {canSuperImpersonate && (
+                <>
+                  {' '}
+                  Signed in as <span className="font-medium">{SUPER_ADMIN_IMPERSONATION_EMAIL}</span>: use the eye icon to
+                  open the app as that user for support (their real session and RLS rules apply).
+                </>
+              )}
+            </CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -678,6 +783,28 @@ const UserManagement = () => {
                       <TableCell>{user.branches?.name || 'N/A'}</TableCell>
                       <TableCell className="space-x-2">
                         <Button variant="outline" size="icon" onClick={() => handleOpenDialog(user)} disabled={isEditDisabled(user)}><Edit className="h-4 w-4" /></Button>
+                        {canSuperImpersonate ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            title="View app as this user"
+                            aria-label={`View app as ${user.full_name}`}
+                            disabled={
+                              impersonatingId != null ||
+                              user.id === session?.user?.id ||
+                              user.is_active === false ||
+                              hasStoredAdminImpersonationBackup()
+                            }
+                            onClick={() => handleImpersonate(user)}
+                          >
+                            {impersonatingId === user.id ? (
+                              <RotateCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </Button>
+                        ) : null}
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
                             <Button variant="destructive" size="icon" disabled={user.role === 'admin'}><Trash2 className="h-4 w-4" /></Button>

@@ -19,6 +19,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { getSidebarPreset } from '@/lib/sidebarPresets';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import OfficerTakenGate from '@/components/officer/OfficerTakenGate';
+import { ImpersonationBanner } from '@/components/admin/ImpersonationBanner';
 
 function headerProfileInitials(user) {
   const name = (user?.user_metadata?.full_name || '').trim();
@@ -416,6 +417,7 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
 
           <main className="relative min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain bg-[#f4f2ed]/90 p-4 [-webkit-overflow-scrolling:touch] dark:bg-neutral-950/95 sm:p-6 lg:p-8">
             <div className="mx-auto min-w-0 w-full max-w-7xl">
+              <ImpersonationBanner />
               {children}
             </div>
           </main>

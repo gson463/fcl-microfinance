@@ -30,6 +30,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
 import { defaultDashboardRange, quickActionCardClass } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
+import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
 
 const OFFICER_CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
@@ -122,9 +123,10 @@ const LoanOfficerDashboard = () => {
 		[searchParams, setSearchParams]
 	);
 
-	const fetchDashboardData = useCallback(async () => {
+	const fetchDashboardData = useCallback(async (opts = {}) => {
+		const silent = opts.silent === true;
 		if (!dateRange?.from || !dateRange?.to || !user?.id || profileLoading) return;
-		setLoading(true);
+		if (!silent) setLoading(true);
 		try {
 			const { data: configData } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
 			if (configData?.value) setCurrency(configData.value);
@@ -159,24 +161,31 @@ const LoanOfficerDashboard = () => {
 			}
 		} catch (err) {
 			console.error(err);
-			toast({
-				title: 'Error',
-				description:
-					err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
-						? 'Run the latest database migration (get_admin_dashboard_metrics).'
-						: 'Could not load your dashboard metrics.',
-				variant: 'destructive',
-			});
+			if (!silent) {
+				toast({
+					title: 'Error',
+					description:
+						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
+							? 'Run the latest database migration (get_admin_dashboard_metrics).'
+							: 'Could not load your dashboard metrics.',
+					variant: 'destructive',
+				});
+			}
 			setStats(null);
 			setRangeKpi(null);
 		} finally {
-			setLoading(false);
+			if (!silent) setLoading(false);
 		}
 	}, [dateRange, officerBranchId, user?.id, profileLoading, toast]);
 
 	useEffect(() => {
 		fetchDashboardData();
 	}, [fetchDashboardData]);
+
+	useDashboardRealtimeRefresh(() => fetchDashboardData({ silent: true }), {
+		enabled: Boolean(user?.id && dateRange?.from && dateRange?.to && !profileLoading),
+		officerIdEq: user?.id ?? null,
+	});
 
 	const formatCurrency = (value) => {
 		const number = Number(value || 0);

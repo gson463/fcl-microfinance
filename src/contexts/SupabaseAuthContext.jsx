@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { logAudit } from '@/lib/auditLog';
+import { clearAdminImpersonationBackup } from '@/lib/adminImpersonation';
 
 /** Sign out after this long with no user input (mouse, keyboard, scroll, touch, wheel, focus). */
 const IDLE_SESSION_MS = 5 * 60 * 1000;
@@ -43,6 +44,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error("Error clearing auth state:", error);
     } finally {
+      clearAdminImpersonationBackup();
       handleSession(null);
     }
   }, [handleSession]);

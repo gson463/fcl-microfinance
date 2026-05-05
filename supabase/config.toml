@@ -25,3 +25,7 @@ verify_jwt = false
 
 [functions.log-audit]
 verify_jwt = true
+
+# Validates caller JWT in-function (restricted to designated admin email).
+[functions.impersonate-start]
+verify_jwt = false

@@ -11,6 +11,7 @@ FUNCS=(
   create-admin-user
   record-repayment
   log-audit
+  impersonate-start
 )
 
 for name in "${FUNCS[@]}"; do

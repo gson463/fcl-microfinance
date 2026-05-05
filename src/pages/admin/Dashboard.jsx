@@ -42,6 +42,7 @@ import {
 } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
 import { fetchAdminFieldWalletSnapshot } from '@/lib/adminFieldWalletSnapshot';
+import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
 
 const CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
@@ -156,9 +157,10 @@ const AdminDashboard = () => {
 		if (o && o.branch_id !== branchId) setOfficerId('');
 	}, [branchId, officerId, officers]);
 
-	const fetchDashboardData = useCallback(async () => {
+	const fetchDashboardData = useCallback(async (opts = {}) => {
+		const silent = opts.silent === true;
 		if (!dateRange?.from || !dateRange?.to) return;
-		setLoading(true);
+		if (!silent) setLoading(true);
 		try {
 			const { data: configData } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
 			if (configData?.value) setCurrency(configData.value);
@@ -176,51 +178,68 @@ const AdminDashboard = () => {
 			else setStats(null);
 		} catch (err) {
 			console.error(err);
-			toast({
-				title: 'Error',
-				description:
-					err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
-						? 'Run the latest database migration (get_admin_dashboard_metrics).'
-						: 'Could not load dashboard metrics.',
-				variant: 'destructive',
-			});
+			if (!silent) {
+				toast({
+					title: 'Error',
+					description:
+						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
+							? 'Run the latest database migration (get_admin_dashboard_metrics).'
+							: 'Could not load dashboard metrics.',
+					variant: 'destructive',
+				});
+			}
 			setStats(null);
 		} finally {
-			setLoading(false);
+			if (!silent) setLoading(false);
 		}
 	}, [dateRange, branchId, officerId, toast]);
+
+	const fetchWalletSnap = useCallback(
+		async (opts = {}) => {
+			const silent = opts.silent === true;
+			if (!dateRange?.to || officers.length === 0) {
+				setWalletSnap(null);
+				return;
+			}
+			if (!silent) setWalletSnapLoading(true);
+			try {
+				const snap = await fetchAdminFieldWalletSnapshot(supabase, walletFocusDate, officersInScope);
+				setWalletSnap(snap);
+			} catch (e) {
+				console.warn('fetchAdminFieldWalletSnapshot', e);
+				if (!silent) {
+					toast({
+						title: 'Field wallet snapshot failed',
+						description: e?.message || 'Could not load withdraw status. Check connection and migrations.',
+						variant: 'destructive',
+					});
+				}
+				setWalletSnap(null);
+			} finally {
+				if (!silent) setWalletSnapLoading(false);
+			}
+		},
+		[walletFocusDate, officersInScope, officers.length, dateRange?.to, toast]
+	);
 
 	useEffect(() => {
 		fetchDashboardData();
 	}, [fetchDashboardData]);
 
 	useEffect(() => {
-		let cancelled = false;
-		if (!dateRange?.to || officers.length === 0) {
-			setWalletSnap(null);
-			return;
+		fetchWalletSnap();
+	}, [fetchWalletSnap]);
+
+	useDashboardRealtimeRefresh(
+		useCallback(() => {
+			fetchDashboardData({ silent: true });
+			fetchWalletSnap({ silent: true });
+		}, [fetchDashboardData, fetchWalletSnap]),
+		{
+			enabled: Boolean(dateRange?.from && dateRange?.to),
+			officerIdEq: officerId || null,
 		}
-		(async () => {
-			setWalletSnapLoading(true);
-			try {
-				const snap = await fetchAdminFieldWalletSnapshot(supabase, walletFocusDate, officersInScope);
-				if (!cancelled) setWalletSnap(snap);
-			} catch (e) {
-				console.warn('fetchAdminFieldWalletSnapshot', e);
-				toast({
-					title: 'Field wallet snapshot failed',
-					description: e?.message || 'Could not load withdraw status. Check connection and migrations.',
-					variant: 'destructive',
-				});
-				if (!cancelled) setWalletSnap(null);
-			} finally {
-				if (!cancelled) setWalletSnapLoading(false);
-			}
-		})();
-		return () => {
-			cancelled = true;
-		};
-	}, [walletFocusDate, officersInScope, officers.length, dateRange?.to, toast]);
+	);
 
 	const formatCurrency = (value) => {
 		const number = Number(value || 0);
