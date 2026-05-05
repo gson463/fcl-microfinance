@@ -220,8 +220,7 @@ const UserManagement = () => {
         return;
       }
       const token_hash = data?.token_hash;
-      const email = data?.email;
-      if (typeof token_hash !== 'string' || typeof email !== 'string') {
+      if (typeof token_hash !== 'string') {
         await restoreAdminSessionFromSilentBackup();
         toast({
           title: 'Impersonation failed',
@@ -232,7 +231,6 @@ const UserManagement = () => {
       }
       const { error: voErr } = await supabase.auth.verifyOtp({
         token_hash,
-        email,
         type: 'magiclink',
       });
       if (voErr) {
