@@ -25,6 +25,7 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
@@ -62,6 +63,8 @@ const LoanOfficerDashboard = () => {
 	const [expandedCardId, setExpandedCardId] = useState(null);
 	/** Period sums for selected date range (RPC officer_dashboard_range_kpis). */
 	const [rangeKpi, setRangeKpi] = useState(null);
+	/** Breakdown of scheduled unpaid installments due tomorrow, by centre (RPC officer_projected_tomorrow_by_center). */
+	const [projectedByCenter, setProjectedByCenter] = useState([]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -159,6 +162,26 @@ const LoanOfficerDashboard = () => {
 				console.warn(e);
 				setRangeKpi(null);
 			}
+
+			try {
+				const { data: pc, error: pcErr } = await supabase.rpc('officer_projected_tomorrow_by_center', {
+					p_officer_id: user.id,
+					p_branch_id: officerBranchId || null,
+				});
+				if (pcErr) {
+					if (pcErr.code === '42883' || pcErr.message?.includes('officer_projected_tomorrow_by_center')) {
+						console.warn('officer_projected_tomorrow_by_center missing — apply latest migration', pcErr);
+					} else {
+						console.warn('officer_projected_tomorrow_by_center', pcErr);
+					}
+					setProjectedByCenter([]);
+				} else {
+					setProjectedByCenter(Array.isArray(pc) ? pc : []);
+				}
+			} catch (e) {
+				console.warn(e);
+				setProjectedByCenter([]);
+			}
 		} catch (err) {
 			console.error(err);
 			if (!silent) {
@@ -173,6 +196,7 @@ const LoanOfficerDashboard = () => {
 			}
 			setStats(null);
 			setRangeKpi(null);
+			setProjectedByCenter([]);
 		} finally {
 			if (!silent) setLoading(false);
 		}
@@ -219,6 +243,10 @@ const LoanOfficerDashboard = () => {
 			nearing: Number(z.nearing_completion) || 0,
 		};
 	}, [stats, rangeKpi]);
+
+	const projectedTomorrowByCenterTotal = useMemo(() => {
+		return projectedByCenter.reduce((sum, row) => sum + (Number(row?.projected_tomorrow) || 0), 0);
+	}, [projectedByCenter]);
 
 	const dailyFocusCards = useMemo(() => {
 		const z = stats || {};
@@ -620,6 +648,73 @@ const LoanOfficerDashboard = () => {
 									);
 								})}
 							</div>
+
+							<Card className="border-neutral-200/80 bg-white/90 dark:bg-card dark:border-neutral-700">
+								<CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 space-y-0 pb-2">
+									<div className="space-y-1">
+										<CardTitle className="text-base">Projected tomorrow by centre</CardTitle>
+										<CardDescription>
+											Total scheduled repayment due the next calendar day, split by borrower centre (same rules as
+											Projected tomorrow). Holidays and closed days do not move this date—it is strictly calendar-based.
+										</CardDescription>
+									</div>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										className="shrink-0"
+										onClick={() => openMetric(DRILLDOWN_METRICS.expected_tomorrow)}
+									>
+										View full list
+									</Button>
+								</CardHeader>
+								<CardContent className="space-y-3">
+									{projectedByCenter.length === 0 ? (
+										<p className="text-sm text-muted-foreground">
+											No unpaid installments due tomorrow across your centres — or the centre breakdown is not available
+											on this database version.
+										</p>
+									) : (
+										<>
+											<div className="overflow-x-auto rounded-md border border-neutral-200 dark:border-neutral-700">
+												<Table>
+													<TableHeader>
+														<TableRow>
+															<TableHead>Centre</TableHead>
+															<TableHead className="text-right">Projected tomorrow</TableHead>
+														</TableRow>
+													</TableHeader>
+													<TableBody>
+														{projectedByCenter.map((row) => (
+															<TableRow key={row.center_id ?? 'unassigned'}>
+																<TableCell className="font-medium">{row.center_name || '—'}</TableCell>
+																<TableCell className="text-right tabular-nums">
+																	{formatCurrency(row.projected_tomorrow)}
+																</TableCell>
+															</TableRow>
+														))}
+														<TableRow className="bg-neutral-50/80 font-semibold dark:bg-neutral-900/40">
+															<TableCell>Total</TableCell>
+															<TableCell className="text-right tabular-nums">
+																{formatCurrency(projectedTomorrowByCenterTotal)}
+															</TableCell>
+														</TableRow>
+													</TableBody>
+												</Table>
+											</div>
+											{stats != null &&
+												Math.abs(
+													(Number(stats.expected_tomorrow) || 0) - projectedTomorrowByCenterTotal
+												) > 0.02 && (
+													<p className="text-xs text-muted-foreground">
+														Dashboard &ldquo;Projected tomorrow&rdquo; card: {formatCurrency(stats.expected_tomorrow)} — small
+														differences can come from rounding or timing.
+													</p>
+												)}
+										</>
+									)}
+								</CardContent>
+							</Card>
 						</div>
 
 						<div className="space-y-2">

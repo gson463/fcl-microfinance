@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { useNavigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
-import { format, parseISO } from 'date-fns';
+import { addDays, format, parseISO } from 'date-fns';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
@@ -60,6 +60,8 @@ const DashboardMetricDrilldown = () => {
 	const isManagerRoute = location.pathname.startsWith('/manager');
 	const isOfficerRoute = location.pathname.startsWith('/officer');
 	const isAdminRoute = location.pathname.startsWith('/admin');
+	const isProjectionTomorrow = metricKey === DRILLDOWN_METRICS.expected_tomorrow;
+	const projectionDueLabel = useMemo(() => format(addDays(new Date(), 1), 'PPP'), []);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -316,14 +318,18 @@ const DashboardMetricDrilldown = () => {
 	/** Officer drilldown is always scoped to the signed-in user (ignore query tampering). */
 	const officerIdForRpc = isOfficerRoute ? user?.id || '' : filterOfficerId;
 
-	const startStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd');
-	const endStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd');
+	const rawStart = dateRange?.from
+		? format(dateRange.from, 'yyyy-MM-dd')
+		: format(new Date(new Date().getFullYear(), new Date().getMonth(), 1), 'yyyy-MM-dd');
+	const rawEnd = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : format(new Date(), 'yyyy-MM-dd');
+	const startStr = rawStart <= rawEnd ? rawStart : rawEnd;
+	const endStr = rawStart <= rawEnd ? rawEnd : rawStart;
 
 	const title = METRIC_TITLES[metricKey] || 'Dashboard details';
 
 	const fetchRows = useCallback(async () => {
 		if (!metricKey) return;
-		if (!dateRange?.from || !dateRange?.to) {
+		if (!isProjectionTomorrow && (!dateRange?.from || !dateRange?.to)) {
 			setRows([]);
 			setTotal(0);
 			setLoading(false);
@@ -397,6 +403,7 @@ const DashboardMetricDrilldown = () => {
 		}
 	}, [
 		metricKey,
+		isProjectionTomorrow,
 		startStr,
 		endStr,
 		branchIdForRpc,
@@ -519,33 +526,44 @@ const DashboardMetricDrilldown = () => {
 
 				<div className="flex flex-col gap-3 rounded-xl border bg-white p-4 shadow-sm lg:flex-row lg:flex-wrap lg:items-end dark:bg-card">
 					<div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-						<Popover>
-							<PopoverTrigger asChild>
-								<Button variant="outline" className={cn('w-full min-w-[240px] justify-start text-left font-normal sm:w-auto')}>
-									<CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
-									{dateRange?.from && dateRange?.to ? (
-										<>
-											{format(dateRange.from, 'LLL dd, y')} – {format(dateRange.to, 'LLL dd, y')}
-										</>
-									) : (
-										<span>Pick range</span>
-									)}
-								</Button>
-							</PopoverTrigger>
-							<PopoverContent className="w-auto p-0" align="start">
-								<Calendar
-									initialFocus
-									mode="range"
-									defaultMonth={dateRange?.from}
-									selected={dateRange}
-									onSelect={(r) => {
-										setDateRange(r);
-										if (r?.from && r?.to) persistQuery({ range: r });
-									}}
-									numberOfMonths={2}
-								/>
-							</PopoverContent>
-						</Popover>
+						{isProjectionTomorrow ? (
+							<div className="w-full min-w-[240px] rounded-lg border border-brand-gold/25 bg-brand-gold/5 px-3 py-2 sm:w-auto">
+								<p className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Projection due date</p>
+								<p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{projectionDueLabel}</p>
+								<p className="text-xs text-muted-foreground">
+									Plain calendar dates only — due the next day on the calendar, regardless of Sundays or public holidays.
+									Not tied to your dashboard period below.
+								</p>
+							</div>
+						) : (
+							<Popover>
+								<PopoverTrigger asChild>
+									<Button variant="outline" className={cn('w-full min-w-[240px] justify-start text-left font-normal sm:w-auto')}>
+										<CalendarIcon className="mr-2 h-4 w-4 shrink-0" />
+										{dateRange?.from && dateRange?.to ? (
+											<>
+												{format(dateRange.from, 'LLL dd, y')} – {format(dateRange.to, 'LLL dd, y')}
+											</>
+										) : (
+											<span>Pick range</span>
+										)}
+									</Button>
+								</PopoverTrigger>
+								<PopoverContent className="w-auto p-0" align="start">
+									<Calendar
+										initialFocus
+										mode="range"
+										defaultMonth={dateRange?.from}
+										selected={dateRange}
+										onSelect={(r) => {
+											setDateRange(r);
+											if (r?.from && r?.to) persistQuery({ range: r });
+										}}
+										numberOfMonths={2}
+									/>
+								</PopoverContent>
+							</Popover>
+						)}
 
 						{metricKey === DRILLDOWN_METRICS.nearing_completion && (
 							<div className="w-full min-w-[200px] sm:w-[220px]">
@@ -824,7 +842,16 @@ const DashboardMetricDrilldown = () => {
 					<CardHeader>
 						<CardTitle className="text-lg">{title}</CardTitle>
 						<CardDescription>
-							{startStr} → {endStr}
+							{isProjectionTomorrow ? (
+								<>
+									Unpaid schedule amounts with <strong>due date {projectionDueLabel}</strong> (next calendar day in the
+									system; holidays do not shift this projection). Branch/officer/center filters still apply.
+								</>
+							) : (
+								<>
+									{startStr} → {endStr}
+								</>
+							)}
 							{metricKey === DRILLDOWN_METRICS.nearing_completion && (
 								<span className="mt-1 block text-neutral-600 dark:text-neutral-400">
 									Active loans whose <strong>last scheduled installment</strong> is due between today and the next{' '}

@@ -31,6 +31,7 @@ import {
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
 import { buildOfficerCenterBlocks } from '@/lib/fieldWalletAggregates';
+import { fetchAllRowsPaged } from '@/lib/supabaseFetchPaged';
 import { downloadFieldWalletExcel, fetchLogoBufferFromUrl } from '@/lib/fieldWalletReportExcel';
 import { downloadFieldWalletPdf } from '@/lib/fieldWalletReportPdf';
 import { resolveLogoUrl, DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE } from '@/lib/brand';
@@ -174,61 +175,71 @@ const FieldWalletCashFlow = () => {
         if (officerIdsFilter.length === 0) officerIdsFilter = ['00000000-0000-0000-0000-000000000000'];
       }
 
-      const repQ = supabase
-        .from('repayments')
-        .select(REP_SELECT)
-        .gte('actual_payment_date', fromStr)
-        .lte('actual_payment_date', toStr);
-      const loanQ = supabase
-        .from('loans')
-        .select(LOAN_SELECT)
-        .gte('disbursement_date', fromStr)
-        .lte('disbursement_date', toStr);
-      const expQ = supabase
-        .from('expenses')
-        .select('id, amount, expense_type, description, expense_date, officer_id')
-        .gte('expense_date', fromStr)
-        .lte('expense_date', toStr);
+      /** Fresh builder each call — PostgREST paging must not mutate one builder with repeated .order().range(). */
+      const repaymentQuery = () => {
+        let q = supabase
+          .from('repayments')
+          .select(REP_SELECT)
+          .gte('actual_payment_date', fromStr)
+          .lte('actual_payment_date', toStr);
+        if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
+        return q;
+      };
+      const loanQuery = () => {
+        let q = supabase
+          .from('loans')
+          .select(LOAN_SELECT)
+          .gte('disbursement_date', fromStr)
+          .lte('disbursement_date', toStr);
+        if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
+        return q;
+      };
+      const expenseQuery = () => {
+        let q = supabase
+          .from('expenses')
+          .select('id, amount, expense_type, description, expense_date, officer_id')
+          .gte('expense_date', fromStr)
+          .lte('expense_date', toStr);
+        if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
+        return q;
+      };
+      const takenQuery = () => {
+        let q = supabase
+          .from('officer_field_taken')
+          .select('id, officer_id, business_date, amount_taken')
+          .gte('business_date', fromStr)
+          .lte('business_date', toStr);
+        if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
+        return q;
+      };
+      const withdrawQuery = () => {
+        let q = supabase
+          .from('officer_withdraw_to_bank')
+          .select('id, officer_id, business_date, created_at')
+          .gte('business_date', fromStr)
+          .lte('business_date', toStr);
+        if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
+        return q;
+      };
 
-      const takenQ = supabase
-        .from('officer_field_taken')
-        .select('id, officer_id, business_date, amount_taken')
-        .gte('business_date', fromStr)
-        .lte('business_date', toStr);
-
-      const withdrawQ = supabase
-        .from('officer_withdraw_to_bank')
-        .select('id, officer_id, business_date, created_at')
-        .gte('business_date', fromStr)
-        .lte('business_date', toStr);
-
-      if (officerIdsFilter) {
-        repQ.in('officer_id', officerIdsFilter);
-        loanQ.in('officer_id', officerIdsFilter);
-        expQ.in('officer_id', officerIdsFilter);
-        takenQ.in('officer_id', officerIdsFilter);
-        withdrawQ.in('officer_id', officerIdsFilter);
-      }
-
-      const [repRes, loanRes, expRes, takenRes, withdrawRes] = await Promise.all([
-        repQ.order('actual_payment_date', { ascending: false }),
-        loanQ.order('disbursement_date', { ascending: false }),
-        expQ.order('expense_date', { ascending: false }),
-        takenQ.order('business_date', { ascending: false }),
-        withdrawQ.order('business_date', { ascending: false }),
+      // PostgREST caps rows per response (~1000); admin/manager scopes can exceed that.
+      const [reps, loans, exps, taken, withdraws] = await Promise.all([
+        fetchAllRowsPaged((from, to) =>
+          repaymentQuery().order('id', { ascending: true }).range(from, to),
+        ),
+        fetchAllRowsPaged((from, to) =>
+          loanQuery().order('id', { ascending: true }).range(from, to),
+        ),
+        fetchAllRowsPaged((from, to) =>
+          expenseQuery().order('id', { ascending: true }).range(from, to),
+        ),
+        fetchAllRowsPaged((from, to) =>
+          takenQuery().order('id', { ascending: true }).range(from, to),
+        ),
+        fetchAllRowsPaged((from, to) =>
+          withdrawQuery().order('id', { ascending: true }).range(from, to),
+        ),
       ]);
-
-      if (repRes.error) throw repRes.error;
-      if (loanRes.error) throw loanRes.error;
-      if (expRes.error) throw expRes.error;
-      if (takenRes.error) throw takenRes.error;
-      if (withdrawRes.error) throw withdrawRes.error;
-
-      const reps = repRes.data || [];
-      const loans = loanRes.data || [];
-      const exps = expRes.data || [];
-      const taken = takenRes.data || [];
-      const withdraws = withdrawRes.data || [];
 
       setRepayments(reps);
       setExpenses(exps);

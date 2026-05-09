@@ -101,19 +101,25 @@ export function buildOfficerCenterBlocks({
       }
     );
 
+    const officerLoans = (loans || []).filter((L) => L.officer_id === officer.id);
+    const totalDisb = officerLoans.reduce((s, L) => s + (Number(L.principal) || 0), 0);
+    const applicationFeeTotal = officerLoans.length * fee;
+
     const totalRepIn = (repayments || []).filter((r) => r.officer_id === officer.id).reduce((s, r) => s + (Number(r.amount) || 0), 0);
-    const totalDisb = (loans || []).filter((L) => L.officer_id === officer.id).reduce((s, L) => s + (Number(L.principal) || 0), 0);
     const totalExp = officerExpenses.reduce((s, e) => s + (Number(e.amount) || 0), 0);
     const takenSum = (fieldTakenRows || [])
       .filter((t) => t.officer_id === officer.id)
       .reduce((s, t) => s + (Number(t.amount_taken) || 0), 0);
-    const deposit = takenSum + totalRepIn + sumRow.applicationFee - totalDisb - totalExp;
+    const deposit = takenSum + totalRepIn + applicationFeeTotal - totalDisb - totalExp;
 
     return {
       officer,
       centerRows: rows,
       totals: {
         ...sumRow,
+        disbursement: totalDisb,
+        disbursedClients: officerLoans.length,
+        applicationFee: applicationFeeTotal,
         transport,
         otherExpenses,
         expense1: otherExpenses,

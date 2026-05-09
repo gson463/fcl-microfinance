@@ -1,4 +1,5 @@
 import { buildOfficerCenterBlocks } from '@/lib/fieldWalletAggregates';
+import { fetchAllRowsPaged } from '@/lib/supabaseFetchPaged';
 
 const LOAN_SELECT = `id, loan_id, principal, disbursement_date, officer_id, borrower_id,
   borrowers(
@@ -6,15 +7,9 @@ const LOAN_SELECT = `id, loan_id, principal, disbursement_date, officer_id, borr
     groups(id, name, center_id, centers(id, name))
   )`;
 
-const REP_SELECT = `id, amount, prepayment_amount, scheduled_due_snapshot, wallet_split_source, actual_payment_date, officer_id, loan_id,
-  loans(
-    loan_id,
-    borrower_id,
-    borrowers(
-      id, first_name, surname,
-      groups(id, name, center_id, centers(id, name))
-    )
-  )`;
+/** No `loans` embed: totals only need loan_id + wallet fields; embedding can bloat or complicate PostgREST joins. Center splits use the separate loans query (borrower → group → center). */
+const REP_SELECT =
+	'id, amount, prepayment_amount, scheduled_due_snapshot, wallet_split_source, actual_payment_date, officer_id, loan_id';
 
 /**
  * Field wallet for one calendar day (same formula as officer Field wallet / Excel DEPOSIT).
@@ -46,32 +41,53 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 	const currency = map.currency || 'TZS';
 
 	const day = dateStr;
-	const [repRes, loanRes, expRes, takenRes, withdrawRes] = await Promise.all([
-		supabase
-			.from('repayments')
-			.select(REP_SELECT)
-			.eq('actual_payment_date', day)
-			.in('officer_id', ids),
-		supabase.from('loans').select(LOAN_SELECT).eq('disbursement_date', day).in('officer_id', ids),
-		supabase
-			.from('expenses')
-			.select('id, amount, expense_type, expense_date, officer_id')
-			.eq('expense_date', day)
-			.in('officer_id', ids),
-		supabase.from('officer_field_taken').select('officer_id, business_date, amount_taken').eq('business_date', day).in('officer_id', ids),
-		supabase
-			.from('officer_withdraw_to_bank')
-			.select('officer_id, business_date, created_at')
-			.eq('business_date', day)
-			.in('officer_id', ids),
+	const [repaymentRows, loanRows, expenseRows, takenRows, withdrawRowsRaw] = await Promise.all([
+		fetchAllRowsPaged((from, to) =>
+			supabase
+				.from('repayments')
+				.select(REP_SELECT)
+				.eq('actual_payment_date', day)
+				.in('officer_id', ids)
+				.order('id', { ascending: true })
+				.range(from, to),
+		),
+		fetchAllRowsPaged((from, to) =>
+			supabase
+				.from('loans')
+				.select(LOAN_SELECT)
+				.eq('disbursement_date', day)
+				.in('officer_id', ids)
+				.order('id', { ascending: true })
+				.range(from, to),
+		),
+		fetchAllRowsPaged((from, to) =>
+			supabase
+				.from('expenses')
+				.select('id, amount, expense_type, expense_date, officer_id')
+				.eq('expense_date', day)
+				.in('officer_id', ids)
+				.order('id', { ascending: true })
+				.range(from, to),
+		),
+		fetchAllRowsPaged((from, to) =>
+			supabase
+				.from('officer_field_taken')
+				.select('officer_id, business_date, amount_taken')
+				.eq('business_date', day)
+				.in('officer_id', ids)
+				.order('id', { ascending: true })
+				.range(from, to),
+		),
+		fetchAllRowsPaged((from, to) =>
+			supabase
+				.from('officer_withdraw_to_bank')
+				.select('officer_id, business_date, created_at')
+				.eq('business_date', day)
+				.in('officer_id', ids)
+				.order('id', { ascending: true })
+				.range(from, to),
+		),
 	]);
-
-	if (repRes.error) throw repRes.error;
-	if (loanRes.error) throw loanRes.error;
-	if (expRes.error) throw expRes.error;
-	if (takenRes.error) throw takenRes.error;
-	if (withdrawRes.error) throw withdrawRes.error;
-	const withdrawRowsRaw = withdrawRes.data || [];
 
 	const { data: centersData } = await supabase
 		.from('centers')
@@ -83,11 +99,11 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 	const { blocks } = buildOfficerCenterBlocks({
 		officers: officerRows,
 		centers: centersData || [],
-		repayments: repRes.data || [],
-		loans: loanRes.data || [],
-		expenses: expRes.data || [],
+		repayments: repaymentRows,
+		loans: loanRows,
+		expenses: expenseRows,
 		applicationFeePerDisbursement: fee,
-		fieldTakenRows: takenRes.data || [],
+		fieldTakenRows: takenRows,
 	});
 
 	const withdrawByOfficer = new Map();
@@ -112,7 +128,7 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 	}
 
 	const repaymentTotalsByOfficer = new Map();
-	for (const r of repRes.data || []) {
+	for (const r of repaymentRows) {
 		const oid = r.officer_id;
 		if (!oid) continue;
 		repaymentTotalsByOfficer.set(oid, (repaymentTotalsByOfficer.get(oid) || 0) + (Number(r.amount) || 0));

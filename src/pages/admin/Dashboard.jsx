@@ -44,6 +44,9 @@ import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandabl
 import { fetchAdminFieldWalletSnapshot } from '@/lib/adminFieldWalletSnapshot';
 import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const normalizeUuidParam = (v) => (v && UUID_RE.test(String(v).trim()) ? String(v).trim() : '');
+
 const CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
 	'bg-gradient-to-br from-violet-600 via-purple-700 to-indigo-950 shadow-violet-900/30',
@@ -105,8 +108,8 @@ const AdminDashboard = () => {
 				setDateRange({ from, to });
 			}
 		}
-		setBranchId(searchParams.get('branch') || '');
-		setOfficerId(searchParams.get('officer') || '');
+		setBranchId(normalizeUuidParam(searchParams.get('branch')));
+		setOfficerId(normalizeUuidParam(searchParams.get('officer')));
 	}, [searchParams]);
 
 	const persistQuery = useCallback(
@@ -165,11 +168,14 @@ const AdminDashboard = () => {
 			const { data: configData } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
 			if (configData?.value) setCurrency(configData.value);
 
+			const safeBranchId = normalizeUuidParam(branchId);
+			const safeOfficerId = normalizeUuidParam(officerId);
+
 			const { data, error } = await supabase.rpc('get_admin_dashboard_metrics', {
 				p_start_date: format(dateRange.from, 'yyyy-MM-dd'),
 				p_end_date: format(dateRange.to, 'yyyy-MM-dd'),
-				p_branch_id: branchId || null,
-				p_officer_id: officerId || null,
+				p_branch_id: safeBranchId || null,
+				p_officer_id: safeOfficerId || null,
 				p_nearing_days: 14,
 			});
 
@@ -179,12 +185,14 @@ const AdminDashboard = () => {
 		} catch (err) {
 			console.error(err);
 			if (!silent) {
+				const rawMsg =
+					err?.message || (typeof err === 'string' ? err : '') || 'Could not load dashboard metrics.';
 				toast({
 					title: 'Error',
 					description:
 						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
 							? 'Run the latest database migration (get_admin_dashboard_metrics).'
-							: 'Could not load dashboard metrics.',
+							: `Could not load dashboard metrics. ${rawMsg}`,
 					variant: 'destructive',
 				});
 			}

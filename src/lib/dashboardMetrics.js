@@ -18,6 +18,7 @@ export const DRILLDOWN_METRICS = {
 	default_interest: 'default_interest',
 	default_total: 'default_total',
 	expected_today: 'expected_today',
+	/** Unpaid installments due on DB calendar tomorrow; holidays do not shift this date */
 	expected_tomorrow: 'expected_tomorrow',
 	disbursed_today: 'disbursed_today',
 	collected_today: 'collected_today',

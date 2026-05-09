@@ -235,11 +235,34 @@ const FieldWalletTrace = () => {
 							<Wallet className="h-5 w-5 text-brand-gold" />
 							Field wallet — full day flow
 						</CardTitle>
-						<CardDescription>
-							Single calendar day (EAT). Formula per officer: taken + collections + application fees − disbursements −
-							expenses = <strong>deposit</strong> (closing in hand). After <strong>Withdrawn to bank</strong>, the deposit
-							column shows <strong>0</strong> (cash no longer in hand), matching the officer screen and{' '}
-							<code className="text-xs">officer_wallet_balance_for_period</code> for that day — same as manager view.
+						<CardDescription className="space-y-2 text-sm leading-relaxed">
+							<p>
+								<strong>What you&apos;re seeing.</strong> This page looks at{' '}
+								<strong>one calendar day only</strong> — <strong>{format(walletDateObj, 'MMMM d, yyyy')}</strong>. Each row for
+								an officer is <strong>only that day&apos;s activity</strong>. It does <strong>not</strong> include money
+								carried forward from previous days or any running balance from before.
+							</p>
+							<ul className="list-disc space-y-1 pl-4 text-muted-foreground">
+								<li>
+									<strong className="text-foreground">Collections</strong> — all repayments that were{' '}
+									<strong>recorded for that officer on this same day</strong>. This should line up with the collections side of
+									their daily field wallet (and the “deposit” style total they work with on that day).
+								</li>
+								<li>
+									<strong className="text-foreground">Deposit (the big number)</strong> — in simple terms:{' '}
+									<strong>what they took from the office</strong>, <strong>plus collections</strong>,{' '}
+									<strong>plus application fees</strong> for loans disbursed that day, <strong>minus</strong> the{' '}
+									<strong>loan amounts paid out that day</strong>, <strong>minus</strong> <strong>expenses</strong> (transport
+									and other types added together).
+								</li>
+								<li>
+									When it says <strong className="text-foreground">Withdrawn to bank</strong>, the main{' '}
+									<strong>Deposit</strong> figure shows <strong>0</strong> because the system treats that day&apos;s cash as{' '}
+									<strong>no longer in the officer&apos;s hands</strong> (it&apos;s at the bank). The smaller line underneath
+									— <strong>“Same day (formula)”</strong> — is still the <strong>day&apos;s cash picture before that step</strong>,
+									so you can check it against <strong>their report, PDF, or Excel</strong> for the same date.
+								</li>
+							</ul>
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
@@ -351,11 +374,13 @@ const FieldWalletTrace = () => {
 							<div>
 								<CardTitle className="text-base">By officer</CardTitle>
 								<CardDescription>
-									Each row is one officer’s field wallet for the selected day.{' '}
+									Each line is one loan officer on the date you chose at the top.{' '}
 									<span className="font-medium text-amber-800 dark:text-amber-200">
-										Yellow highlight = not yet withdrawn to bank
-									</span>{' '}
-									(reminder).
+										Amber background means they have not confirmed &quot;withdraw to bank&quot; for that day yet
+									</span>
+									. If <strong>Collections</strong> looks like zero here but their own wallet shows they received payments,
+									make sure you selected the <strong>same date</strong> and the correct <strong>branch or officer</strong> in the
+									filters above — small mismatches there are the usual reason totals don&apos;t match.
 								</CardDescription>
 							</div>
 							<Button
@@ -392,7 +417,6 @@ const FieldWalletTrace = () => {
 										const totalRep = repaymentTotalsByOfficer.get(block.officer.id) ?? 0;
 										const wAt = withdrawByOfficer.get(block.officer.id);
 										const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
-										const dep = Number(t.deposit) || 0;
 										return (
 											<TableRow
 												key={block.officer.id}
@@ -409,7 +433,16 @@ const FieldWalletTrace = () => {
 												<TableCell className="text-right tabular-nums">
 													{formatMoney(Number(t.transport || 0) + Number(t.otherExpenses || 0))}
 												</TableCell>
-												<TableCell className="text-right font-semibold tabular-nums">{formatMoney(t.deposit)}</TableCell>
+												<TableCell className="text-right align-top tabular-nums">
+													<div className="inline-block text-right">
+														<span className="font-semibold block">{formatMoney(t.deposit)}</span>
+														{wAt ? (
+															<span className="block text-xs font-normal text-muted-foreground mt-0.5 max-w-[13rem] ml-auto leading-snug">
+																Same day (formula): {formatMoney(rawDep)}
+															</span>
+														) : null}
+													</div>
+												</TableCell>
 												<TableCell>
 													{wAt ? (
 														<span className="inline-flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
