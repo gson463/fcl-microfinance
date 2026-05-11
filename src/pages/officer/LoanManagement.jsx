@@ -60,14 +60,19 @@ const OFFICER_LOAN_STATUS_FILTER_OPTIONS = [
 	{ value: 'delete_requested', label: 'Delete Requested' },
 ];
 
-/** True if borrower still has any loan not fully settled (blocks new disbursement in UI). */
+/** Settled / closed loans that do not block choosing this borrower for a new disbursement. */
+function loanDoesNotBlockNewDisburse(l) {
+	if (!l) return true;
+	const st = l.status;
+	if (st === 'written_off') return true;
+	if (st === 'paid' && Number(l.balance) <= 0.01) return true;
+	return false;
+}
+
+/** True if borrower still has any loan that blocks a new disbursement (active debt or open workflow). */
 function borrowerHasOutstandingLoan(loans, borrowerId) {
-    if (!borrowerId || !Array.isArray(loans)) return false;
-    return loans.some(
-        (l) =>
-            l.borrower_id === borrowerId &&
-            (l.status !== 'paid' || Number(l.balance) > 0.01),
-    );
+	if (!borrowerId || !Array.isArray(loans)) return false;
+	return loans.some((l) => l.borrower_id === borrowerId && !loanDoesNotBlockNewDisburse(l));
 }
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
