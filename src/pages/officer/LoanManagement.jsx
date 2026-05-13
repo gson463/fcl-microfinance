@@ -420,6 +420,8 @@ const LoanManagement = () => {
             return;
         }
 
+        const principalAmount = parseFloat(principal);
+
         // Date logic validation
         const dDate = parseISO(disbursementDate);
         const rDate = parseISO(repaymentStartDate);
@@ -490,8 +492,6 @@ const LoanManagement = () => {
             if (!product) {
                 throw new Error('Loan product not found');
             }
-
-            const principalAmount = parseFloat(principal);
 
             if (principalAmount < product.min_amount || principalAmount > product.max_amount) {
                 toast({ title: 'Validation Error', description: `Principal amount must be between ${currency} ${product.min_amount.toLocaleString()} and ${currency} ${product.max_amount.toLocaleString()}.`, variant: 'destructive' });
