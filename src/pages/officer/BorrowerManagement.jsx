@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock, Building2, CircleCheck } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock, Building2, CheckCircle2 } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
@@ -1204,7 +1204,7 @@ const BorrowerManagement = () => {
                     <StatCard title="Total Borrowers" value={stats.total} icon={Users} color="text-blue-600" />
                     <StatCard title="Active Loans" value={stats.active} icon={UserCheck} color="text-yellow-600" />
                     <StatCard title="Eligible" value={stats.eligible} icon={UserPlusIcon} color="text-green-600" />
-                    <StatCard title="Paid up" value={stats.paidUp} icon={CircleCheck} color="text-emerald-700" />
+                    <StatCard title="Paid up" value={stats.paidUp} icon={CheckCircle2} color="text-emerald-700" />
                     <StatCard title="Pending re-loan approval" value={stats.pending} icon={Clock} color="text-slate-500" />
                     <StatCard title="Defaulted" value={stats.defaulted} icon={UserX} color="text-red-600" />
                 </div>

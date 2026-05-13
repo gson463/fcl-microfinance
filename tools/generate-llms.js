@@ -81,8 +81,29 @@ function extractRoutes(appJsxPath) {
   }
 }
 
+/** Recursively collect page source files; skip directories (avoids EISDIR on fs.readFile). */
 function findReactFiles(dir) {
-  return fs.readdirSync(dir).map(item => path.join(dir, item));
+  const out = [];
+  if (!fs.existsSync(dir)) return out;
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+
+  for (const ent of entries) {
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      out.push(...findReactFiles(full));
+      continue;
+    }
+    if (!/\.(jsx|tsx)$/i.test(ent.name)) continue;
+    if (/\.test\./i.test(ent.name)) continue;
+    out.push(full);
+  }
+  return out;
 }
 
 function extractHelmetData(content, filePath, routes) {
@@ -103,9 +124,10 @@ function extractHelmetData(content, filePath, routes) {
   const description = cleanText(descMatch?.[1]);
   
   const fileName = path.basename(filePath, path.extname(filePath));
-  const url = routes.length && routes.has(fileName) 
-    ? routes.get(fileName) 
-    : generateFallbackUrl(fileName);
+  const url =
+    routes instanceof Map && routes.has(fileName)
+      ? routes.get(fileName)
+      : generateFallbackUrl(fileName);
   
   return {
     url,
@@ -162,16 +184,16 @@ function main() {
       .filter(Boolean);
   }
 
+  const outputPath = path.join(process.cwd(), 'public', 'llms.txt');
+  ensureDirectoryExists(path.dirname(outputPath));
+
   if (pages.length === 0) {
-    console.error('❌ No pages with Helmet components found!');
-    process.exit(1);
+    console.warn('⚠️ No pages with Helmet components found — writing minimal llms.txt');
+    fs.writeFileSync(outputPath, '## Pages\n(No Helmet-derived entries.)\n', 'utf8');
+    process.exit(0);
   }
 
-
   const llmsTxtContent = generateLlmsTxt(pages);
-  const outputPath = path.join(process.cwd(), 'public', 'llms.txt');
-  
-  ensureDirectoryExists(path.dirname(outputPath));
   fs.writeFileSync(outputPath, llmsTxtContent, 'utf8');
 }
 
