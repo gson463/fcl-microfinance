@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format, parseISO, startOfDay, endOfDay, subDays } from 'date-fns';
 import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { formatApiErrorValue } from '@/lib/formatApiError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
@@ -518,7 +519,7 @@ const RepaymentManagement = () => {
     const parseRecordError = (data, error) => {
         const bodyError =
             data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
-                ? String(data.error)
+                ? formatApiErrorValue(data.error)
                 : null;
         return (
             bodyError ||
@@ -526,7 +527,7 @@ const RepaymentManagement = () => {
                 ? (() => {
                       try {
                           const j = JSON.parse(String(error.context.body));
-                          return j?.error ? String(j.error) : null;
+                          return j?.error != null ? formatApiErrorValue(j.error) : null;
                       } catch {
                           return null;
                       }
@@ -676,7 +677,7 @@ const RepaymentManagement = () => {
         } catch (e) {
             toast({
                 title: 'Repayment failed',
-                description: e?.message || 'Unexpected error. Check your connection and try again.',
+                description: formatApiErrorValue(e) || 'Unexpected error. Check your connection and try again.',
                 variant: 'destructive',
             });
             return false;

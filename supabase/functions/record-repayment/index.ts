@@ -6,6 +6,7 @@ import {
   isValidRepaymentAmount,
 } from "../_shared/repaymentAmount.ts";
 import { isAuditExemptEmail } from "../_shared/auditExempt.ts";
+import { messageFromUnknown } from "../_shared/formatApiError.ts";
 
 /** Fire-and-forget audit so the client gets a fast response (geo lookup can be slow). */
 function scheduleRepaymentAudit(
@@ -305,7 +306,7 @@ Deno.serve(async (req: Request) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = messageFromUnknown(e);
     return new Response(JSON.stringify({ error: msg }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

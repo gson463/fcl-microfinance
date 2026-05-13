@@ -175,6 +175,17 @@ const FieldWalletTrace = () => {
 		return n;
 	}, [blocks, withdrawByOfficer]);
 
+	/** Sum of same-day formula deposit for each officer who recorded withdraw to bank (matches cash handed in). */
+	const totalWithdrawnAmount = useMemo(() => {
+		let s = 0;
+		for (const block of blocks) {
+			if (!withdrawByOfficer.has(block.officer.id)) continue;
+			const raw = Number(block.totals.rawDeposit ?? block.totals.deposit) || 0;
+			s += raw;
+		}
+		return s;
+	}, [blocks, withdrawByOfficer]);
+
 	const totalNet = useMemo(() => blocks.reduce((s, b) => s + (Number(b.totals.deposit) || 0), 0), [blocks]);
 
 	const branchNameById = useMemo(() => Object.fromEntries((branches || []).map((b) => [b.id, b.name || ''])), [branches]);
@@ -348,6 +359,12 @@ const FieldWalletTrace = () => {
 								{withdrawnCount} / {blocks.length}
 							</p>
 							<p className="text-xs text-muted-foreground mt-1">Officers who confirmed for this date</p>
+							<p className="mt-3 border-t pt-3 text-lg font-semibold tabular-nums text-foreground">
+								{formatMoney(totalWithdrawnAmount)}
+							</p>
+							<p className="text-xs text-muted-foreground mt-1">
+								Total withdraws (sum of same-day formula deposit for those officers)
+							</p>
 						</CardContent>
 					</Card>
 					<Card>
@@ -445,13 +462,18 @@ const FieldWalletTrace = () => {
 												</TableCell>
 												<TableCell>
 													{wAt ? (
-														<span className="inline-flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
-															<CheckCircle2 className="h-4 w-4 shrink-0" />
-															Withdrawn
-															<span className="text-xs text-muted-foreground">
-																({new Date(wAt).toLocaleString()})
+														<div className="space-y-1">
+															<span className="inline-flex flex-wrap items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
+																<CheckCircle2 className="h-4 w-4 shrink-0" />
+																Withdrawn
+																<span className="text-xs text-muted-foreground">
+																	({new Date(wAt).toLocaleString()})
+																</span>
 															</span>
-														</span>
+															<p className="text-xs tabular-nums text-muted-foreground">
+																After withdraw — total to bank: <span className="font-medium text-foreground">{formatMoney(rawDep)}</span>
+															</p>
+														</div>
 													) : (
 														<div className="text-sm text-muted-foreground">
 															<span className="inline-flex items-center gap-1.5">

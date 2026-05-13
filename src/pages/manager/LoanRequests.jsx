@@ -10,19 +10,147 @@ import { BulkDataTableToolbar } from '@/components/ui/bulk-data-table-toolbar';
 import { useBulkSelection } from '@/hooks/useBulkSelection';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
 import { useToast } from '@/components/ui/use-toast';
-import { CheckCircle, FileQuestion, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CheckCircle, FileQuestion, XCircle, ChevronLeft, ChevronRight, Calendar as CalendarIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { generateSchedule } from '@/utils/loanUtils';
 import { recalculateLoanScheduleWithRetry } from '@/lib/loanScheduleRegeneration';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
+import { parseISO } from 'date-fns';
 import { useUserProfileScope, fetchOfficerIdsForBranch } from '@/hooks/useUserProfileScope';
 import { borrowerPublicId, borrowerPublicIdOrDash } from '@/lib/borrowerPublicId';
+import { cn } from '@/lib/utils';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
 const HISTORY_PAGE_SIZE = 15;
+
+/** Parse a calendar date from edit_request (YYYY-MM-DD or Date) into an EAT-local Date for pickers. */
+function ymdToEATDate(ymd) {
+  if (!ymd) return null;
+  if (ymd instanceof Date) {
+    return Number.isNaN(ymd.getTime()) ? null : toZonedTime(ymd, EAT_TIMEZONE);
+  }
+  const s = String(ymd).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return toZonedTime(parseISO(s), EAT_TIMEZONE);
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : toZonedTime(d, EAT_TIMEZONE);
+}
+
+function ManagerApproveLoanEditDialog({ loan, open, onOpenChange, holidays, onApprove }) {
+  const [disbursementDate, setDisbursementDate] = useState(null);
+  const [repaymentStartDate, setRepaymentStartDate] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open || !loan?.edit_request) return;
+    const er = loan.edit_request;
+    setDisbursementDate(ymdToEATDate(er.disbursementDate));
+    setRepaymentStartDate(ymdToEATDate(er.repaymentStartDate));
+  }, [open, loan?.id, loan?.edit_request]);
+
+  const managerApproveDisabledDays = useMemo(() => {
+    const holidayDates = (holidays || []).map((h) => {
+      const date = new Date(h.date);
+      return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    });
+    return holidayDates;
+  }, [holidays]);
+
+  const handleConfirm = async () => {
+    if (!disbursementDate || !repaymentStartDate) return;
+    setSubmitting(true);
+    try {
+      const ok = await onApprove(loan, { disbursementDate, repaymentStartDate });
+      if (ok) onOpenChange(false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Approve loan edit</DialogTitle>
+          <DialogDescription>
+            Confirm principal and product from the officer request. You can set disbursement and repayment-start dates here
+            (e.g. use today if the request waited and the officer&apos;s dates are no longer valid).
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-4 py-2">
+          <div className="space-y-2">
+            <Label>Disbursement date</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn('w-full justify-start text-left font-normal', !disbursementDate && 'text-muted-foreground')}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {disbursementDate
+                    ? formatTZ(disbursementDate, 'PPP', { timeZone: EAT_TIMEZONE })
+                    : 'Pick a date'}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={disbursementDate}
+                  onSelect={(d) => setDisbursementDate(d)}
+                  disabled={managerApproveDisabledDays}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+          <div className="space-y-2">
+            <Label>Repayment start date</Label>
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={cn('w-full justify-start text-left font-normal', !repaymentStartDate && 'text-muted-foreground')}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {repaymentStartDate
+                    ? formatTZ(repaymentStartDate, 'PPP', { timeZone: EAT_TIMEZONE })
+                    : 'Pick a date'}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={repaymentStartDate}
+                  onSelect={(d) => setRepaymentStartDate(d)}
+                  disabled={managerApproveDisabledDays}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={submitting || !disbursementDate || !repaymentStartDate} onClick={handleConfirm}>
+            {submitting ? 'Applying…' : 'Approve & apply'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const LoanRequests = () => {
   const { user } = useAuth();
@@ -38,6 +166,7 @@ const LoanRequests = () => {
   const [loanIncreaseHistory, setLoanIncreaseHistory] = useState([]);
   const [historyPage, setHistoryPage] = useState(1);
   const [resolvingId, setResolvingId] = useState(null);
+  const [editApproveLoan, setEditApproveLoan] = useState(null);
 
   const fetchData = useCallback(async () => {
     if (!user || profileLoading) return;
@@ -245,13 +374,13 @@ const LoanRequests = () => {
     }
   };
 
-  const handleApproveEdit = async (loan) => {
+  const handleApproveEdit = async (loan, dateOverrides) => {
     const { edit_request } = loan;
     const product = loanProducts.find(p => p.id === edit_request.productId);
     
     if (!product) {
         toast({ title: 'Error', description: 'Loan product for the edit not found.', variant: 'destructive' });
-        return;
+        return false;
     }
 
     const principal = parseFloat(edit_request.principal);
@@ -268,11 +397,14 @@ const LoanRequests = () => {
     const paidTowardsOriginalInterest = paidAmount - paidTowardsOriginalPrincipal;
     const newOutstandingInterest = Math.max(0, interest - paidTowardsOriginalInterest);
 
-    const formattedRepaymentStartDate = formatTZ(toZonedTime(edit_request.repaymentStartDate, EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
+    const disbursementSource = dateOverrides?.disbursementDate ?? edit_request.disbursementDate;
+    const repaymentSource = dateOverrides?.repaymentStartDate ?? edit_request.repaymentStartDate;
+
+    const formattedRepaymentStartDate = formatTZ(toZonedTime(repaymentSource, EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
 
     const updatedLoan = {
       product_id: edit_request.productId,
-      disbursement_date: formatTZ(toZonedTime(edit_request.disbursementDate, EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
+      disbursement_date: formatTZ(toZonedTime(disbursementSource, EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
       repayment_start_date: formattedRepaymentStartDate,
       principal: principal,
       interest_rate: product.interest_rate,
@@ -302,13 +434,13 @@ const LoanRequests = () => {
         description: 'Generated repayment schedule is empty. Check loan period, frequency, and repayment start date.',
         variant: 'destructive',
       });
-      return;
+      return false;
     }
 
     const { error } = await supabase.from('loans').update(updatedLoan).eq('id', loan.id);
     if (error) {
         toast({ title: 'Error', description: error.message, variant: 'destructive' });
-        return;
+        return false;
     }
 
     const { error: recalcErr } = await recalculateLoanScheduleWithRetry(supabase, loan.id);
@@ -319,11 +451,12 @@ const LoanRequests = () => {
         variant: 'default',
       });
       fetchData();
-      return;
+      return true;
     }
 
     fetchData();
     toast({ title: 'Success', description: 'Loan edit approved and updated.' });
+    return true;
   };
 
   const handleResolveAttendanceException = async (requestId, approve) => {
@@ -501,13 +634,9 @@ const LoanRequests = () => {
                             </AlertDialog>
                           )}
                            {loan.status === 'edit_requested' && (
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild><Button size="sm" variant="outline"><CheckCircle className="mr-2 h-4 w-4" /> Approve</Button></AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader><AlertDialogTitle>Approve Loan Edit?</AlertDialogTitle><AlertDialogDescription>This will apply the requested changes to the loan.</AlertDialogDescription></AlertDialogHeader>
-                                <AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction onClick={() => handleApproveEdit(loan)}>Yes, Approve</AlertDialogAction></AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                            <Button size="sm" variant="outline" onClick={() => setEditApproveLoan(loan)}>
+                              <CheckCircle className="mr-2 h-4 w-4" /> Approve
+                            </Button>
                           )}
                           <AlertDialog>
                             <AlertDialogTrigger asChild><Button size="sm" variant="destructive"><XCircle className="mr-2 h-4 w-4" /> Reject</Button></AlertDialogTrigger>
@@ -746,6 +875,15 @@ const LoanRequests = () => {
           </TabsContent>
         </Tabs>
       </div>
+      <ManagerApproveLoanEditDialog
+        loan={editApproveLoan}
+        open={Boolean(editApproveLoan)}
+        onOpenChange={(o) => {
+          if (!o) setEditApproveLoan(null);
+        }}
+        holidays={holidays}
+        onApprove={handleApproveEdit}
+      />
     </DashboardLayout>
   );
 };

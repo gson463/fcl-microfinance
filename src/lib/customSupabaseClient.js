@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { formatApiErrorValue } from './formatApiError.js';
 
 /**
  * Point to any Supabase project via .env (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY).
@@ -42,11 +43,11 @@ function messageFromFunctionsErrorBody(parsed) {
 		return null;
 	}
 	if (parsed.error != null) {
-		return String(parsed.error);
+		return formatApiErrorValue(parsed.error);
 	}
 	// Gateway often returns { code: 401, message: "Invalid JWT" }
 	if (parsed.message != null) {
-		return String(parsed.message);
+		return formatApiErrorValue(parsed.message);
 	}
 	return null;
 }

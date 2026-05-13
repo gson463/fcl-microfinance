@@ -45,6 +45,15 @@ const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
 
+function parseProposedPrincipal(raw) {
+	const s = String(raw ?? '')
+		.trim()
+		.replace(/,/g, '');
+	if (!s) return null;
+	const p = parseFloat(s);
+	return Number.isFinite(p) && p > 0 ? p : null;
+}
+
 /** Native <select> avoids Popover+Dialog focus/pointer issues (same as Admin → Add User → Assign Branch). */
 const NATIVE_SELECT_DIALOG =
   'flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
@@ -318,8 +327,12 @@ const LoanManagement = () => {
         }
         let cancelled = false;
         setIncreaseEligibilityLoading(true);
+        const proposed = parseProposedPrincipal(formData.principal);
         supabase
-            .rpc('borrower_loan_increase_eligibility', { p_borrower_id: formData.borrowerId })
+            .rpc('borrower_loan_increase_eligibility', {
+                p_borrower_id: formData.borrowerId,
+                p_proposed_principal: proposed,
+            })
             .then(({ data, error }) => {
                 if (cancelled) return;
                 setIncreaseEligibilityLoading(false);
@@ -332,7 +345,7 @@ const LoanManagement = () => {
         return () => {
             cancelled = true;
         };
-    }, [formData.borrowerId]);
+    }, [formData.borrowerId, formData.principal]);
 
 
     const filteredLoans = useMemo(() => {
@@ -450,6 +463,7 @@ const LoanManagement = () => {
 
             const { data: elCheck, error: elErr } = await supabase.rpc('borrower_loan_increase_eligibility', {
                 p_borrower_id: borrowerId,
+                p_proposed_principal: principalAmount,
             });
             if (elErr) {
                 toast({
@@ -759,6 +773,11 @@ const LoanManagement = () => {
                         skippedLoans.push({ ...row, reason: 'Missing or invalid data' });
                         continue;
                     }
+                    const principalAmount = parseFloat(row.principal);
+                    if (!Number.isFinite(principalAmount) || principalAmount <= 0) {
+                        skippedLoans.push({ ...row, reason: 'Missing or invalid data' });
+                        continue;
+                    }
                     if (!isWorkingDay(disbursementDate) || !isWorkingDay(repaymentStartDate)) {
                         skippedLoans.push({ ...row, reason: 'Disbursement or Repayment Start Date is not a working day' });
                         continue;
@@ -769,6 +788,7 @@ const LoanManagement = () => {
                     }
                     const { data: importEligibility, error: importElErr } = await supabase.rpc('borrower_loan_increase_eligibility', {
                         p_borrower_id: borrower.id,
+                        p_proposed_principal: principalAmount,
                     });
                     if (importElErr || (importEligibility && importEligibility.may_disburse_new_loan === false)) {
                         skippedLoans.push({
@@ -777,7 +797,6 @@ const LoanManagement = () => {
                         });
                         continue;
                     }
-                    const principalAmount = parseFloat(row.principal);
                     let balanceBeforeImport;
                     if (importRunningBalanceByDate.has(disbursementDate)) {
                         balanceBeforeImport = importRunningBalanceByDate.get(disbursementDate);
@@ -973,8 +992,10 @@ const LoanManagement = () => {
             });
             setAttendanceExceptionNotes('');
             setIncreaseEligibilityLoading(true);
+            const proposed = parseProposedPrincipal(formData.principal);
             const { data: fresh } = await supabase.rpc('borrower_loan_increase_eligibility', {
                 p_borrower_id: formData.borrowerId,
+                p_proposed_principal: proposed,
             });
             setIncreaseEligibility(fresh);
         } finally {

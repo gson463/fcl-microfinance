@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { formatApiErrorValue } from '@/lib/formatApiError';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -373,14 +374,14 @@ const GroupRepayment = () => {
 
             const bodyError =
                 data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
-                    ? String(data.error)
+                    ? formatApiErrorValue(data.error)
                     : null;
             const httpMsg =
                 error?.context && typeof error.context === 'object' && error.context.body
                     ? (() => {
                           try {
                               const j = JSON.parse(String(error.context.body));
-                              return j?.error ? String(j.error) : null;
+                              return j?.error != null ? formatApiErrorValue(j.error) : null;
                           } catch {
                               return null;
                           }
