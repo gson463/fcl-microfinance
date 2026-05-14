@@ -170,7 +170,19 @@ const RepaymentManagement = () => {
         if (!user) return;
         setLoading(true);
         try {
-            await supabase.rpc('update_all_loan_statuses');
+            const { error: scopeStatusErr } = await supabase.rpc('refresh_loan_statuses_for_officer', {
+                p_officer_id: user.id,
+            });
+            if (scopeStatusErr) {
+                const legacy =
+                    /does not exist|42883|refresh_loan_statuses_for_officer/i.test(String(scopeStatusErr.message ?? '')) ||
+                    String(scopeStatusErr.message ?? '').includes('refresh_loan_statuses_for_officer');
+                if (legacy) {
+                    await supabase.rpc('update_all_loan_statuses');
+                } else {
+                    throw scopeStatusErr;
+                }
+            }
             const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
             if (config) setCurrency(config.value);
 
@@ -478,7 +490,14 @@ const RepaymentManagement = () => {
             });
             if (prepErr) throw prepErr;
 
-            await supabase.rpc('update_all_loan_statuses');
+            const { error: stErr } = await supabase.rpc('refresh_loan_status_for_id', {
+                p_loan_id: currentRepayment.loan_id,
+            });
+            if (stErr) throw stErr;
+            const { error: syncErr } = await supabase.rpc('sync_borrower_paid_up_for', {
+                p_borrower_id: currentRepayment.borrower_id,
+            });
+            if (syncErr) throw syncErr;
 
             toast({ title: 'Success', description: 'Repayment updated successfully.' });
             setEditDialogOpen(false);
@@ -495,8 +514,13 @@ const RepaymentManagement = () => {
         try {
             // Force recalculation to ensure any pending edits/payments are processed
             await supabase.rpc('recalculate_loan_schedule', { p_loan_id: loan.id });
-            await supabase.rpc('update_all_loan_statuses');
-            
+            const { error: stErr } = await supabase.rpc('refresh_loan_status_for_id', { p_loan_id: loan.id });
+            if (stErr) throw stErr;
+            const { error: syncErr } = await supabase.rpc('sync_borrower_paid_up_for', {
+                p_borrower_id: loan.borrower_id,
+            });
+            if (syncErr) throw syncErr;
+
             // Fetch fresh data explicitly for the dialog
             const { data: latestLoanData, error } = await supabase
                 .from('loans')
