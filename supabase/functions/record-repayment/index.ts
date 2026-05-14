@@ -278,8 +278,23 @@ Deno.serve(async (req: Request) => {
       if (rpc1) throw rpc1;
     }
 
-    const { error: rpc2 } = await supabaseAdmin.rpc("update_all_loan_statuses");
-    if (rpc2) throw rpc2;
+    const { error: statusErr } = await supabaseAdmin.rpc("refresh_loan_status_for_id", {
+      p_loan_id: loan_id,
+    });
+    if (statusErr) {
+      const msg = String(statusErr.message ?? "");
+      const refreshMissing =
+        /does not exist|42883|refresh_loan_status_for_id/i.test(msg) ||
+        msg.includes("refresh_loan_status_for_id");
+      if (!refreshMissing) throw statusErr;
+      const { error: legacyErr } = await supabaseAdmin.rpc("update_all_loan_statuses");
+      if (legacyErr) throw legacyErr;
+    } else {
+      const { error: syncErr } = await supabaseAdmin.rpc("sync_borrower_paid_up_for", {
+        p_borrower_id: loan.borrower_id,
+      });
+      if (syncErr) throw syncErr;
+    }
 
     scheduleRepaymentAudit(supabaseAdmin, req, {
       officer_id,
