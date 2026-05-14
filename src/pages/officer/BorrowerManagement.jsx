@@ -48,7 +48,7 @@ const OFFICER_BORROWER_STATUS_FILTER_OPTIONS = [
 	{ value: 'pending', label: 'Pending re-loan (manager)' },
 	{ value: 'active_loan', label: 'Active Loan' },
 	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid Up' },
+	{ value: 'paid_up', label: 'Paid' },
 ];
 
 const PAGE_SIZE = 25;
@@ -835,7 +835,7 @@ const BorrowerManagement = () => {
             'pending': 'Pending — re-loan approval',
             'active_loan': 'Active Loan',
             'defaulted': 'Defaulted',
-            'paid_up': 'Paid Up',
+            'paid_up': 'Paid',
         };
         return statusTextMap[status] || status;
     };
@@ -1204,7 +1204,7 @@ const BorrowerManagement = () => {
                     <StatCard title="Total Borrowers" value={stats.total} icon={Users} color="text-blue-600" />
                     <StatCard title="Active Loans" value={stats.active} icon={UserCheck} color="text-yellow-600" />
                     <StatCard title="Eligible" value={stats.eligible} icon={UserPlusIcon} color="text-green-600" />
-                    <StatCard title="Paid up" value={stats.paidUp} icon={CheckCircle2} color="text-emerald-700" />
+                    <StatCard title="Paid" value={stats.paidUp} icon={CheckCircle2} color="text-emerald-700" />
                     <StatCard title="Pending re-loan approval" value={stats.pending} icon={Clock} color="text-slate-500" />
                     <StatCard title="Defaulted" value={stats.defaulted} icon={UserX} color="text-red-600" />
                 </div>

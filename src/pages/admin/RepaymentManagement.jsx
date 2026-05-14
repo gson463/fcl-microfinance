@@ -35,7 +35,7 @@ const BORROWER_STATUS_FILTER_OPTIONS = [
 	{ value: 'pending', label: 'Pending re-loan (manager)' },
 	{ value: 'active_loan', label: 'Active loan' },
 	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid up' },
+	{ value: 'paid_up', label: 'Paid' },
 ];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (

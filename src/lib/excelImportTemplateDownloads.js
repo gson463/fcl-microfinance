@@ -309,7 +309,7 @@ export async function downloadLoansImportTemplate({ validBorrowers, loanProducts
     'Loans bulk import (officer)',
     '',
     'Sheet "Loans Import" — columns (required):',
-    'borrower_id — from Valid Borrowers (eligible / paid up, no outstanding loan).',
+    'borrower_id — from Valid Borrowers (eligible / paid, no outstanding loan).',
     'loan_product_name — dropdown matches Valid Loan Products (import is case-insensitive).',
     'principal — number only.',
     'disbursement_date — YYYY-MM-DD; working day.',

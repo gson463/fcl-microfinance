@@ -120,7 +120,7 @@ const AdminBorrowerManagement = () => {
             'active': 'Active',
             'active_loan': 'Active Loan',
             'defaulted': 'Defaulted',
-            'paid_up': 'Paid Up',
+            'paid_up': 'Paid',
         };
         return statusTextMap[status] || status;
     };
@@ -180,7 +180,7 @@ const AdminBorrowerManagement = () => {
                                     <SelectItem value="active">Active</SelectItem>
                                     <SelectItem value="active_loan">Active Loan</SelectItem>
                                     <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    <SelectItem value="paid_up">Paid Up</SelectItem>
+                                    <SelectItem value="paid_up">Paid</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>
@@ -283,7 +283,7 @@ const AdminBorrowerManagement = () => {
                                     <SelectItem value="active">Active</SelectItem>
                                     <SelectItem value="active_loan">Active Loan</SelectItem>
                                     <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    <SelectItem value="paid_up">Paid Up</SelectItem>
+                                    <SelectItem value="paid_up">Paid</SelectItem>
                                 </SelectContent>
                             </Select>
                         </div>

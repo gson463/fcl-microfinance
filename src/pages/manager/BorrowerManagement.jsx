@@ -27,7 +27,7 @@ const MANAGER_BORROWER_STATUS_OPTIONS = [
 	{ value: 'active', label: 'Active' },
 	{ value: 'active_loan', label: 'Active Loan' },
 	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid Up' },
+	{ value: 'paid_up', label: 'Paid' },
 ];
 
 const ManagerBorrowerManagement = () => {
@@ -131,7 +131,7 @@ const ManagerBorrowerManagement = () => {
     if (selectedIds.length === 0) {
       toast({
         title: 'No eligible selection',
-        description: 'Select borrowers whose status is “Paid Up” only — they can be marked Eligible.',
+        description: 'Select borrowers whose status is “Paid” only — they can be marked Eligible.',
         variant: 'destructive',
       });
       return;
@@ -165,7 +165,7 @@ const ManagerBorrowerManagement = () => {
       active: 'Active',
       active_loan: 'Active Loan',
       defaulted: 'Defaulted',
-      paid_up: 'Paid Up',
+      paid_up: 'Paid',
     };
     return statusTextMap[status] || status;
   };
@@ -254,7 +254,7 @@ const ManagerBorrowerManagement = () => {
             <div className="mb-4 flex flex-wrap gap-2">
               <Button type="button" variant="secondary" onClick={handleMarkAsEligible}>
                 <CheckCircle className="mr-2 h-4 w-4" />
-                Mark selected as Eligible (Paid Up only)
+                Mark selected as Eligible (Paid only)
               </Button>
             </div>
           )}
@@ -356,7 +356,7 @@ const ManagerBorrowerManagement = () => {
                   <SelectItem value="active">Active</SelectItem>
                   <SelectItem value="active_loan">Active Loan</SelectItem>
                   <SelectItem value="defaulted">Defaulted</SelectItem>
-                  <SelectItem value="paid_up">Paid Up</SelectItem>
+                  <SelectItem value="paid_up">Paid</SelectItem>
                 </SelectContent>
               </Select>
             </div>

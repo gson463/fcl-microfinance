@@ -6,7 +6,7 @@ export function borrowerStatusLabel(status) {
 		pending: 'Pending — re-loan approval',
 		active_loan: 'Active loan',
 		defaulted: 'Defaulted',
-		paid_up: 'Paid up',
+		paid_up: 'Paid',
 	};
 	return map[status] || status || '—';
 }

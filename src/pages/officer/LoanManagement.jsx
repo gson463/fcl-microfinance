@@ -691,7 +691,7 @@ const LoanManagement = () => {
             toast({
                 title: 'No eligible borrowers',
                 description:
-                    'You need at least one borrower with status Eligible or Paid up and no outstanding loan before downloading this template.',
+                    'You need at least one borrower with status Eligible or Paid and no outstanding loan before downloading this template.',
                 variant: 'destructive',
             });
             return;

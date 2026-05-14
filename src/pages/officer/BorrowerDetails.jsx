@@ -258,7 +258,7 @@ const BorrowerDetails = () => {
       pending: 'Pending (manager approval)',
       active_loan: 'Active Loan',
       defaulted: 'Defaulted',
-      paid_up: 'Paid Up',
+      paid_up: 'Paid',
     };
     return statusTextMap[status] || status;
   };
