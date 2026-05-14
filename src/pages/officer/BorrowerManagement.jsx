@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { useToast } from '@/components/ui/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
-import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock, Building2, CheckCircle2 } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Eye, Download, Upload, Users, UserCheck, UserX, UserPlus as UserPlusIcon, Loader2, FileSpreadsheet, ChevronLeft, ChevronRight, Clock, Building2 } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import * as XLSX from 'xlsx';
@@ -42,9 +42,14 @@ import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerL
 import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 import { logAudit } from '@/lib/auditLog';
-import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 
 const PAGE_SIZE = 25;
+
+/** Status filter on this page: only the two statuses officers focus on here. */
+const OFFICER_BORROWER_PAGE_STATUS_FILTER_OPTIONS = [
+    { value: 'active_loan', label: 'Active loan' },
+    { value: 'eligible', label: 'Eligible' },
+];
 
 function FieldRequired() {
     return <span className="text-destructive ml-0.5" aria-hidden>*</span>;
@@ -379,9 +384,7 @@ const BorrowerManagement = () => {
         return {
             total: borrowers.length,
             active: borrowers.filter(b => b.status === 'active_loan').length,
-            /** Status column = "eligible" only (not paid_up — use paidUp stat). */
             eligible: borrowers.filter(b => b.status === 'eligible').length,
-            paidUp: borrowers.filter(b => b.status === 'paid_up').length,
             pending: borrowers.filter(b => b.status === 'pending').length,
             defaulted: borrowers.filter(b => b.status === 'defaulted').length,
         };
@@ -1193,11 +1196,10 @@ const BorrowerManagement = () => {
                         </Dialog>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                     <StatCard title="Total Borrowers" value={stats.total} icon={Users} color="text-blue-600" />
                     <StatCard title="Active Loans" value={stats.active} icon={UserCheck} color="text-yellow-600" />
                     <StatCard title="Eligible" value={stats.eligible} icon={UserPlusIcon} color="text-green-600" />
-                    <StatCard title="Paid" value={stats.paidUp} icon={CheckCircle2} color="text-emerald-700" />
                     <StatCard title="Pending re-loan approval" value={stats.pending} icon={Clock} color="text-slate-500" />
                     <StatCard title="Defaulted" value={stats.defaulted} icon={UserX} color="text-red-600" />
                 </div>
@@ -1237,7 +1239,7 @@ const BorrowerManagement = () => {
                                 <SearchableSelect
                                     value={statusFilter}
                                     onValueChange={setStatusFilter}
-                                    options={BORROWER_STATUS_FILTER_OPTIONS}
+                                    options={OFFICER_BORROWER_PAGE_STATUS_FILTER_OPTIONS}
                                     allLabel="All Statuses"
                                     allValue="all"
                                     placeholder="Filter by Status"
