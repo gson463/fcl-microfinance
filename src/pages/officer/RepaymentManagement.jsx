@@ -682,15 +682,9 @@ const RepaymentManagement = () => {
                 return false;
             }
 
-            const w = data && typeof data === 'object' && data !== null && 'wallet' in data ? data.wallet : null;
-            const walletLine =
-                w && typeof w === 'object'
-                    ? ` On DB table repayments (before schedule spread): scheduled bucket ${currency} ${Number(w.scheduled_due_snapshot ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}, prepayment ${currency} ${Number(w.prepayment_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
-                    : '';
-
             toast({
                 title: 'Success',
-                description: (successDescription ?? 'Collection recorded successfully!') + walletLine,
+                description: successDescription ?? 'Collection recorded successfully!',
             });
             await fetchData();
             if (closeDialog) {
