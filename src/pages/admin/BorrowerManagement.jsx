@@ -15,6 +15,11 @@ import { Button } from '@/components/ui/button';
 import { Edit, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import {
+    BORROWER_STATUS_FILTER_OPTIONS,
+    borrowerStatusLabel,
+    borrowerStatusBadgeVariant,
+} from '@/lib/domainStatuses';
 
 const PAGE_SIZE = 25;
 
@@ -101,30 +106,6 @@ const AdminBorrowerManagement = () => {
         }
     };
     
-    const getLoanStatusBadge = (status) => {
-        const statusMap = {
-            'eligible': 'success',
-            'pending': 'secondary',
-            'active': 'default',
-            'active_loan': 'warning',
-            'defaulted': 'destructive',
-            'paid_up': 'default',
-        };
-        return statusMap[status] || 'secondary';
-    };
-
-    const getStatusText = (status) => {
-        const statusTextMap = {
-            'eligible': 'Eligible',
-            'pending': 'Pending',
-            'active': 'Active',
-            'active_loan': 'Active Loan',
-            'defaulted': 'Defaulted',
-            'paid_up': 'Paid',
-        };
-        return statusTextMap[status] || status;
-    };
-
     const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
     const pagedBorrowerIds = useMemo(() => borrowers.map((b) => b.id), [borrowers]);
@@ -175,12 +156,11 @@ const AdminBorrowerManagement = () => {
                                 <SelectTrigger className="w-full md:w-[180px]"><SelectValue placeholder="Filter by Status" /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="all">All Statuses</SelectItem>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="eligible">Eligible</SelectItem>
-                                    <SelectItem value="active">Active</SelectItem>
-                                    <SelectItem value="active_loan">Active Loan</SelectItem>
-                                    <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    <SelectItem value="paid_up">Paid</SelectItem>
+                                    {BORROWER_STATUS_FILTER_OPTIONS.map((o) => (
+                                        <SelectItem key={o.value} value={o.value}>
+                                            {o.label}
+                                        </SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>
@@ -229,7 +209,7 @@ const AdminBorrowerManagement = () => {
                                     <TableCell>{b.first_name} {b.surname}</TableCell>
                                     <TableCell>{b.branches?.name || 'N/A'}</TableCell>
                                     <TableCell>{b.users?.full_name || 'N/A'}</TableCell>
-                                    <TableCell><Badge variant={getLoanStatusBadge(b.status)}>{getStatusText(b.status)}</Badge></TableCell>
+                                    <TableCell><Badge variant={borrowerStatusBadgeVariant(b.status)}>{borrowerStatusLabel(b.status)}</Badge></TableCell>
                                     <TableCell>
                                         <Button variant="outline" size="icon" onClick={() => handleEditStatus(b)}>
                                             <Edit className="h-4 w-4" />
@@ -278,12 +258,11 @@ const AdminBorrowerManagement = () => {
                                     <SelectValue placeholder="Select a status" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="eligible">Eligible</SelectItem>
-                                    <SelectItem value="active">Active</SelectItem>
-                                    <SelectItem value="active_loan">Active Loan</SelectItem>
-                                    <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    <SelectItem value="paid_up">Paid</SelectItem>
+                                    {BORROWER_STATUS_FILTER_OPTIONS.map((o) => (
+                                        <SelectItem key={o.value} value={o.value}>
+                                            {o.label}
+                                        </SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>

@@ -42,14 +42,7 @@ import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerL
 import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 import { logAudit } from '@/lib/auditLog';
-
-const OFFICER_BORROWER_STATUS_FILTER_OPTIONS = [
-	{ value: 'eligible', label: 'Eligible' },
-	{ value: 'pending', label: 'Pending re-loan (manager)' },
-	{ value: 'active_loan', label: 'Active Loan' },
-	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid' },
-];
+import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 
 const PAGE_SIZE = 25;
 
@@ -1244,7 +1237,7 @@ const BorrowerManagement = () => {
                                 <SearchableSelect
                                     value={statusFilter}
                                     onValueChange={setStatusFilter}
-                                    options={OFFICER_BORROWER_STATUS_FILTER_OPTIONS}
+                                    options={BORROWER_STATUS_FILTER_OPTIONS}
                                     allLabel="All Statuses"
                                     allValue="all"
                                     placeholder="Filter by Status"

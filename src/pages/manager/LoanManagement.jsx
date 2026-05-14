@@ -22,18 +22,12 @@ import { Eye, Briefcase, DollarSign, AlertTriangle, Calendar as CalendarIconLuci
 import { Badge } from '@/components/ui/badge';
 import { toZonedTime, format as formatTZ } from 'date-fns-tz';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import { LOAN_STATUS_FILTER_OPTIONS, loanStatusLabel, loanStatusBadgeVariant } from '@/lib/domainStatuses';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
-
-const LOAN_STATUS_FILTER_OPTIONS = [
-	{ value: 'active', label: 'Active' },
-	{ value: 'paid', label: 'Paid' },
-	{ value: 'delinquent', label: 'Delinquent' },
-	{ value: 'defaulted', label: 'Defaulted' },
-];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -264,8 +258,6 @@ const ManagerLoanManagement = () => {
         }
     };
 
-    const getStatusBadge = (status) => ({ active: 'success', paid: 'default', delinquent: 'warning', defaulted: 'destructive', delete_requested: 'secondary', edit_requested: 'secondary' }[status] || 'secondary');
-    
     if (loading) return <DashboardLayout title="Loans & Disbursements"><div className="flex items-center justify-center h-full">Loading...</div></DashboardLayout>;
 
     return (
@@ -379,7 +371,7 @@ const ManagerLoanManagement = () => {
                                         <TableCell>{currency} {Number(l.principal).toLocaleString()}</TableCell>
                                         <TableCell>{currency} {Number(l.balance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                                         <TableCell>{formatTZ(toZonedTime(new Date(l.disbursement_date), EAT_TIMEZONE), 'MMM dd, yyyy', { timeZone: EAT_TIMEZONE })}</TableCell>
-                                        <TableCell><Badge variant={getStatusBadge(l.status)}>{l.status.replace(/_/g, ' ')}</Badge></TableCell>
+                                        <TableCell><Badge variant={loanStatusBadgeVariant(l.status)}>{loanStatusLabel(l.status)}</Badge></TableCell>
                                         <TableCell>
                                             <Button variant="outline" size="sm" onClick={() => viewSchedule(l)} className="flex items-center gap-2">
                                                 {isRefreshingSchedule && selectedLoan?.id === l.id ? <Loader2 className="h-4 w-4 animate-spin"/> : <Eye className="h-4 w-4"/>}

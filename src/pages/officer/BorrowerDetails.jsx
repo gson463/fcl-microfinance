@@ -19,6 +19,8 @@ import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { DEFAULT_SYSTEM_NAME } from '@/lib/brand';
 import { borrowerPublicId } from '@/lib/borrowerPublicId';
+import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
+import { loanStatusBadgeVariant } from '@/lib/domainStatuses';
 
 const DetailItem = ({ label, value, isBadge = false, badgeVariant = 'default' }) => (
     <div className="flex justify-between py-2 border-b">
@@ -236,33 +238,10 @@ const BorrowerDetails = () => {
     setScheduleDialogOpen(true);
   };
 
-  const getLoanStatusBadge = (status) => {
-      const statusMap = { 'active': 'success', 'paid': 'default', 'delinquent': 'warning', 'defaulted': 'destructive' };
-      return statusMap[status] || 'secondary';
-  };
+  const getLoanStatusBadge = loanStatusBadgeVariant;
+  const getBorrowerStatusBadge = borrowerStatusBadgeVariant;
+  const getBorrowerStatusText = borrowerStatusLabel;
 
-  const getBorrowerStatusBadge = (status) => {
-    const statusMap = {
-      eligible: 'default',
-      pending: 'secondary',
-      active_loan: 'default',
-      defaulted: 'destructive',
-      paid_up: 'outline',
-    };
-    return statusMap[status] || 'secondary';
-  };
-
-  const getBorrowerStatusText = (status) => {
-    const statusTextMap = {
-      eligible: 'Eligible',
-      pending: 'Pending (manager approval)',
-      active_loan: 'Active Loan',
-      defaulted: 'Defaulted',
-      paid_up: 'Paid',
-    };
-    return statusTextMap[status] || status;
-  };
-  
   if (loading) {
     return (
       <DashboardLayout title="Loading..."><div className="text-center">Loading borrower details...</div></DashboardLayout>

@@ -27,18 +27,11 @@ import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
 import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
+import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
-
-const BORROWER_STATUS_FILTER_OPTIONS = [
-	{ value: 'eligible', label: 'Eligible' },
-	{ value: 'pending', label: 'Pending re-loan (manager)' },
-	{ value: 'active_loan', label: 'Active loan' },
-	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid' },
-];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>

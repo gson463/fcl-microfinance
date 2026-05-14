@@ -17,18 +17,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isRepaymentInReportsRange, repaymentReportDateYyyyMmDd } from '@/lib/repaymentReportDate';
 import { useUserProfileScope, fetchOfficerIdsForBranch } from '@/hooks/useUserProfileScope';
 import { prepaymentAmount, scheduledCollectionAmount } from '@/lib/repaymentPrepayment';
+import { LOAN_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 
 const REPAYMENT_REPORT_SELECT =
     '*, loans(id, borrower_id, loan_id, product_id, status, borrowers(*, groups(*)))';
-
-const REPORT_STATUS_OPTIONS = [
-    { value: 'pending', label: 'Pending' },
-    { value: 'active', label: 'Active' },
-    { value: 'paid', label: 'Paid' },
-    { value: 'delinquent', label: 'Delinquent' },
-    { value: 'defaulted', label: 'Defaulted' },
-    { value: 'rejected', label: 'Rejected' },
-];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
   <Card>
@@ -668,7 +660,7 @@ const Reports = () => {
                             <SearchableSelect
                                 value={selectedStatus}
                                 onValueChange={setSelectedStatus}
-                                options={REPORT_STATUS_OPTIONS}
+                                options={LOAN_STATUS_FILTER_OPTIONS}
                                 allLabel="All statuses"
                                 allValue="all"
                                 placeholder="Loan status"

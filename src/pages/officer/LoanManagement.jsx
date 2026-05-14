@@ -32,6 +32,7 @@ import { format as formatDate, parseISO } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerLocationFilter';
+import { LOAN_STATUS_FILTER_OPTIONS, loanStatusLabel, loanStatusBadgeVariant } from '@/lib/domainStatuses';
 import { checkDisbursementAgainstFieldWallet } from '@/lib/officerFieldWalletDisburse';
 import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
 import { getImportDataSheet, formatImportReportSummary } from '@/lib/bulkImportExcel';
@@ -59,15 +60,6 @@ const NATIVE_SELECT_DIALOG =
   'flex h-11 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
 const NATIVE_SELECT_FILTER =
   'flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
-
-const OFFICER_LOAN_STATUS_FILTER_OPTIONS = [
-	{ value: 'active', label: 'Active' },
-	{ value: 'paid', label: 'Paid' },
-	{ value: 'delinquent', label: 'Delinquent' },
-	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'edit_requested', label: 'Edit Requested' },
-	{ value: 'delete_requested', label: 'Delete Requested' },
-];
 
 /** Settled / closed loans that do not block choosing this borrower for a new disbursement. */
 function loanDoesNotBlockNewDisburse(l) {
@@ -910,8 +902,6 @@ const LoanManagement = () => {
         }
     };
 
-    const getStatusBadge = (status) => ({ active: 'success', paid: 'default', delinquent: 'warning', defaulted: 'destructive', delete_requested: 'secondary', edit_requested: 'secondary' }[status] || 'secondary');
-    
     // Disbursement: only borrowers marked eligible/paid_up and with no unsettled loan (active/delinquent/etc.)
     const eligibleBorrowers = useMemo(
         () =>
@@ -1472,7 +1462,7 @@ const LoanManagement = () => {
                                     aria-label="Filter by status"
                                 >
                                     <option value="all">All statuses</option>
-                                    {OFFICER_LOAN_STATUS_FILTER_OPTIONS.map((o) => (
+                                    {LOAN_STATUS_FILTER_OPTIONS.map((o) => (
                                         <option key={o.value} value={o.value}>
                                             {o.label}
                                         </option>
@@ -1543,7 +1533,7 @@ const LoanManagement = () => {
                                         <TableCell className="text-gray-700 font-medium">{currency} {Number(l.principal).toLocaleString()}</TableCell>
                                         <TableCell className="text-gray-700 font-medium">{currency} {Number(l.balance).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
                                         <TableCell>{formatTZ(toZonedTime(new Date(l.disbursement_date), EAT_TIMEZONE), 'MMM dd, yyyy', { timeZone: EAT_TIMEZONE })}</TableCell>
-                                        <TableCell><Badge variant={getStatusBadge(l.status)} className="capitalize shadow-sm">{l.status.replace(/_/g, ' ')}</Badge></TableCell>
+                                        <TableCell><Badge variant={loanStatusBadgeVariant(l.status)} className="shadow-sm">{loanStatusLabel(l.status)}</Badge></TableCell>
                                         <TableCell className="text-right">
                                             <div className="flex justify-end gap-2">
                                                 <Button variant="ghost" size="icon" onClick={() => viewSchedule(l)} title="View Schedule" className="hover:bg-blue-50 hover:text-blue-600">

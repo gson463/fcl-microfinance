@@ -41,17 +41,11 @@ import {
   regenerateSchedulesForBranchLoans,
   loansEligibleForBranchRegeneration,
 } from '@/lib/loanScheduleRegeneration';
+import { LOAN_STATUS_FILTER_OPTIONS, loanStatusLabel, loanStatusBadgeVariant } from '@/lib/domainStatuses';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
 const PAGE_SIZE = 25;
-
-const LOAN_STATUS_FILTER_OPTIONS = [
-	{ value: 'active', label: 'Active' },
-	{ value: 'paid', label: 'Paid' },
-	{ value: 'delinquent', label: 'Delinquent' },
-	{ value: 'defaulted', label: 'Defaulted' },
-];
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -378,8 +372,6 @@ const AdminLoanManagement = () => {
         }
     };
 
-    const getStatusBadge = (status) => ({ active: 'success', paid: 'default', delinquent: 'warning', defaulted: 'destructive', delete_requested: 'secondary', edit_requested: 'secondary' }[status] || 'secondary');
-
     const eligibleBulkLoans = useMemo(
         () => loansEligibleForBranchRegeneration(loans, bulkBranchId),
         [loans, bulkBranchId]
@@ -637,7 +629,7 @@ const AdminLoanManagement = () => {
                                         <TableCell>{formatTZ(toZonedTime(new Date(l.disbursement_date), EAT_TIMEZONE), 'MMM dd, yyyy', { timeZone: EAT_TIMEZONE })}</TableCell>
                                         <TableCell>
                                             <div className="flex items-center gap-2">
-                                                <Badge variant={getStatusBadge(l.status)}>{l.status.replace(/_/g, ' ')}</Badge>
+                                                <Badge variant={loanStatusBadgeVariant(l.status)}>{loanStatusLabel(l.status)}</Badge>
                                             </div>
                                         </TableCell>
                                         <TableCell>
@@ -767,13 +759,11 @@ const AdminLoanManagement = () => {
                                     <SelectValue placeholder="Select status" />
                                 </SelectTrigger>
                                 <SelectContent>
-                                    <SelectItem value="active">Active</SelectItem>
-                                    <SelectItem value="paid">Paid</SelectItem>
-                                    <SelectItem value="delinquent">Delinquent</SelectItem>
-                                    <SelectItem value="defaulted">Defaulted</SelectItem>
-                                    <SelectItem value="written_off">Written Off</SelectItem>
-                                    <SelectItem value="pending_approval">Pending Approval</SelectItem>
-                                    <SelectItem value="rejected">Rejected</SelectItem>
+                                    {LOAN_STATUS_FILTER_OPTIONS.map((o) => (
+                                        <SelectItem key={o.value} value={o.value}>
+                                            {o.label}
+                                        </SelectItem>
+                                    ))}
                                 </SelectContent>
                             </Select>
                         </div>

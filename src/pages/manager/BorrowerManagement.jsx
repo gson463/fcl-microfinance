@@ -18,17 +18,9 @@ import { Edit, Loader2, ChevronLeft, ChevronRight, CheckCircle } from 'lucide-re
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 
 const PAGE_SIZE = 25;
-
-const MANAGER_BORROWER_STATUS_OPTIONS = [
-	{ value: 'pending', label: 'Pending re-loan (manager)' },
-	{ value: 'eligible', label: 'Eligible' },
-	{ value: 'active', label: 'Active' },
-	{ value: 'active_loan', label: 'Active Loan' },
-	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid' },
-];
 
 const ManagerBorrowerManagement = () => {
   const { user } = useAuth();
@@ -232,7 +224,7 @@ const ManagerBorrowerManagement = () => {
               <SearchableSelect
                 value={statusFilter}
                 onValueChange={setStatusFilter}
-                options={MANAGER_BORROWER_STATUS_OPTIONS}
+                options={BORROWER_STATUS_FILTER_OPTIONS}
                 allLabel="All Statuses"
                 allValue="all"
                 placeholder="Filter by Status"
@@ -351,12 +343,11 @@ const ManagerBorrowerManagement = () => {
                   <SelectValue placeholder="Select a status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="pending">Pending re-loan (manager)</SelectItem>
-                  <SelectItem value="eligible">Eligible</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="active_loan">Active Loan</SelectItem>
-                  <SelectItem value="defaulted">Defaulted</SelectItem>
-                  <SelectItem value="paid_up">Paid</SelectItem>
+                  {BORROWER_STATUS_FILTER_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

@@ -37,6 +37,7 @@ import { isWorkingDayEAT, todayYyyyMmDdEAT } from '@/lib/workingDayEAT';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
+import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -48,15 +49,6 @@ const NATIVE_SELECT_FILTER =
 /** How far back officers may set actual payment date (collections / prepayment). */
 const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
 
-const BORROWER_STATUS_FILTER_OPTIONS = [
-	{ value: 'eligible', label: 'Eligible' },
-	{ value: 'pending', label: 'Pending re-loan (manager)' },
-	{ value: 'active_loan', label: 'Active loan' },
-	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid' },
-];
-
-/** Calendar “today” in Nairobi for date inputs and validation (avoids timezone off-by-one). */
 function getTodayEATDateForForm() {
     const s = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
     const [y, m, d] = s.split('-').map(Number);
