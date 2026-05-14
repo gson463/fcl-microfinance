@@ -222,8 +222,9 @@ Deno.serve(async (req: Request) => {
     const snapSafe = Number.isFinite(snapshotDue) ? snapshotDue : 0;
     const walletSrc = walletSplitExplicit ? "explicit" : "rpc";
 
-    /** Prefer atomic RPC; if missing on DB (old project), fall back to insert + recalculate so prepayment_amount / scheduled_due_snapshot are never left at default NULL/0. */
+    /** Prefer atomic RPC (includes schedule + loan/borrower status in one txn); if missing, fall back to insert + recalculate. */
     let repaymentId: string | null = null;
+    let needsPostInsertStatusRefresh = true;
     const { data: rpcRepaymentId, error: walletRpcErr } = await supabaseAdmin.rpc(
       "record_repayment_wallet_then_recalculate",
       {
@@ -240,6 +241,7 @@ Deno.serve(async (req: Request) => {
 
     if (!walletRpcErr) {
       repaymentId = rpcRepaymentId != null ? String(rpcRepaymentId) : null;
+      needsPostInsertStatusRefresh = false;
     } else {
       const msg = String(walletRpcErr.message ?? "");
       const rpcUnavailable =
@@ -278,22 +280,24 @@ Deno.serve(async (req: Request) => {
       if (rpc1) throw rpc1;
     }
 
-    const { error: statusErr } = await supabaseAdmin.rpc("refresh_loan_status_for_id", {
-      p_loan_id: loan_id,
-    });
-    if (statusErr) {
-      const msg = String(statusErr.message ?? "");
-      const refreshMissing =
-        /does not exist|42883|refresh_loan_status_for_id/i.test(msg) ||
-        msg.includes("refresh_loan_status_for_id");
-      if (!refreshMissing) throw statusErr;
-      const { error: legacyErr } = await supabaseAdmin.rpc("update_all_loan_statuses");
-      if (legacyErr) throw legacyErr;
-    } else {
-      const { error: syncErr } = await supabaseAdmin.rpc("sync_borrower_paid_up_for", {
-        p_borrower_id: loan.borrower_id,
+    if (needsPostInsertStatusRefresh) {
+      const { error: statusErr } = await supabaseAdmin.rpc("refresh_loan_status_for_id", {
+        p_loan_id: loan_id,
       });
-      if (syncErr) throw syncErr;
+      if (statusErr) {
+        const msg = String(statusErr.message ?? "");
+        const refreshMissing =
+          /does not exist|42883|refresh_loan_status_for_id/i.test(msg) ||
+          msg.includes("refresh_loan_status_for_id");
+        if (!refreshMissing) throw statusErr;
+        const { error: legacyErr } = await supabaseAdmin.rpc("update_all_loan_statuses");
+        if (legacyErr) throw legacyErr;
+      } else {
+        const { error: syncErr } = await supabaseAdmin.rpc("sync_borrower_paid_up_for", {
+          p_borrower_id: loan.borrower_id,
+        });
+        if (syncErr) throw syncErr;
+      }
     }
 
     scheduleRepaymentAudit(supabaseAdmin, req, {
