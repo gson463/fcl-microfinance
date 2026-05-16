@@ -23,6 +23,7 @@ import {
 } from '@/lib/repaymentInstallmentUnit.js';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
+import { isWorkingDayEAT } from '@/lib/workingDayEAT';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -39,24 +40,9 @@ const ArrearsManagement = () => {
     const [selectedLoans, setSelectedLoans] = useState([]);
     const [currency, setCurrency] = useState('TZS');
     const { currentDate } = useDate();
-    const [holidays, setHolidays] = useState([]);
     const [page, setPage] = useState(1);
     const [walletPrepaymentSplitMode, setWalletPrepaymentSplitMode] = useState(WALLET_PREPAYMENT_ARREARS_ONLY);
-
-    useEffect(() => {
-        const fetchHolidays = async () => {
-            const { data } = await supabase.from('holidays').select('date');
-            if (data) {
-                setHolidays(data.map(h => h.date));
-            }
-        };
-        fetchHolidays();
-    }, []);
-
-    const isHoliday = (dateObj) => {
-        const dateStr = formatTZ(toZonedTime(dateObj, EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
-        return holidays.includes(dateStr);
-    };
+    const [holidays, setHolidays] = useState([]);
 
     const fetchArrearsLoans = useCallback(async () => {
         if (!user) return;
@@ -73,6 +59,11 @@ const ArrearsManagement = () => {
             .eq('key', 'walletPrepaymentSplitMode')
             .maybeSingle();
         setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
+
+        const { data: holidaysData, error: holidaysError } = await supabase.from('holidays').select('date');
+        if (!holidaysError) {
+            setHolidays(holidaysData || []);
+        }
 
         // Step 1: Force backend to update statuses based on Today's date
         // This ensures the DB status column is as fresh as possible
@@ -202,12 +193,16 @@ const ArrearsManagement = () => {
     const totalPages = Math.max(1, Math.ceil(filteredLoans.length / PAGE_SIZE));
 
     const handleClearArrears = async (loan) => {
-        if (isHoliday(currentDate)) {
-            toast({ title: 'Action Restricted', description: 'Cannot clear arrears on a public holiday.', variant: 'destructive' });
+        const payStr = formatTZ(currentDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
+        if (!isWorkingDayEAT(payStr, holidays)) {
+            toast({
+                title: 'Non-working day',
+                description:
+                    'Clearing arrears uses the portfolio date as the payment date. Select a working day (Monday–Saturday, not a public holiday) in the date control, or wait until the next working day.',
+                variant: 'destructive',
+            });
             return false;
         }
-
-        const payStr = formatTZ(currentDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
         const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
         const { data: dueRaw, error: dueErr } = await supabase.rpc(dueRpc, {
             p_schedule: loan.schedule ?? null,
@@ -251,11 +246,6 @@ const ArrearsManagement = () => {
     };
     
     const handleBulkClearArrears = async () => {
-        if (isHoliday(currentDate)) {
-            toast({ title: 'Action Restricted', description: 'Cannot clear arrears on a public holiday.', variant: 'destructive' });
-            return;
-        }
-
         setClearingLoanId('bulk');
         let successCount = 0;
         const loansToClear = filteredLoans.filter(l => selectedLoans.includes(l.id));

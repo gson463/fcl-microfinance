@@ -55,11 +55,6 @@ function getTodayEATDateForForm() {
     return new Date(y, m - 1, d);
 }
 
-function isSundayInTimeZone(date, timeZone) {
-    const w = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(date);
-    return w === 'Sunday';
-}
-
 /** Minimum allowed repayment: scheduled due for the date, or a token positive if nothing is due (prepayment-only). */
 function minimumRepaymentForDue(scheduledDue) {
     const d = Number(scheduledDue);
@@ -467,6 +462,14 @@ const RepaymentManagement = () => {
 
     const handleUpdateRepayment = async (e) => {
         e.preventDefault();
+        if (!isWorkingDayEAT(String(editForm.payment_date || '').slice(0, 10), holidays)) {
+            toast({
+                title: 'Invalid date',
+                description: 'Payment date must be a working day (Monday–Saturday, not a public holiday).',
+                variant: 'destructive',
+            });
+            return;
+        }
         setIsSubmitting(true);
         try {
             if (!currentRepayment) throw new Error("No repayment selected for update.");
@@ -591,12 +594,12 @@ const RepaymentManagement = () => {
             });
             return false;
         }
-        if (isSundayInTimeZone(payment_date, EAT_TIMEZONE)) {
-            toast({ title: 'Invalid date', description: 'Repayments are not recorded on Sundays.', variant: 'destructive' });
-            return false;
-        }
-        if (holidays.some((h) => h.date === payStr)) {
-            toast({ title: 'Invalid date', description: 'Repayments are not recorded on public holidays.', variant: 'destructive' });
+        if (!isWorkingDayEAT(payStr, holidays)) {
+            toast({
+                title: 'Invalid date',
+                description: 'Actual payment date must be a working day (Monday–Saturday, not a public holiday).',
+                variant: 'destructive',
+            });
             return false;
         }
 

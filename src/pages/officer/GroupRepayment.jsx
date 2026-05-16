@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, TableFooter } from '@/components/ui/table';
 import { useToast } from '@/components/ui/use-toast';
-import { Coins as HandCoins, Search, Calendar as CalendarIcon, Ban, Loader2, Copy, ArrowDownToLine, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Coins as HandCoins, Search, Calendar as CalendarIcon, Loader2, Copy, ArrowDownToLine, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { format as formatDate, startOfDay, isBefore, isEqual, subDays } from 'date-fns';
@@ -24,10 +24,6 @@ function getTodayEATDateForForm() {
     return new Date(y, m - 1, d);
 }
 
-function isSundayInTimeZone(date, timeZone) {
-    const w = new Intl.DateTimeFormat('en-GB', { weekday: 'long', timeZone }).format(date);
-    return w === 'Sunday';
-}
 import { cn } from '@/lib/utils';
 import {
     getInstallmentUnitFromSchedule,
@@ -37,6 +33,7 @@ import {
     REPAYMENT_AMOUNT_INVALID_FALLBACK,
 } from '@/lib/repaymentInstallmentUnit.js';
 import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
+import { isWorkingDayEAT, latestWorkingDayOnOrBeforeEAT } from '@/lib/workingDayEAT';
 
 const PAGE_SIZE = 25;
 const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
@@ -65,20 +62,12 @@ const GroupRepayment = () => {
     const [repaymentAmounts, setRepaymentAmounts] = useState({});
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedDate, setSelectedDate] = useState(() => getTodayEATDateForForm());
-    const [holidays, setHolidays] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [memberPage, setMemberPage] = useState(1);
     const [walletPrepaymentSplitMode, setWalletPrepaymentSplitMode] = useState(WALLET_PREPAYMENT_ARREARS_ONLY);
+    const [holidays, setHolidays] = useState([]);
 
-    const isHoliday = (date) => {
-        const formattedYYYYMMDD = formatInTimeZone(date, EAT_TIMEZONE, 'yyyy-MM-dd');
-        return holidays.some((h) => h.date === formattedYYYYMMDD);
-    };
-
-    const isForbiddenDate =
-        isSundayInTimeZone(selectedDate, EAT_TIMEZONE) || isHoliday(selectedDate);
-    
     const fetchData = useCallback(async () => {
         if (!user) return;
         setLoading(true);
@@ -93,9 +82,6 @@ const GroupRepayment = () => {
             .maybeSingle();
         setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
 
-        const { data: holidaysData } = await supabase.from('holidays').select('date');
-        setHolidays(holidaysData || []);
-        
         const { data: centersData, error: centersError } = await supabase.from('centers').select('*').eq('loan_officer_id', user.id).order('name');
         if (centersError) {
             toast({ title: 'Error fetching centers', description: centersError.message, variant: 'destructive' });
@@ -110,12 +96,28 @@ const GroupRepayment = () => {
         } else {
             setMyGroups(groupsData || []);
         }
+
+        const { data: holidaysData, error: holidaysError } = await supabase.from('holidays').select('date');
+        if (holidaysError) {
+            toast({ title: 'Error fetching holidays', description: holidaysError.message, variant: 'destructive' });
+            setHolidays([]);
+        } else {
+            setHolidays(holidaysData || []);
+        }
         setLoading(false);
     }, [user, toast]);
     
     useEffect(() => {
         fetchData();
     }, [fetchData]);
+
+    useEffect(() => {
+        setSelectedDate((prev) => {
+            const ymd = formatInTimeZone(prev, EAT_TIMEZONE, 'yyyy-MM-dd');
+            if (isWorkingDayEAT(ymd, holidays)) return prev;
+            return latestWorkingDayOnOrBeforeEAT(prev, holidays);
+        });
+    }, [holidays]);
 
     useEffect(() => {
         setSelectedGroupId('');
@@ -126,10 +128,6 @@ const GroupRepayment = () => {
 
     const handleGroupSelection = useCallback(async (groupId) => {
         setSelectedGroupId(groupId);
-        if (isForbiddenDate) {
-            setGroupMembers([]);
-            return;
-        }
         setLoading(true);
 
         const { data: loans, error: loansError } = await supabase
@@ -209,7 +207,7 @@ const GroupRepayment = () => {
         });
         setRepaymentAmounts(initialAmounts);
         setLoading(false);
-    }, [user, selectedDate, isForbiddenDate, toast, walletPrepaymentSplitMode]);
+    }, [user, selectedDate, toast, walletPrepaymentSplitMode]);
     
     useEffect(() => {
         if(selectedGroupId) handleGroupSelection(selectedGroupId);
@@ -314,8 +312,12 @@ const GroupRepayment = () => {
             });
             return;
         }
-        if (isForbiddenDate) {
-            toast({ title: 'Invalid Date', description: "Repayments cannot be on Sundays or holidays.", variant: 'destructive' });
+        if (!isWorkingDayEAT(payStr, holidays)) {
+            toast({
+                title: 'Non-working day',
+                description: 'Choose a working day (Monday–Saturday, not a public holiday). Same rule as loan installments and field wallet.',
+                variant: 'destructive',
+            });
             return;
         }
         setIsSaving(true);
@@ -520,11 +522,12 @@ const GroupRepayment = () => {
                             <div className="flex justify-between items-center mt-2">
                                 <CardDescription>
                                     Choose the <strong>actual payment date</strong> (last {PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS} days,
-                                    Africa/Nairobi). Due amounts and prepayment use this date. Sundays and holidays are blocked.
+                                    Africa/Nairobi). Must be a <strong>working day</strong> (Mon–Sat, not a holiday in Admin → Holidays).
+                                    Due amounts use this date.
                                 </CardDescription>
                                 <Popover>
                                     <PopoverTrigger asChild>
-                                        <Button variant={'outline'} className={`w-[240px] justify-start text-left font-normal ${isForbiddenDate ? 'border-red-500 text-red-500' : ''}`}>
+                                        <Button variant={'outline'} className="w-[240px] justify-start text-left font-normal">
                                             <CalendarIcon className="mr-2 h-4 w-4" />
                                             {selectedDate ? formatDate(selectedDate, 'PPP') : <span>Pick a date</span>}
                                         </Button>
@@ -545,7 +548,8 @@ const GroupRepayment = () => {
                                                 );
                                                 if (d > today) return true;
                                                 if (d < minD) return true;
-                                                return isSundayInTimeZone(date, EAT_TIMEZONE) || isHoliday(date);
+                                                if (!isWorkingDayEAT(d, holidays)) return true;
+                                                return false;
                                             }}
                                         />
                                     </PopoverContent>
@@ -557,8 +561,6 @@ const GroupRepayment = () => {
                                 <div className="text-center py-10 text-muted-foreground">Select a <strong>center</strong> on the left, then a <strong>group</strong> to record repayments.</div>
                              ) : !selectedGroupId ? (
                                 <div className="text-center py-10 text-muted-foreground">Select a <strong>group</strong> under this center to continue.</div>
-                             ) : isForbiddenDate ? (
-                                <div className="text-center py-10 text-red-500 flex flex-col items-center gap-2"><Ban className="h-10 w-10" /><p>Repayments are not allowed on Sundays or public holidays. Please select a working day.</p></div>
                              ) : loading ? (
                                 <div className="text-center py-10 text-gray-500"><Loader2 className="h-8 w-8 animate-spin" /></div>
                              ) : groupMembers.length > 0 ? (
