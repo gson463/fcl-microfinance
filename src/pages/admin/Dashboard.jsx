@@ -367,7 +367,7 @@ const AdminDashboard = () => {
 			},
 			{
 				id: 'df_proj',
-				title: 'Projected tomorrow',
+				title: 'Projected next working day',
 				value: fc(z.expected_tomorrow ?? 0),
 				icon: Sunrise,
 				shell: CARD_SHELLS[11],
@@ -723,7 +723,7 @@ const AdminDashboard = () => {
 		},
 		{
 			id: 'expected_tomorrow',
-			title: 'Projected Tomorrow',
+			title: 'Projected next working day',
 			value: formatCurrency(s.expected_tomorrow ?? 0),
 			icon: Sunrise,
 			shell: CARD_SHELLS[11],

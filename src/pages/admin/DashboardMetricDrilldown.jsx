@@ -61,7 +61,26 @@ const DashboardMetricDrilldown = () => {
 	const isOfficerRoute = location.pathname.startsWith('/officer');
 	const isAdminRoute = location.pathname.startsWith('/admin');
 	const isProjectionTomorrow = metricKey === DRILLDOWN_METRICS.expected_tomorrow;
-	const projectionDueLabel = useMemo(() => format(addDays(new Date(), 1), 'PPP'), []);
+	const [projectionDueLabel, setProjectionDueLabel] = useState(() => format(addDays(new Date(), 1), 'PPP'));
+
+	useEffect(() => {
+		if (!isProjectionTomorrow) return;
+		let cancelled = false;
+		(async () => {
+			const { data, error } = await supabase.rpc('next_working_day_after_exclusive');
+			if (cancelled) return;
+			if (error || data == null) {
+				setProjectionDueLabel(format(addDays(new Date(), 1), 'PPP'));
+				return;
+			}
+			const raw = typeof data === 'string' ? data : String(data);
+			const d = parseISO(raw.length <= 10 ? `${raw}T12:00:00` : raw);
+			if (!Number.isNaN(d.getTime())) setProjectionDueLabel(format(d, 'PPP'));
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [isProjectionTomorrow]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -531,8 +550,9 @@ const DashboardMetricDrilldown = () => {
 								<p className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Projection due date</p>
 								<p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{projectionDueLabel}</p>
 								<p className="text-xs text-muted-foreground">
-									Plain calendar dates only — due the next day on the calendar, regardless of Sundays or public holidays.
-									Not tied to your dashboard period below.
+									Next working day after today in the database (Monday–Saturday; Sundays and dates in{' '}
+									<code className="text-xs">holidays</code> are skipped) — same rule as installment schedules. Not tied to
+									your dashboard period below.
 								</p>
 							</div>
 						) : (
@@ -844,8 +864,8 @@ const DashboardMetricDrilldown = () => {
 						<CardDescription>
 							{isProjectionTomorrow ? (
 								<>
-									Unpaid schedule amounts with <strong>due date {projectionDueLabel}</strong> (next calendar day in the
-									system; holidays do not shift this projection). Branch/officer/center filters still apply.
+									Unpaid schedule amounts with <strong>due date {projectionDueLabel}</strong> (next working day after
+									today: not Sunday, not a public holiday row). Branch/officer/center filters still apply.
 								</>
 							) : (
 								<>

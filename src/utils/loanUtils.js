@@ -1,7 +1,17 @@
 import { add } from 'date-fns';
-import { toZonedTime, fromZonedTime } from 'date-fns-tz';
+import { toZonedTime, formatInTimeZone } from 'date-fns-tz';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
+
+/** Calendar yyyy-MM-dd in Africa/Nairobi (not UTC midnight from toISOString). */
+function formatYmdEAT(date) {
+    return formatInTimeZone(date, EAT_TIMEZONE, 'yyyy-MM-dd');
+}
+
+/** ISO weekday in EAT: 1 = Monday … 7 = Sunday (date-fns token `i`). */
+function isoWeekdayEAT(date) {
+    return formatInTimeZone(date, EAT_TIMEZONE, 'i');
+}
 
 const addPeriod = (date, count, unit) => {
     switch (unit) {
@@ -14,19 +24,25 @@ const addPeriod = (date, count, unit) => {
 };
 
 export const getNextWorkingDay = (date, holidays = []) => {
-    let currentCheckDate = toZonedTime(date, EAT_TIMEZONE);
-    
-    const holidayDates = new Set(holidays.map(h => {
-        const zonedHoliday = toZonedTime(new Date(h.date), EAT_TIMEZONE);
-        return zonedHoliday.toISOString().split('T')[0];
-    }));
+    const asDate = date instanceof Date ? date : new Date(date);
+    let currentCheckDate = toZonedTime(asDate, EAT_TIMEZONE);
 
-    const isHoliday = (d) => {
-        const dateString = d.toISOString().split('T')[0];
-        return holidayDates.has(dateString);
-    };
+    const holidayDates = new Set(
+        (holidays || [])
+            .map((h) => {
+                const raw = h?.date;
+                if (raw == null) return '';
+                if (typeof raw === 'string') return raw.slice(0, 10);
+                try {
+                    return formatYmdEAT(toZonedTime(new Date(raw), EAT_TIMEZONE));
+                } catch {
+                    return '';
+                }
+            })
+            .filter(Boolean),
+    );
 
-    while (currentCheckDate.getDay() === 0 || isHoliday(currentCheckDate)) { // 0 is Sunday
+    while (isoWeekdayEAT(currentCheckDate) === '7' || holidayDates.has(formatYmdEAT(currentCheckDate))) {
         currentCheckDate = add(currentCheckDate, { days: 1 });
     }
     return currentCheckDate;
@@ -80,7 +96,7 @@ export const generateSchedule = (principal, interestRate, totalPayable, loanPeri
         
         schedule.push({
             installmentNumber: i,
-            dueDate: currentDueDate.toISOString().split('T')[0],
+            dueDate: formatYmdEAT(currentDueDate),
             amount: installmentAmount,
             principalComponent: principalComponent,
             interestComponent: interestComponent,

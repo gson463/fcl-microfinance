@@ -48,24 +48,7 @@ const DefaultersManagement = () => {
     const [selectedLoans, setSelectedLoans] = useState([]);
     const [currency, setCurrency] = useState('TZS');
     const { currentDate } = useDate();
-    const [holidays, setHolidays] = useState([]);
     const [page, setPage] = useState(1);
-
-    useEffect(() => {
-        const fetchHolidays = async () => {
-            const { data } = await supabase.from('holidays').select('date');
-            if (data) {
-                setHolidays(data.map(h => h.date));
-            }
-        };
-        fetchHolidays();
-    }, []);
-
-    const isHoliday = (dateObj) => {
-        const dateStr = formatTZ(toZonedTime(dateObj, EAT_TIMEZONE), 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
-        return holidays.includes(dateStr);
-    };
-
     const fetchData = useCallback(async () => {
         if (!user) return;
         setLoading(true);
@@ -119,11 +102,6 @@ const DefaultersManagement = () => {
     }, [fetchData]);
 
     const handleWriteOff = async (loanIds) => {
-        if (isHoliday(currentDate)) {
-            toast({ title: 'Action Restricted', description: 'Cannot write off loans on a public holiday.', variant: 'destructive' });
-            return;
-        }
-
         setProcessing(true);
         try {
             const updates = loanIds.map(id => supabase.rpc('update_loan_status', { p_loan_id: id, p_new_status: 'written_off' }));

@@ -313,7 +313,7 @@ const LoanOfficerDashboard = () => {
 			},
 			{
 				id: 'df_proj',
-				title: 'Projected tomorrow',
+				title: 'Projected next working day',
 				value: fc(z.expected_tomorrow ?? 0),
 				icon: Sunrise,
 				shell: OFFICER_CARD_SHELLS[11],
@@ -652,10 +652,11 @@ const LoanOfficerDashboard = () => {
 							<Card className="border-neutral-200/80 bg-white/90 dark:bg-card dark:border-neutral-700">
 								<CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2 space-y-0 pb-2">
 									<div className="space-y-1">
-										<CardTitle className="text-base">Projected tomorrow by centre</CardTitle>
+										<CardTitle className="text-base">Next working day by centre</CardTitle>
 										<CardDescription>
-											Total scheduled repayment due the next calendar day, split by borrower centre (same rules as
-											Projected tomorrow). Holidays and closed days do not move this date—it is strictly calendar-based.
+											Scheduled repayments due on the next working day after today (not Sunday; not dates in{' '}
+											<code className="text-xs">holidays</code>), split by borrower centre — same rule as the Projected
+											tomorrow KPI and loan schedules.
 										</CardDescription>
 									</div>
 									<Button
@@ -671,8 +672,8 @@ const LoanOfficerDashboard = () => {
 								<CardContent className="space-y-3">
 									{projectedByCenter.length === 0 ? (
 										<p className="text-sm text-muted-foreground">
-											No unpaid installments due tomorrow across your centres — or the centre breakdown is not available
-											on this database version.
+											No unpaid installments due on the next working day across your centres — or the centre breakdown is
+											not available on this database version.
 										</p>
 									) : (
 										<>
@@ -681,7 +682,7 @@ const LoanOfficerDashboard = () => {
 													<TableHeader>
 														<TableRow>
 															<TableHead>Centre</TableHead>
-															<TableHead className="text-right">Projected tomorrow</TableHead>
+															<TableHead className="text-right">Due next working day</TableHead>
 														</TableRow>
 													</TableHeader>
 													<TableBody>
@@ -707,7 +708,7 @@ const LoanOfficerDashboard = () => {
 													(Number(stats.expected_tomorrow) || 0) - projectedTomorrowByCenterTotal
 												) > 0.02 && (
 													<p className="text-xs text-muted-foreground">
-														Dashboard &ldquo;Projected tomorrow&rdquo; card: {formatCurrency(stats.expected_tomorrow)} — small
+														Dashboard &ldquo;Projected next working day&rdquo; card: {formatCurrency(stats.expected_tomorrow)} — small
 														differences can come from rounding or timing.
 													</p>
 												)}
