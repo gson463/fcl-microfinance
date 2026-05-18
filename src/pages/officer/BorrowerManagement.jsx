@@ -504,18 +504,26 @@ const BorrowerManagement = () => {
         const guarantorName = normalizePersonNameLettersOnly(formData.guarantor_name).trim();
         const guarantorPhone = guarantorPhoneCheck.value;
 
+        const branchForSave =
+            officerBranchId ?? user?.user_metadata?.branch_id ?? editingBorrower?.branch_id ?? null;
+
         const payload = {
-            ...formData,
             first_name: normalizePersonNameLettersOnly(formData.first_name).trim(),
             surname: normalizePersonNameLettersOnly(formData.surname).trim(),
+            gender: formData.gender,
             phone_number: phoneCheck.value,
+            address: trim(formData.address),
+            business_name: trim(formData.business_name),
+            business_location: trim(formData.business_location),
+            identification_type: formData.identification_type,
             identification_number: idNumberForSave,
+            borrower_type: formData.borrower_type,
             group_id: borrower_type === 'individual' ? null : group_id,
             center_id: borrower_type === 'group' ? center_id : null,
             guarantor_name: guarantorName,
             guarantor_phone: guarantorPhone,
             loan_officer_id: user.id,
-            branch_id: officerBranchId ?? user.user_metadata.branch_id,
+            branch_id: branchForSave,
             status: editingBorrower ? editingBorrower.status : 'eligible',
         };
 
