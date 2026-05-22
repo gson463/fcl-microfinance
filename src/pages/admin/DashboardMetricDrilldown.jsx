@@ -864,8 +864,11 @@ const DashboardMetricDrilldown = () => {
 						<CardDescription>
 							{isProjectionTomorrow ? (
 								<>
-									Unpaid schedule amounts with <strong>due date {projectionDueLabel}</strong> (next working day after
-									today: not Sunday, not a public holiday row). Branch/officer/center filters still apply.
+									<strong>Nominal</strong> instalment amounts with <strong>due date {projectionDueLabel}</strong> (next
+									working day after today — not Sunday, not a holiday in{' '}
+									<code className="text-xs">public.holidays</code>). <strong>Schedule paidAmount is ignored</strong> here so
+									early prepayments do not shrink this KPI; loan schedule and accounting are unchanged elsewhere.
+									Branch/officer/center filters still apply.
 								</>
 							) : (
 								<>
