@@ -18,7 +18,7 @@ export const DRILLDOWN_METRICS = {
 	default_interest: 'default_interest',
 	default_total: 'default_total',
 	expected_today: 'expected_today',
-	/** Nominal instalment amounts due next_working_day_after_exclusive(CURRENT_DATE); schedule paidAmount ignored for this KPI only. */
+	/** Unpaid schedule lines (paidAmount below instalment amount; same −0.01 threshold as SQL) due next_working_day_after_exclusive(CURRENT_DATE). */
 	expected_tomorrow: 'expected_tomorrow',
 	disbursed_today: 'disbursed_today',
 	collected_today: 'collected_today',
@@ -53,7 +53,7 @@ export const METRIC_TITLES = {
 	[DRILLDOWN_METRICS.default_interest]: 'Default — interest amount',
 	[DRILLDOWN_METRICS.default_total]: 'Default — total amount',
 	[DRILLDOWN_METRICS.expected_today]: 'Expected today (installments due)',
-	[DRILLDOWN_METRICS.expected_tomorrow]: 'Projected next working day (nominal due — paidAmount ignored)',
+	[DRILLDOWN_METRICS.expected_tomorrow]: 'Projected next working day (unpaid on schedule)',
 	[DRILLDOWN_METRICS.disbursed_today]: 'Disbursed today',
 	[DRILLDOWN_METRICS.collected_today]: 'Collected today',
 	[DRILLDOWN_METRICS.my_borrowers]: 'Borrowers Registered by you',

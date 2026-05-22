@@ -654,10 +654,10 @@ const LoanOfficerDashboard = () => {
 									<div className="space-y-1">
 										<CardTitle className="text-base">Next working day by centre</CardTitle>
 										<CardDescription>
-											<strong>Nominal</strong> instalment amounts due on the next working day after today (not Sunday;
-											not dates in <code className="text-xs">holidays</code>), split by borrower centre —
-											<code className="text-xs">paidAmount</code> is ignored so this projection matches the main
-											&ldquo;Projected next working day&rdquo; card field target.
+											<strong>Unpaid</strong> schedule instalments (due next working day after today — not Sunday; skip{' '}
+											<code className="text-xs">holidays</code>), split by borrower centre — only rows still due on the
+											schedule (<code className="text-xs">paidAmount</code> below instalment{' '}
+											<code className="text-xs">amount</code>) — aligned with the main &ldquo;Projected next working day&rdquo; card.
 										</CardDescription>
 									</div>
 									<Button

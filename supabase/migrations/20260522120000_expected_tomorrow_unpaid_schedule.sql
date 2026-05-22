@@ -1,6 +1,7 @@
--- expected_tomorrow (projected next working day): nominal face value of instalments due on
--- next_working_day_after_exclusive(CURRENT_DATE); schedule paidAmount is ignored so early prepayment
--- allocation elsewhere does not reduce this KPI while accounting/recalc stays unchanged elsewhere.
+-- expected_tomorrow (projected next working day): unpaid instalments on loans.schedule whose dueDate is
+-- next_working_day_after_exclusive(CURRENT_DATE) (Mon–Sat; skip public.holidays). Rows included only when
+-- paidAmount < amount − 0.01 (matches expected_today rule). Does not change recalculate_loan_schedule or
+-- repayment/accounting RPCs beyond these three KPI readers.
 -- Redeploys get_admin_dashboard_metrics, get_admin_dashboard_drilldown, officer_projected_tomorrow_by_center.
 
 DROP FUNCTION IF EXISTS public.get_admin_dashboard_metrics(date, date, uuid, uuid, integer);
@@ -186,7 +187,7 @@ schedule_agg AS (
     ), 0) AS expected_today,
     COALESCE(SUM(si.amount) FILTER (
       WHERE si.due_date = (SELECT kpd.d FROM kpi_projection_due kpd)
-        AND si.amount > 0.01
+        AND si.paid_amount < si.amount - 0.01
     ), 0) AS expected_tomorrow
   FROM schedule_items si
 ),
@@ -889,7 +890,7 @@ BEGIN
       JOIN public.borrowers b ON b.id = l.borrower_id
       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(l.schedule, '[]'::jsonb)) AS elem
       WHERE (elem->>'dueDate')::date = v_projection_due
-        AND COALESCE((elem->>'amount')::numeric, 0) > 0.01
+        AND COALESCE((elem->>'paidAmount')::numeric, 0) < COALESCE((elem->>'amount')::numeric, 0) - 0.01
         AND (p_branch_id IS NULL OR b.branch_id = p_branch_id)
         AND (p_officer_id IS NULL OR l.officer_id = p_officer_id)
         AND (p_center_id IS NULL OR b.center_id = p_center_id OR EXISTS (SELECT 1 FROM public.groups g WHERE g.id = b.group_id AND g.center_id = p_center_id))
@@ -911,7 +912,7 @@ BEGIN
       LEFT JOIN public.branches br ON br.id = b.branch_id
       CROSS JOIN LATERAL jsonb_array_elements(COALESCE(l.schedule, '[]'::jsonb)) AS elem
       WHERE (elem->>'dueDate')::date = v_projection_due
-        AND COALESCE((elem->>'amount')::numeric, 0) > 0.01
+        AND COALESCE((elem->>'paidAmount')::numeric, 0) < COALESCE((elem->>'amount')::numeric, 0) - 0.01
         AND (p_branch_id IS NULL OR b.branch_id = p_branch_id)
         AND (p_officer_id IS NULL OR l.officer_id = p_officer_id)
         AND (p_center_id IS NULL OR b.center_id = p_center_id OR EXISTS (SELECT 1 FROM public.groups g WHERE g.id = b.group_id AND g.center_id = p_center_id))
@@ -1009,7 +1010,7 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_admin_dashboard_drilldown(text, date, date, int, int, uuid, uuid, int, uuid, uuid) TO authenticated;
 
--- Breakdown by centre: same calendar-tomorrow due date as dashboard (p_period_end ignored, kept for signature compatibility).
+-- Breakdown by centre: same next-working-day + unpaid-schedule rule as dashboard (p_period_end ignored; signature compatibility).
 
 DROP FUNCTION IF EXISTS public.officer_projected_tomorrow_by_center(uuid, uuid, date);
 DROP FUNCTION IF EXISTS public.officer_projected_tomorrow_by_center(uuid, uuid);
@@ -1053,7 +1054,7 @@ BEGIN
       AND (p_branch_id IS NULL OR b.branch_id = p_branch_id)
       AND NULLIF(trim(elem ->> 'dueDate'), '') IS NOT NULL
       AND (elem ->> 'dueDate')::date = v_due
-      AND COALESCE((elem ->> 'amount')::numeric, 0) > 0.01
+      AND COALESCE((elem ->> 'paidAmount')::numeric, 0) < COALESCE((elem ->> 'amount')::numeric, 0) - 0.01
   )
   SELECT
     i.cid,
@@ -1071,12 +1072,12 @@ END;
 $$;
 
 COMMENT ON FUNCTION public.officer_projected_tomorrow_by_center(uuid, uuid, date) IS
-  'Loan officer: nominal face-value installment amounts by borrower centre, due on next_working_day_after_exclusive(CURRENT_DATE) (not Sun / not public.holidays); schedule paidAmount is ignored. Optional p_period_end is ignored.';
+  'Loan officer: unpaid schedule installment amounts by borrower centre, due on next_working_day_after_exclusive(CURRENT_DATE) (not Sun / not public.holidays). paidAmount < amount − 0.01 on loans.schedule only. Optional p_period_end is ignored.';
 
 GRANT EXECUTE ON FUNCTION public.officer_projected_tomorrow_by_center(uuid, uuid, date) TO authenticated;
 
 COMMENT ON FUNCTION public.get_admin_dashboard_metrics(date, date, uuid, uuid, int) IS
-  'Scoped dashboard KPIs. expected_tomorrow sums nominal face-value schedule installments (paidAmount ignored) due on next_working_day_after_exclusive(CURRENT_DATE) (excludes Sundays and rows in public.holidays), matching schedule working-day rules.';
+  'Scoped dashboard KPIs. expected_tomorrow sums unpaid schedule installments due on next_working_day_after_exclusive(CURRENT_DATE) (excludes Sundays and rows in public.holidays), matching schedule working-day rules.';
 
 COMMENT ON FUNCTION public.get_admin_dashboard_drilldown(text, date, date, int, int, uuid, uuid, int, uuid, uuid) IS
-  'Paged drilldown per metric key. expected_tomorrow uses the same due date and nominal face-value rule (paidAmount ignored) as get_admin_dashboard_metrics.';
+  'Paged drilldown per metric key. expected_tomorrow uses the same next_working_day_after_exclusive due date and unpaid-schedule rule as get_admin_dashboard_metrics.';
