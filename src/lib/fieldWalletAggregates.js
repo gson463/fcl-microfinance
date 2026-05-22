@@ -1,11 +1,16 @@
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
 
+/** Centre for field-wallet split: borrower’s group (matches disbursement column logic). */
+function repaymentCenterIdFromRow(r) {
+  return r?.loans?.borrowers?.groups?.center_id ?? null;
+}
+
 /**
  * @param {object} params
  * @param {Array<{id: string, full_name: string}>} params.officers
  * @param {Array<{id: string, name: string, loan_officer_id: string}>} params.centers
- * @param {Array} params.repayments - with loans.borrowers.groups.centers
- * @param {Array} params.loans - disbursed in range, with borrowers.groups
+ * @param {Array} params.repayments - with loans.borrowers.groups (for per-centre collection / prepayment)
+ * @param {Array} params.loans - disbursed in range, with borrowers.groups (for disbursals & app fees per centre)
  * @param {number} params.applicationFeePerDisbursement
  * @param {Array<{ officer_id: string, amount_taken?: number }>} [params.fieldTakenRows] — sums per officer over the report period
  */
@@ -36,14 +41,13 @@ export function buildOfficerCenterBlocks({
 
       const disbursedPrincipal = loansHere.reduce((s, L) => s + (Number(L.principal) || 0), 0);
       const disbursedClients = new Set(loansHere.map((L) => L.borrower_id).filter(Boolean)).size;
-      const loanIdsHere = new Set(loansHere.map((L) => L.id));
       const disbursementCount = loansHere.length;
 
+      // Attribute collections by borrower centre (loan → group → center_id).
+      // Do NOT intersect with loans disbursed only in this period — repayments often belong to older loans.
       const repsHere = (repayments || []).filter((r) => {
-        const lid = r.loan_id;
-        if (!lid || !loanIdsHere.has(lid)) return false;
         if (r.officer_id !== officer.id) return false;
-        return true;
+        return repaymentCenterIdFromRow(r) === cid;
       });
 
       let scheduled = 0;
