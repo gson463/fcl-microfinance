@@ -384,7 +384,7 @@ const AttendanceManagement = () => {
         groups: pdfGroups,
         fileName: `attendance_recorded_${centre?.name || 'centre'}_${format(parseISO(m.meeting_date), 'yyyyMMdd')}`,
       });
-      toast({ title: 'PDF ready', description: 'Saved attendance from the database.' });
+      toast({ title: 'PDF ready', description: 'Saved attendance from your records.' });
     } catch (e) {
       toast({ title: 'PDF error', description: e?.message || 'Could not generate PDF.', variant: 'destructive' });
     }

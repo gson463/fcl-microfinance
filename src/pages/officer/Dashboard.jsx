@@ -32,6 +32,7 @@ import { DRILLDOWN_METRICS } from '@/lib/dashboardMetrics';
 import { defaultDashboardRange, quickActionCardClass } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
 import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
+import { fetchProjectionDueLabelPretty } from '@/lib/projectionDueDateRpc';
 
 const OFFICER_CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
@@ -61,10 +62,23 @@ const LoanOfficerDashboard = () => {
 	const [officerBranchId, setOfficerBranchId] = useState(null);
 	const [branchName, setBranchName] = useState('');
 	const [expandedCardId, setExpandedCardId] = useState(null);
-	/** Period sums for selected date range (RPC officer_dashboard_range_kpis). */
+	/** Period KPIs summed for the selected date range on the officer dashboard. */
 	const [rangeKpi, setRangeKpi] = useState(null);
-	/** Breakdown of scheduled unpaid installments due tomorrow, by centre (RPC officer_projected_tomorrow_by_center). */
+	/** Centre-level breakdown for the projected “next working day” total. */
 	const [projectedByCenter, setProjectedByCenter] = useState([]);
+	/** Resolved label for which calendar date “next working day” refers to. */
+	const [projectionDueLabel, setProjectionDueLabel] = useState('');
+
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			const { label } = await fetchProjectionDueLabelPretty(supabase);
+			if (!cancelled) setProjectionDueLabel(label);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -186,11 +200,9 @@ const LoanOfficerDashboard = () => {
 			console.error(err);
 			if (!silent) {
 				toast({
-					title: 'Error',
+					title: 'Could not load dashboard',
 					description:
-						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
-							? 'Run the latest database migration (get_admin_dashboard_metrics).'
-							: 'Could not load your dashboard metrics.',
+						'Please try again in a moment. If this keeps happening, contact your administrator so the system can be updated.',
 					variant: 'destructive',
 				});
 			}
@@ -250,6 +262,12 @@ const LoanOfficerDashboard = () => {
 
 	const dailyFocusCards = useMemo(() => {
 		const z = stats || {};
+		const projTitle = projectionDueLabel
+			? `${projectionDueLabel} — Projected next working day`
+			: 'Projected next working day';
+		const projDrill = projectionDueLabel
+			? `Drilldown — projected ${projectionDueLabel}`
+			: 'Drilldown — projected next working day';
 		const expToday = Number(z.expected_today) || 0;
 		const collToday = Number(z.collected_today) || 0;
 		const todayBarPct =
@@ -313,14 +331,14 @@ const LoanOfficerDashboard = () => {
 			},
 			{
 				id: 'df_proj',
-				title: 'Projected next working day',
+				title: projTitle,
 				value: fc(z.expected_tomorrow ?? 0),
 				icon: Sunrise,
 				shell: OFFICER_CARD_SHELLS[11],
 				progressPct: 0,
 				subItems: [
 					{
-						label: 'Drilldown — projected tomorrow',
+						label: projDrill,
 						metricKey: DRILLDOWN_METRICS.expected_tomorrow,
 						key: 'df-proj-drill',
 					},
@@ -342,7 +360,7 @@ const LoanOfficerDashboard = () => {
 				],
 			},
 		];
-	}, [stats, currency]);
+	}, [stats, currency, projectionDueLabel]);
 
 	const KpiBar = ({ pct, className }) => (
 		<div className={cn('h-2 w-full overflow-hidden rounded-full bg-neutral-200 dark:bg-neutral-700', className)}>
@@ -654,10 +672,16 @@ const LoanOfficerDashboard = () => {
 									<div className="space-y-1">
 										<CardTitle className="text-base">Next working day by centre</CardTitle>
 										<CardDescription>
-											<strong>Unpaid</strong> schedule instalments (due next working day after today — not Sunday; skip{' '}
-											<code className="text-xs">holidays</code>), split by borrower centre — only rows still due on the
-											schedule (<code className="text-xs">paidAmount</code> below instalment{' '}
-											<code className="text-xs">amount</code>) — aligned with the main &ldquo;Projected next working day&rdquo; card.
+											<strong>Unpaid</strong> installments for <strong>
+												{projectionDueLabel || 'the next working day after today'}
+											</strong>
+											 — Monday–Saturday only; Sundays and company public holidays are skipped. Split by borrower centre;
+											includes only rows where what has been paid is still below what is due — same rule as Today&apos;s focus
+											&ldquo;
+											{projectionDueLabel
+												? `${projectionDueLabel} — Projected next working day`
+												: 'Projected next working day'}
+											&rdquo;.
 										</CardDescription>
 									</div>
 									<Button
@@ -673,8 +697,8 @@ const LoanOfficerDashboard = () => {
 								<CardContent className="space-y-3">
 									{projectedByCenter.length === 0 ? (
 										<p className="text-sm text-muted-foreground">
-											No unpaid installments due on the next working day across your centres — or the centre breakdown is
-											not available on this database version.
+											No unpaid installments for {projectionDueLabel || 'that next working day'} across your centres, or
+											the centre breakdown is not available yet. Try refreshing; if it stays empty, contact support.
 										</p>
 									) : (
 										<>
@@ -683,7 +707,9 @@ const LoanOfficerDashboard = () => {
 													<TableHeader>
 														<TableRow>
 															<TableHead>Centre</TableHead>
-															<TableHead className="text-right">Due next working day</TableHead>
+															<TableHead className="text-right">
+																Due ({projectionDueLabel || 'next working day'})
+															</TableHead>
 														</TableRow>
 													</TableHeader>
 													<TableBody>
@@ -709,8 +735,11 @@ const LoanOfficerDashboard = () => {
 													(Number(stats.expected_tomorrow) || 0) - projectedTomorrowByCenterTotal
 												) > 0.02 && (
 													<p className="text-xs text-muted-foreground">
-														Dashboard &ldquo;Projected next working day&rdquo; card: {formatCurrency(stats.expected_tomorrow)} — small
-														differences can come from rounding or timing.
+														Today&apos;s focus &ldquo;
+														{projectionDueLabel
+															? `${projectionDueLabel} — Projected next working day`
+															: 'Projected next working day'}
+														&rdquo; ({formatCurrency(stats.expected_tomorrow)}) — small differences can come from rounding or timing.
 													</p>
 												)}
 										</>

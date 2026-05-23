@@ -488,7 +488,7 @@ const UserManagement = () => {
                     EXTREME DANGER: Are you absolutely sure?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    This is a highly destructive and irreversible action. It will permanently delete ALL users except for <strong>admin@mukwanoloans.com</strong>. All associated data for the deleted users (loans, borrowers, etc.) will also be removed by database triggers.
+                    This is a highly destructive and irreversible action. It will permanently delete ALL users except for <strong>admin@mukwanoloans.com</strong>. Linked records for those users (loans, borrowers, and related entries) will be removed automatically as well.
                     <br /><br />
                     To confirm, please type <strong>DELETE</strong> in the box below.
                   </AlertDialogDescription>

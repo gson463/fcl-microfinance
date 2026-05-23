@@ -43,6 +43,7 @@ import {
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
 import { fetchAdminFieldWalletSnapshot } from '@/lib/adminFieldWalletSnapshot';
 import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
+import { fetchProjectionDueLabelPretty } from '@/lib/projectionDueDateRpc';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const normalizeUuidParam = (v) => (v && UUID_RE.test(String(v).trim()) ? String(v).trim() : '');
@@ -80,6 +81,18 @@ const AdminDashboard = () => {
 	const [expandedCardId, setExpandedCardId] = useState(null);
 	const [walletSnap, setWalletSnap] = useState(null);
 	const [walletSnapLoading, setWalletSnapLoading] = useState(false);
+	const [projectionDueLabel, setProjectionDueLabel] = useState('');
+
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			const { label } = await fetchProjectionDueLabelPretty(supabase);
+			if (!cancelled) setProjectionDueLabel(label);
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -185,14 +198,10 @@ const AdminDashboard = () => {
 		} catch (err) {
 			console.error(err);
 			if (!silent) {
-				const rawMsg =
-					err?.message || (typeof err === 'string' ? err : '') || 'Could not load dashboard metrics.';
 				toast({
-					title: 'Error',
+					title: 'Could not load dashboard',
 					description:
-						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
-							? 'Run the latest database migration (get_admin_dashboard_metrics).'
-							: `Could not load dashboard metrics. ${rawMsg}`,
+						'Please try again in a moment. If this keeps happening, contact your administrator so the system can be updated.',
 					variant: 'destructive',
 				});
 			}
@@ -218,7 +227,9 @@ const AdminDashboard = () => {
 				if (!silent) {
 					toast({
 						title: 'Field wallet snapshot failed',
-						description: e?.message || 'Could not load withdraw status. Check connection and migrations.',
+						description:
+							e?.message ||
+							'Could not load withdraw status. Check your connection and try again, or contact support.',
 						variant: 'destructive',
 					});
 				}
@@ -305,9 +316,22 @@ const AdminDashboard = () => {
 
 	const portfolioTotal = Number(s.portfolio_general) || 0;
 
+	const projectedNextPortfolioTitle = projectionDueLabel
+		? `${projectionDueLabel} — Projected next working day`
+		: 'Projected next working day';
+	const projectedNextInstallLabel = projectionDueLabel
+		? `Due ${projectionDueLabel} (installments)`
+		: 'Due next working day (installments)';
+
 	/** Same day-level KPIs as loan officer dashboard; totals follow branch / officer filters. */
 	const dailyFocusCards = useMemo(() => {
 		const z = stats || {};
+		const projTitle = projectionDueLabel
+			? `${projectionDueLabel} — Projected next working day`
+			: 'Projected next working day';
+		const projDrill = projectionDueLabel
+			? `Drilldown — projected ${projectionDueLabel}`
+			: 'Drilldown — projected next working day';
 		const fc = (v) =>
 			`${currency} ${Number(v || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 		return [
@@ -367,14 +391,14 @@ const AdminDashboard = () => {
 			},
 			{
 				id: 'df_proj',
-				title: 'Projected next working day',
+				title: projTitle,
 				value: fc(z.expected_tomorrow ?? 0),
 				icon: Sunrise,
 				shell: CARD_SHELLS[11],
 				progressPct: 0,
 				subItems: [
 					{
-						label: 'Drilldown — projected tomorrow',
+						label: projDrill,
 						metricKey: DRILLDOWN_METRICS.expected_tomorrow,
 						key: 'df-proj-drill',
 					},
@@ -397,7 +421,7 @@ const AdminDashboard = () => {
 				],
 			},
 		];
-	}, [stats, currency]);
+	}, [stats, currency, projectionDueLabel]);
 
 	/** End date of the dashboard range = single “trace day” for field wallet (same formula as officer Field wallet). */
 	const fieldWalletCards = useMemo(() => {
@@ -723,14 +747,14 @@ const AdminDashboard = () => {
 		},
 		{
 			id: 'expected_tomorrow',
-			title: 'Projected next working day',
+			title: projectedNextPortfolioTitle,
 			value: formatCurrency(s.expected_tomorrow ?? 0),
 			icon: Sunrise,
 			shell: CARD_SHELLS[11],
 			progressPct: pct(s.expected_tomorrow, s.expected_today),
 			subItems: [
 				{
-					label: 'Due tomorrow (installments)',
+					label: projectedNextInstallLabel,
 					value: formatCurrency(s.expected_tomorrow ?? 0),
 					metricKey: DRILLDOWN_METRICS.expected_tomorrow,
 					key: 'ex-tm',

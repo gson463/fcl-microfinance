@@ -18,7 +18,7 @@ export const DRILLDOWN_METRICS = {
 	default_interest: 'default_interest',
 	default_total: 'default_total',
 	expected_today: 'expected_today',
-	/** Unpaid schedule lines (paidAmount below instalment amount; same −0.01 threshold as SQL) due next_working_day_after_exclusive(CURRENT_DATE). */
+	/** Scheduled unpaid installments counted for “next working day” projection after today. */
 	expected_tomorrow: 'expected_tomorrow',
 	disbursed_today: 'disbursed_today',
 	collected_today: 'collected_today',

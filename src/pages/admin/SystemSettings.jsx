@@ -435,7 +435,7 @@ const SystemSettings = () => {
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Confirm full database reset</AlertDialogTitle>
+              <AlertDialogTitle>Confirm full system data wipe</AlertDialogTitle>
               <AlertDialogDescription asChild>
                 <div className="space-y-3 text-sm text-muted-foreground">
                   <p>

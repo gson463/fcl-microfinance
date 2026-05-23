@@ -110,7 +110,7 @@ const FieldWalletTrace = () => {
 			console.error(e);
 			toast({
 				title: 'Could not load field wallet',
-				description: e.message || 'Check migrations (officer_withdraw_to_bank) and try again.',
+				description: e.message || 'Please try again. If this keeps failing, contact support.',
 				variant: 'destructive',
 			});
 			setBlocks([]);

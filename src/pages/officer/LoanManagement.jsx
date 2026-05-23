@@ -41,6 +41,7 @@ import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 import { borrowerPublicId } from '@/lib/borrowerPublicId';
 import { logAudit } from '@/lib/auditLog';
+import { borrowerHasOutstandingLoan, loansListHasAnyBlocking } from '@/lib/loanDisburseGuards';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const LOAN_BORROWER_SELECT = `*, borrowers(*, groups(id, name, center_id), branches(name)), loan_products(name)`;
@@ -61,20 +62,8 @@ const NATIVE_SELECT_DIALOG =
 const NATIVE_SELECT_FILTER =
   'flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
 
-/** Settled / closed loans that do not block choosing this borrower for a new disbursement. */
-function loanDoesNotBlockNewDisburse(l) {
-	if (!l) return true;
-	const st = l.status;
-	if (st === 'written_off') return true;
-	if (st === 'paid' && Number(l.balance) <= 0.01) return true;
-	return false;
-}
-
-/** True if borrower still has any loan that blocks a new disbursement (active debt or open workflow). */
-function borrowerHasOutstandingLoan(loans, borrowerId) {
-	if (!borrowerId || !Array.isArray(loans)) return false;
-	return loans.some((l) => l.borrower_id === borrowerId && !loanDoesNotBlockNewDisburse(l));
-}
+const DUPLICATE_BLOCKING_LOAN_MSG =
+    'This borrower already has an unsettled loan (or a loan pending edit/delete approval). Finish or reconcile that loan before opening another one.';
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card className="overflow-hidden border-none shadow-md hover:shadow-lg transition-all duration-300">
@@ -525,6 +514,21 @@ const LoanManagement = () => {
                 return;
             }
 
+            const { data: existingLoanRows, error: existingLoanErr } = await supabase
+                .from('loans')
+                .select('id, borrower_id, status, balance')
+                .eq('borrower_id', borrowerId);
+            if (existingLoanErr) throw existingLoanErr;
+            if (loansListHasAnyBlocking(existingLoanRows || [])) {
+                toast({
+                    title: 'Cannot disburse loan',
+                    description: DUPLICATE_BLOCKING_LOAN_MSG,
+                    variant: 'destructive',
+                });
+                setIsDisbursingLoan(false);
+                return;
+            }
+
             const interest = principalAmount * (parseFloat(product.interest_rate) / 100);
             const totalPayable = principalAmount + interest;
             // Dates are already YYYY-MM-DD from the input[type=date]
@@ -553,6 +557,15 @@ const LoanManagement = () => {
             const { data: insertedLoan, error: loanInsertError } = await supabase.from('loans').insert(newLoan).select('id').single();
 
             if (loanInsertError) {
+                if (loanInsertError.code === '23505') {
+                    toast({
+                        title: 'Cannot disburse loan',
+                        description: DUPLICATE_BLOCKING_LOAN_MSG,
+                        variant: 'destructive',
+                    });
+                    setIsDisbursingLoan(false);
+                    return;
+                }
                 throw loanInsertError;
             }
 
@@ -778,6 +791,18 @@ const LoanManagement = () => {
                         skippedLoans.push({ ...row, reason: `Borrower has an ${borrower.status.replace('_',' ')} loan` });
                         continue;
                     }
+                    const { data: existingForBorrower, error: existingForBorrowerErr } = await supabase
+                        .from('loans')
+                        .select('id, status, balance')
+                        .eq('borrower_id', borrower.id);
+                    if (existingForBorrowerErr) {
+                        skippedLoans.push({ ...row, reason: `Could not verify existing loans: ${existingForBorrowerErr.message}` });
+                        continue;
+                    }
+                    if (loansListHasAnyBlocking(existingForBorrower || [])) {
+                        skippedLoans.push({ ...row, reason: 'Borrower already has an unsettled loan' });
+                        continue;
+                    }
                     const { data: importEligibility, error: importElErr } = await supabase.rpc('borrower_loan_increase_eligibility', {
                         p_borrower_id: borrower.id,
                         p_proposed_principal: principalAmount,
@@ -824,7 +849,16 @@ const LoanManagement = () => {
                 }
                 if (newLoans.length > 0) {
                     const { data: insertedRows, error } = await supabase.from('loans').insert(newLoans).select('id, borrower_id');
-                    if (error) throw error;
+                    if (error) {
+                        if (error.code === '23505') {
+                            toast({
+                                title: 'Import blocked',
+                                description: `${DUPLICATE_BLOCKING_LOAN_MSG} No loans were saved.`,
+                                variant: 'destructive',
+                            });
+                        }
+                        throw error;
+                    }
                     for (const row of insertedRows || []) {
                         await supabase.rpc('consume_loan_increase_approval_for_borrower', {
                             p_borrower_id: row.borrower_id,

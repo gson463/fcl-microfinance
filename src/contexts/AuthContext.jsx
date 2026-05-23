@@ -25,7 +25,7 @@ export const OldAuthProvider = ({ children }) => {
 
   const login = (email, password) => {
     console.log("LocalStorage login is deprecated.");
-    return { success: false, message: "System uses database authentication." };
+    return { success: false, message: 'Please sign in using the main login.' };
   };
 
   const logout = () => {
@@ -41,7 +41,7 @@ export const OldAuthProvider = ({ children }) => {
 
   const changePassword = (currentPassword, newPassword) => {
     // This would need to be reimplemented with API calls if needed.
-    return { success: false, message: 'Password changes happen via database auth.'};
+    return { success: false, message: 'Use the sign-in settings on the login screen, or ask an administrator for help.'};
   };
 
   if (loading) {

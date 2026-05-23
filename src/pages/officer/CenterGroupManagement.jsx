@@ -104,7 +104,7 @@ const CenterGroupManagement = () => {
                 toast({
                     title: 'Branch not assigned',
                     description:
-                        'Your officer profile has no branch in the database. Ask an admin to assign you to a branch in User Management, then sign out and sign in again.',
+                        'Your officer profile has no branch assigned yet. Ask an admin to assign you to a branch in User Management, then sign out and sign in again.',
                     variant: 'destructive',
                 });
                 return;

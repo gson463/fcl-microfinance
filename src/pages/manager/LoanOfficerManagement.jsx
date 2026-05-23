@@ -317,7 +317,7 @@ const LoanOfficerManagement = () => {
       if (!managerBranchId) {
         toast({
           title: 'Branch missing',
-          description: 'Your account has no branch in the database. Ask an admin to assign a branch, then sign out and sign in again.',
+          description: 'Your account has no branch assigned yet. Ask an admin to assign a branch, then sign out and sign in again.',
           variant: 'destructive',
         });
         setSaving(false);
@@ -378,7 +378,7 @@ const LoanOfficerManagement = () => {
       toast({
         title: 'Branch missing',
         description:
-          'Your account has no branch in the database. Ask an admin to assign a branch, then sign out and sign in again.',
+          'Your account has no branch assigned yet. Ask an admin to assign a branch, then sign out and sign in again.',
         variant: 'destructive',
       });
       event.target.value = null;

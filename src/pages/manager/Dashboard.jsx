@@ -166,11 +166,9 @@ const BranchManagerDashboard = () => {
 			console.error(err);
 			if (!silent) {
 				toast({
-					title: 'Error',
+					title: 'Could not load dashboard',
 					description:
-						err.message?.includes('get_admin_dashboard_metrics') || err.code === '42883'
-							? 'Run the latest database migration (get_admin_dashboard_metrics).'
-							: 'Could not load dashboard metrics for your branch.',
+						'Please try again in a moment. If this keeps happening, contact your administrator so the system can be updated.',
 					variant: 'destructive',
 				});
 			}

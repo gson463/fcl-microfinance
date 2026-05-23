@@ -28,6 +28,7 @@ import {
 	PORTFOLIO_DRILLDOWN_COLUMNS,
 	enrichPortfolioDrilldownRow,
 } from '@/lib/drilldownColumnOrder';
+import { fetchProjectionDueLabelPretty } from '@/lib/projectionDueDateRpc';
 
 const PAGE_SIZE = 25;
 
@@ -67,15 +68,8 @@ const DashboardMetricDrilldown = () => {
 		if (!isProjectionTomorrow) return;
 		let cancelled = false;
 		(async () => {
-			const { data, error } = await supabase.rpc('next_working_day_after_exclusive');
-			if (cancelled) return;
-			if (error || data == null) {
-				setProjectionDueLabel(format(addDays(new Date(), 1), 'PPP'));
-				return;
-			}
-			const raw = typeof data === 'string' ? data : String(data);
-			const d = parseISO(raw.length <= 10 ? `${raw}T12:00:00` : raw);
-			if (!Number.isNaN(d.getTime())) setProjectionDueLabel(format(d, 'PPP'));
+			const { label } = await fetchProjectionDueLabelPretty(supabase);
+			if (!cancelled) setProjectionDueLabel(label);
 		})();
 		return () => {
 			cancelled = true;
@@ -344,7 +338,12 @@ const DashboardMetricDrilldown = () => {
 	const startStr = rawStart <= rawEnd ? rawStart : rawEnd;
 	const endStr = rawStart <= rawEnd ? rawEnd : rawStart;
 
-	const title = METRIC_TITLES[metricKey] || 'Dashboard details';
+	const title = useMemo(() => {
+		if (metricKey === DRILLDOWN_METRICS.expected_tomorrow) {
+			return `Projected ${projectionDueLabel} — unpaid on schedule`;
+		}
+		return METRIC_TITLES[metricKey] || 'Dashboard details';
+	}, [metricKey, projectionDueLabel]);
 
 	const fetchRows = useCallback(async () => {
 		if (!metricKey) return;
@@ -412,7 +411,7 @@ const DashboardMetricDrilldown = () => {
 			console.error(e);
 			toast({
 				title: 'Could not load details',
-				description: e.message || 'Try again or run the latest database migration.',
+				description: 'Please try again. If this keeps happening, contact your administrator.',
 				variant: 'destructive',
 			});
 			setRows([]);
@@ -550,9 +549,9 @@ const DashboardMetricDrilldown = () => {
 								<p className="text-xs font-medium text-neutral-600 dark:text-neutral-400">Projection due date</p>
 								<p className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">{projectionDueLabel}</p>
 								<p className="text-xs text-muted-foreground">
-									Next working day after today in the database (Monday–Saturday; Sundays and dates in{' '}
-									<code className="text-xs">holidays</code> are skipped) — same rule as installment schedules. Not tied to
-									your dashboard period below.
+									Uses the next working day after today: Monday–Saturday only. Sundays and dates marked as public
+									holidays in your company calendar are skipped — the same rule as repayment schedules. This is independent
+									of the date range filters below.
 								</p>
 							</div>
 						) : (
@@ -864,11 +863,10 @@ const DashboardMetricDrilldown = () => {
 						<CardDescription>
 							{isProjectionTomorrow ? (
 								<>
-									<strong>Unpaid</strong> schedule instalments (where <code className="text-xs">paidAmount</code> is still
-									below the instalment <code className="text-xs">amount</code>) with <strong>due date{' '}
-									{projectionDueLabel}</strong> — next working day after today (Monday–Saturday; Sundays and{' '}
-									<code className="text-xs">public.holidays</code> skipped), same logic as instalment schedules. Branch/officer/center filters still apply.
-									Branch/officer/center filters still apply.
+									<strong>Unpaid</strong> installments due on <strong>{projectionDueLabel}</strong> — only where what has
+									been paid is still below what is due that day. Uses the next working day after today (Monday–Saturday;
+									Sundays and your company public holidays are skipped), same calendar as repayment schedules. Branch,
+									officer, centre, and group filters still apply.
 								</>
 							) : (
 								<>

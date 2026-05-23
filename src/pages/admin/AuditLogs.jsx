@@ -256,8 +256,8 @@ const AuditLogs = () => {
 					<ScrollText className="h-8 w-8 shrink-0 text-brand-blue" aria-hidden />
 					<div>
 						<p className="text-sm text-neutral-600 max-w-2xl">
-							Plain-language summary of each event plus technical codes, IDs, IP, location, and device. Only
-							administrators can view this page.
+							A plain-language summary of each event, plus identifiers, IP location, device, and other details recorded for
+							security. Only administrators can view this page.
 						</p>
 					</div>
 				</div>
@@ -266,7 +266,7 @@ const AuditLogs = () => {
 					<div className="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
 						<strong className="font-semibold">Error:</strong> {fetchError}
 						<p className="mt-1 text-xs text-destructive/90">
-							Confirm the audit_logs migration and <code className="text-xs">get_audit_logs_admin</code> RPC are applied, and you are logged in as an admin.
+							Confirm you are signed in as an administrator. If you are and this persists, contact support — the activity log may need to be enabled for your organisation.
 						</p>
 					</div>
 				)}
