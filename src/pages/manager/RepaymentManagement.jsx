@@ -29,6 +29,7 @@ import { borrowerMatchesCenter, borrowerMatchesGroup } from '@/lib/loanBorrowerL
 import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
 import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
+import { fetchAllSupabaseRows } from '@/lib/supabaseFetchAllRows';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -127,12 +128,14 @@ const ManagerRepaymentManagement = () => {
             }
             setPendingRepaymentDeletes(mergedPending);
 
-            let { data: repaymentsData, error: repaymentsError } = await supabase
-                .from('repayments')
-                .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
-                .in('officer_id', officerIds)
-                .order('actual_payment_date', { ascending: false });
-            if (repaymentsError) throw repaymentsError;
+            const repaymentsData = await fetchAllSupabaseRows(() =>
+                supabase
+                    .from('repayments')
+                    .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
+                    .in('officer_id', officerIds)
+                    .order('actual_payment_date', { ascending: false })
+                    .order('id', { ascending: false }),
+            );
             setRepayments(repaymentsData || []);
 
             const { data: groupsData, error: groupsError } = await supabase.from('groups').select('*').in('loan_officer_id', officerIds);
@@ -636,11 +639,23 @@ const ManagerRepaymentManagement = () => {
                                     Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredRepayments.length)} of {filteredRepayments.length}
                                 </p>
                                 <div className="flex items-center gap-2">
-                                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={page <= 1}
+                                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                    >
                                         <ChevronLeft className="h-4 w-4" />
                                     </Button>
                                     <span className="text-sm text-muted-foreground">Page {page} / {totalPages}</span>
-                                    <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={page >= totalPages}
+                                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                                    >
                                         <ChevronRight className="h-4 w-4" />
                                     </Button>
                                 </div>
