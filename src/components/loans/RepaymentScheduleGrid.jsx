@@ -10,6 +10,7 @@ import {
   exportRepaymentSchedulePdf,
   printRepaymentSchedule,
 } from '@/lib/scheduleExport';
+import { installmentPrincipalInterestPaidDisplay } from '@/lib/installmentScheduleDisplay';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 
@@ -44,6 +45,7 @@ export function RepaymentScheduleGrid({
   const { toast } = useToast();
   const [exporting, setExporting] = useState(false);
   const rows = Array.isArray(schedule) ? schedule : [];
+  const breakdownLoanTotals = exportMeta?.loan ?? null;
 
   const defaultBadge = (inst) => {
     const v =
@@ -153,7 +155,10 @@ export function RepaymentScheduleGrid({
                 </td>
               </tr>
             ) : (
-              rows.map((inst, idx) => (
+              rows.map((inst, idx) => {
+                const { principalPaid: rowPrincipalPaid, interestPaid: rowInterestPaid } =
+                  installmentPrincipalInterestPaidDisplay(inst, breakdownLoanTotals);
+                return (
                 <tr
                   key={inst.installmentNumber ?? idx}
                   className={idx % 2 === 0 ? 'bg-white' : 'bg-[#f0f4f8]'}
@@ -163,19 +168,24 @@ export function RepaymentScheduleGrid({
                   <td className={cn(cell, 'text-right')}>{fmtMoney(currency, inst.amount)}</td>
                   {variant === 'full' ? (
                     <>
-                      <td className={cn(cell, 'text-right')}>{fmtMoney(currency, inst.principalPaid || 0)}</td>
-                      <td className={cn(cell, 'text-right')}>{fmtMoney(currency, inst.interestPaid || 0)}</td>
-                      <td className={cn(cell, 'text-right font-medium')}>{fmtMoney(currency, inst.paidAmount || 0)}</td>
+                      <td className={cn(cell, 'text-right')}>{fmtMoney(currency, rowPrincipalPaid)}</td>
+                      <td className={cn(cell, 'text-right')}>{fmtMoney(currency, rowInterestPaid)}</td>
+                      <td className={cn(cell, 'text-right font-medium')}>
+                        {fmtMoney(currency, inst.paidAmount ?? inst.paid_amount ?? 0)}
+                      </td>
                       <td className={cell}>{statusBadgeFn ? statusBadgeFn(inst) : defaultBadge(inst)}</td>
                     </>
                   ) : (
                     <>
-                      <td className={cn(cell, 'text-right font-medium')}>{fmtMoney(currency, inst.paidAmount || 0)}</td>
+                      <td className={cn(cell, 'text-right font-medium')}>
+                        {fmtMoney(currency, inst.paidAmount ?? inst.paid_amount ?? 0)}
+                      </td>
                       <td className={cell}>{statusBadgeFn ? statusBadgeFn(inst) : defaultBadge(inst)}</td>
                     </>
                   )}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>

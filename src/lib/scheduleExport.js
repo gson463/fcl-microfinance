@@ -3,6 +3,7 @@ import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { supabase } from '@/lib/customSupabaseClient';
 import { DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE, resolveLogoUrl } from '@/lib/brand';
+import { installmentPrincipalInterestPaidDisplay } from '@/lib/installmentScheduleDisplay';
 
 const EAT_TZ = 'Africa/Nairobi';
 
@@ -153,13 +154,14 @@ export async function exportRepaymentScheduleExcel(meta) {
   if (variant === 'full') {
     rows.push(['#', 'Due date', 'Amount due', 'Principal paid', 'Interest paid', 'Total paid', 'Status']);
     (schedule || []).forEach((inst) => {
+      const pi = installmentPrincipalInterestPaidDisplay(inst, loan);
       rows.push([
         inst.installmentNumber,
         fmtDue(inst.dueDate),
         Number(inst.amount) || 0,
-        Number(inst.principalPaid) || 0,
-        Number(inst.interestPaid) || 0,
-        Number(inst.paidAmount) || 0,
+        pi.principalPaid,
+        pi.interestPaid,
+        Number(inst.paidAmount ?? inst.paid_amount) || 0,
         inst.status || '',
       ]);
     });
@@ -170,7 +172,7 @@ export async function exportRepaymentScheduleExcel(meta) {
         inst.installmentNumber,
         fmtDue(inst.dueDate),
         Number(inst.amount) || 0,
-        Number(inst.paidAmount) || 0,
+        Number(inst.paidAmount ?? inst.paid_amount) || 0,
         inst.status || '',
       ]);
     });
@@ -287,25 +289,27 @@ export async function exportRepaymentSchedulePdf(meta) {
       ? [['#', 'Due', 'Due amt', 'Princ. paid', 'Int. paid', 'Paid', 'Status']]
       : [['#', 'Due', 'Due amt', 'Paid', 'Status']];
 
-  const body = (schedule || []).map((inst) =>
-    variant === 'full'
-      ? [
-          inst.installmentNumber,
-          fmtDue(inst.dueDate),
-          fmtMoney(currency, inst.amount),
-          fmtMoney(currency, inst.principalPaid || 0),
-          fmtMoney(currency, inst.interestPaid || 0),
-          fmtMoney(currency, inst.paidAmount || 0),
-          inst.status || '',
-        ]
-      : [
-          inst.installmentNumber,
-          fmtDue(inst.dueDate),
-          fmtMoney(currency, inst.amount),
-          fmtMoney(currency, inst.paidAmount || 0),
-          inst.status || '',
-        ]
-  );
+  const body = (schedule || []).map((inst) => {
+    if (variant === 'full') {
+      const pi = installmentPrincipalInterestPaidDisplay(inst, loan);
+      return [
+        inst.installmentNumber,
+        fmtDue(inst.dueDate),
+        fmtMoney(currency, inst.amount),
+        fmtMoney(currency, pi.principalPaid),
+        fmtMoney(currency, pi.interestPaid),
+        fmtMoney(currency, inst.paidAmount ?? inst.paid_amount ?? 0),
+        inst.status || '',
+      ];
+    }
+    return [
+      inst.installmentNumber,
+      fmtDue(inst.dueDate),
+      fmtMoney(currency, inst.amount),
+      fmtMoney(currency, inst.paidAmount ?? inst.paid_amount ?? 0),
+      inst.status || '',
+    ];
+  });
 
   doc.autoTable({
     startY: startY,
@@ -344,13 +348,14 @@ export async function printRepaymentSchedule(meta) {
   const bodyRows = (schedule || [])
     .map((inst) => {
       if (variant === 'full') {
+        const pi = installmentPrincipalInterestPaidDisplay(inst, loan);
         return `<tr>
           <td>${escapeHtml(inst.installmentNumber)}</td>
           <td>${escapeHtml(fmtDue(inst.dueDate))}</td>
           <td class="num">${escapeHtml(fmtMoney(currency, inst.amount))}</td>
-          <td class="num">${escapeHtml(fmtMoney(currency, inst.principalPaid || 0))}</td>
-          <td class="num">${escapeHtml(fmtMoney(currency, inst.interestPaid || 0))}</td>
-          <td class="num">${escapeHtml(fmtMoney(currency, inst.paidAmount || 0))}</td>
+          <td class="num">${escapeHtml(fmtMoney(currency, pi.principalPaid))}</td>
+          <td class="num">${escapeHtml(fmtMoney(currency, pi.interestPaid))}</td>
+          <td class="num">${escapeHtml(fmtMoney(currency, inst.paidAmount ?? inst.paid_amount ?? 0))}</td>
           <td>${escapeHtml(inst.status)}</td>
         </tr>`;
       }
@@ -358,7 +363,7 @@ export async function printRepaymentSchedule(meta) {
         <td>${escapeHtml(inst.installmentNumber)}</td>
         <td>${escapeHtml(fmtDue(inst.dueDate))}</td>
         <td class="num">${escapeHtml(fmtMoney(currency, inst.amount))}</td>
-        <td class="num">${escapeHtml(fmtMoney(currency, inst.paidAmount || 0))}</td>
+        <td class="num">${escapeHtml(fmtMoney(currency, inst.paidAmount ?? inst.paid_amount ?? 0))}</td>
         <td>${escapeHtml(inst.status)}</td>
       </tr>`;
     })

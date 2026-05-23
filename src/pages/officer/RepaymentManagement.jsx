@@ -39,6 +39,7 @@ import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYM
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
 import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 import { fetchAllSupabaseRows } from '@/lib/supabaseFetchAllRows';
+import { installmentPrincipalInterestPaidDisplay } from '@/lib/installmentScheduleDisplay';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = 25;
@@ -933,18 +934,22 @@ const RepaymentManagement = () => {
             { 'Field': 'Loan Status', 'Value': loan.status },
         ];
 
-        const scheduleData = loan.schedule.map(inst => ({
+        const scheduleData = loan.schedule.map((inst) => {
+            const pi = installmentPrincipalInterestPaidDisplay(inst, loan);
+            const paid = Number(inst.paidAmount ?? inst.paid_amount ?? 0) || 0;
+            return {
             'Installment No.': inst.installmentNumber,
             'Due Date': formatTZ(toZonedTime(new Date(inst.dueDate), EAT_TIMEZONE), 'yyyy-MM-dd'),
             'Amount Due': inst.amount,
             'Principal Component': inst.principalComponent,
             'Interest Component': inst.interestComponent,
-            'Amount Paid': inst.paidAmount || 0,
-            'Principal Paid': inst.principalPaid || 0,
-            'Interest Paid': inst.interestPaid || 0,
-            'Balance': inst.amount - (inst.paidAmount || 0),
+            'Amount Paid': paid,
+            'Principal Paid': pi.principalPaid,
+            'Interest Paid': pi.interestPaid,
+            'Balance': inst.amount - paid,
             'Status': inst.status,
-        }));
+        };
+        });
 
         const repaymentsForLoan = repayments.filter(r => r.loan_id === loan.id).map(r => ({
             'Payment Date': formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
