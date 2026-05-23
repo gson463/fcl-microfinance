@@ -153,9 +153,20 @@ const RepaymentManagement = () => {
         prevPickerDueKeyRef.current = '';
     };
 
-    const fetchData = useCallback(async () => {
-        if (!user) return;
-        setLoading(true);
+    const repaymentFetchFriendlyError = useCallback((error) => {
+        const msg = String(error?.message ?? '');
+        if (/statement timeout|canceling statement|cancelling statement|timeout expired|query canceled/i.test(msg)) {
+            return 'Loading took longer than usual. Try again in a moment.';
+        }
+        return 'Could not load collections. Check your connection and try again.';
+    }, []);
+
+    /**
+     * Recompute loan statuses for this officer only (can be slow on huge portfolios — do after the list renders).
+     * Never shows raw Postgres text to officers.
+     */
+    const refreshOfficerLoanStatusesInBackground = useCallback(async () => {
+        if (!user?.id) return;
         try {
             const { error: scopeStatusErr } = await supabase.rpc('refresh_loan_statuses_for_officer', {
                 p_officer_id: user.id,
@@ -165,11 +176,31 @@ const RepaymentManagement = () => {
                     /does not exist|42883|refresh_loan_statuses_for_officer/i.test(String(scopeStatusErr.message ?? '')) ||
                     String(scopeStatusErr.message ?? '').includes('refresh_loan_statuses_for_officer');
                 if (legacy) {
-                    await supabase.rpc('update_all_loan_statuses');
+                    try {
+                        await supabase.rpc('update_all_loan_statuses');
+                    } catch (e) {
+                        console.warn('update_all_loan_statuses fallback', e);
+                    }
                 } else {
-                    throw scopeStatusErr;
+                    console.warn('refresh_loan_statuses_for_officer', scopeStatusErr);
+                    return;
                 }
             }
+            const { data: freshLoans, error: lfErr } = await supabase
+                .from('loans')
+                .select('*, borrowers(*, groups(*))')
+                .eq('officer_id', user.id);
+            if (!lfErr && freshLoans) setLoans(freshLoans);
+        } catch (e) {
+            console.warn('loan status reconciliation after load', e);
+        }
+    }, [user?.id]);
+
+    const fetchData = useCallback(async () => {
+        if (!user) return;
+        setLoading(true);
+        let loadSucceeded = false;
+        try {
             const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
             if (config) setCurrency(config.value);
 
@@ -182,7 +213,7 @@ const RepaymentManagement = () => {
 
             let { data: repaymentsData, error: repaymentsError } = await supabase
                 .from('repayments')
-                .select('*, loans(id, borrower_id, schedule, loan_id, borrowers(*, groups(*)))')
+                .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
                 .eq('officer_id', user.id)
                 .order('actual_payment_date', { ascending: false });
             if (repaymentsError) throw repaymentsError;
@@ -218,13 +249,21 @@ const RepaymentManagement = () => {
                 .eq('key', 'walletPrepaymentSplitMode')
                 .maybeSingle();
             setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
-
+            loadSucceeded = true;
         } catch (error) {
-            toast({ title: 'Error fetching data', description: error.message, variant: 'destructive' });
+            console.error(error);
+            toast({
+                title: 'Could not load prepayments',
+                description: repaymentFetchFriendlyError(error),
+                variant: 'destructive',
+            });
         } finally {
             setLoading(false);
         }
-    }, [user, toast, officerProfileBranchId]);
+        if (loadSucceeded) {
+            void refreshOfficerLoanStatusesInBackground();
+        }
+    }, [user, toast, officerProfileBranchId, repaymentFetchFriendlyError, refreshOfficerLoanStatusesInBackground]);
 
     useEffect(() => {
         fetchData();

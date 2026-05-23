@@ -129,7 +129,7 @@ const ManagerRepaymentManagement = () => {
 
             let { data: repaymentsData, error: repaymentsError } = await supabase
                 .from('repayments')
-                .select('*, loans(id, borrower_id, schedule, loan_id, borrowers(*, groups(*)))')
+                .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
                 .in('officer_id', officerIds)
                 .order('actual_payment_date', { ascending: false });
             if (repaymentsError) throw repaymentsError;

@@ -98,7 +98,7 @@ const AdminRepaymentManagement = () => {
 
             let { data: repaymentsData, error: repaymentsError } = await supabase
                 .from('repayments')
-                .select('*, loans(id, borrower_id, schedule, loan_id, borrowers(*, groups(*)))')
+                .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
                 .order('actual_payment_date', { ascending: false });
             if (repaymentsError) throw repaymentsError;
             setRepayments(repaymentsData || []);
