@@ -6,6 +6,7 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -46,6 +47,7 @@ function groupBorrowersByGroup(borrowers, groups) {
 
 /** Saved in DB; ruhusa = excused (does not count toward loan-increase meeting minimum). */
 const STATUS_KEYS = ['present', 'absent', 'ruhusa'];
+const MAX_ATTENDANCE_OFFICER_NOTES = 2000;
 function statusLabel(s) {
   if (s === 'absent') return 'Absent';
   if (s === 'ruhusa') return 'Ruhusa';
@@ -70,6 +72,8 @@ const AttendanceManagement = () => {
   const [recordMeetingId, setRecordMeetingId] = useState('');
   /** borrower_id -> 'present' | 'absent' | 'ruhusa' */
   const [attendanceMap, setAttendanceMap] = useState({});
+  /** borrower_id -> optional officer notes for this meeting */
+  const [attendanceNotesMap, setAttendanceNotesMap] = useState({});
   const [savingAttendance, setSavingAttendance] = useState(false);
 
   const [printCentreId, setPrintCentreId] = useState('');
@@ -165,6 +169,7 @@ const AttendanceManagement = () => {
   useEffect(() => {
     if (!selectedMeeting || !borrowers.length) {
       setAttendanceMap({});
+      setAttendanceNotesMap({});
       return;
     }
     const centreId = selectedMeeting.centre_id;
@@ -175,20 +180,24 @@ const AttendanceManagement = () => {
     (async () => {
       const { data: recs } = await supabase
         .from('attendance_records')
-        .select('borrower_id, attendance_status')
+        .select('borrower_id, attendance_status, officer_notes')
         .eq('centre_meeting_id', selectedMeeting.id);
 
       const m = {};
+      const notes = {};
       for (const b of list) {
         m[b.id] = 'present';
+        notes[b.id] = '';
       }
       if (recs?.length) {
         for (const r of recs) {
           const st = r.attendance_status;
           m[r.borrower_id] = STATUS_KEYS.includes(st) ? st : 'present';
+          notes[r.borrower_id] = r.officer_notes?.trim() ? String(r.officer_notes) : '';
         }
       }
       setAttendanceMap(m);
+      setAttendanceNotesMap(notes);
     })();
   }, [selectedMeeting, borrowers, groups]);
 
@@ -202,13 +211,28 @@ const AttendanceManagement = () => {
 
   const saveAttendance = async () => {
     if (!selectedMeeting) return;
+    for (const b of borrowersForSelectedMeeting) {
+      const raw = attendanceNotesMap[b.id] ?? '';
+      if (raw.length > MAX_ATTENDANCE_OFFICER_NOTES) {
+        toast({
+          title: 'Notes too long',
+          description: `Keep notes under ${MAX_ATTENDANCE_OFFICER_NOTES} characters (${b.first_name} ${b.surname}).`,
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
     setSavingAttendance(true);
-    const rows = borrowersForSelectedMeeting.map((b) => ({
-      centre_meeting_id: selectedMeeting.id,
-      borrower_id: b.id,
-      group_id: b.group_id,
-      attendance_status: STATUS_KEYS.includes(attendanceMap[b.id]) ? attendanceMap[b.id] : 'present',
-    }));
+    const rows = borrowersForSelectedMeeting.map((b) => {
+      const trimmed = (attendanceNotesMap[b.id] ?? '').trim();
+      return {
+        centre_meeting_id: selectedMeeting.id,
+        borrower_id: b.id,
+        group_id: b.group_id,
+        attendance_status: STATUS_KEYS.includes(attendanceMap[b.id]) ? attendanceMap[b.id] : 'present',
+        officer_notes: trimmed.length ? trimmed : null,
+      };
+    });
     const { error } = await supabase.from('attendance_records').upsert(rows, {
       onConflict: 'centre_meeting_id,borrower_id',
     });
@@ -608,7 +632,8 @@ const AttendanceManagement = () => {
                 <CardTitle>Mark attendance</CardTitle>
                 <CardDescription>
                   Select a meeting, then set each borrower to <strong>Present</strong>, <strong>Absent</strong>, or{' '}
-                  <strong>Ruhusa</strong> (excused — does not count toward the loan-increase meeting minimum).
+                  <strong>Ruhusa</strong> (excused — does not count toward the loan-increase meeting minimum). Optional notes per
+                  borrower are saved with attendance.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -642,35 +667,54 @@ const AttendanceManagement = () => {
                         <div className="space-y-2">
                           {brs.map((b) => {
                             const st = STATUS_KEYS.includes(attendanceMap[b.id]) ? attendanceMap[b.id] : 'present';
+                            const notesId = `attendance-notes-${b.id}`;
                             return (
                               <div
                                 key={b.id}
-                                className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50/80 px-3 py-2 sm:flex-row sm:items-center sm:justify-between dark:border-neutral-700 dark:bg-neutral-900/40"
+                                className="flex flex-col gap-2 rounded-md border border-neutral-200 bg-neutral-50/80 px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900/40"
                               >
-                                <span className="text-sm font-medium">
-                                  {b.first_name} {b.surname}
-                                  {borrowerPublicId(b) ? (
-                                    <span className="text-muted-foreground font-normal"> ({borrowerPublicId(b)})</span>
-                                  ) : null}
-                                </span>
-                                <div className="flex flex-wrap gap-1">
-                                  {STATUS_KEYS.map((key) => (
-                                    <Button
-                                      key={key}
-                                      type="button"
-                                      size="sm"
-                                      variant={st === key ? 'default' : 'outline'}
-                                      className={cn(
-                                        'h-8 min-w-[5.5rem] text-xs',
-                                        st === key && key === 'present' && 'bg-emerald-600 hover:bg-emerald-700',
-                                        st === key && key === 'absent' && 'bg-red-600 hover:bg-red-700',
-                                        st === key && key === 'ruhusa' && 'bg-amber-600 hover:bg-amber-700'
-                                      )}
-                                      onClick={() => setAttendanceMap((prev) => ({ ...prev, [b.id]: key }))}
-                                    >
-                                      {statusLabel(key)}
-                                    </Button>
-                                  ))}
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                  <span className="text-sm font-medium">
+                                    {b.first_name} {b.surname}
+                                    {borrowerPublicId(b) ? (
+                                      <span className="text-muted-foreground font-normal"> ({borrowerPublicId(b)})</span>
+                                    ) : null}
+                                  </span>
+                                  <div className="flex flex-wrap gap-1">
+                                    {STATUS_KEYS.map((key) => (
+                                      <Button
+                                        key={key}
+                                        type="button"
+                                        size="sm"
+                                        variant={st === key ? 'default' : 'outline'}
+                                        className={cn(
+                                          'h-8 min-w-[5.5rem] text-xs',
+                                          st === key && key === 'present' && 'bg-emerald-600 hover:bg-emerald-700',
+                                          st === key && key === 'absent' && 'bg-red-600 hover:bg-red-700',
+                                          st === key && key === 'ruhusa' && 'bg-amber-600 hover:bg-amber-700'
+                                        )}
+                                        onClick={() => setAttendanceMap((prev) => ({ ...prev, [b.id]: key }))}
+                                      >
+                                        {statusLabel(key)}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="space-y-1">
+                                  <Label htmlFor={notesId} className="text-xs text-muted-foreground font-normal">
+                                    Notes (optional)
+                                  </Label>
+                                  <Textarea
+                                    id={notesId}
+                                    rows={2}
+                                    maxLength={MAX_ATTENDANCE_OFFICER_NOTES}
+                                    placeholder="e.g. arrived late, sent representative…"
+                                    className="min-h-[3rem] resize-y text-sm"
+                                    value={attendanceNotesMap[b.id] ?? ''}
+                                    onChange={(e) =>
+                                      setAttendanceNotesMap((prev) => ({ ...prev, [b.id]: e.target.value }))
+                                    }
+                                  />
                                 </div>
                               </div>
                             );

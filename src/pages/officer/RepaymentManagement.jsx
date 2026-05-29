@@ -1402,7 +1402,7 @@ const RepaymentManagement = () => {
                                             </Button>
                                             <Button
                                                 type="button"
-                                                variant="outline"
+                                                variant="destructive"
                                                 className="flex-1"
                                                 onClick={handleSkipToPrepaymentOnly}
                                                 disabled={isSubmitting || !repaymentFormData.loanId}
