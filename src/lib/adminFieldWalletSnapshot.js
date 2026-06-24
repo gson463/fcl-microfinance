@@ -81,7 +81,7 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 		fetchAllRowsPaged((from, to) =>
 			supabase
 				.from('officer_withdraw_to_bank')
-				.select('officer_id, business_date, created_at')
+				.select('officer_id, business_date, created_at, amount_deposited, closing_deposit, carried_to_next_day, next_business_date')
 				.eq('business_date', day)
 				.in('officer_id', ids)
 				.order('id', { ascending: true })
@@ -108,16 +108,17 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 
 	const withdrawByOfficer = new Map();
 	for (const w of withdrawRowsRaw) {
-		withdrawByOfficer.set(w.officer_id, w.created_at);
+		withdrawByOfficer.set(w.officer_id, w);
 	}
 
-	// Align with officer_wallet_balance_for_period: once withdraw-to-bank exists for that day,
-	// carry-forward / enforcement treats the day as closed (0), not the raw formula deposit.
+	// Align with officer_wallet_balance_for_period: after withdraw, in-hand = carried_to_next_day (0 if full bank).
 	for (const b of blocks) {
 		const raw = Number(b.totals.deposit) || 0;
 		b.totals.rawDeposit = raw;
-		if (withdrawByOfficer.has(b.officer.id)) {
-			b.totals.deposit = 0;
+		const w = withdrawByOfficer.get(b.officer.id);
+		if (w) {
+			const carried = Number(w.carried_to_next_day) || 0;
+			b.totals.deposit = carried > 0 ? carried : 0;
 		}
 	}
 

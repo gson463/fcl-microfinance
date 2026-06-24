@@ -35,6 +35,7 @@ import { fetchAllRowsPaged } from '@/lib/supabaseFetchPaged';
 import { downloadFieldWalletExcel, fetchLogoBufferFromUrl } from '@/lib/fieldWalletReportExcel';
 import { downloadFieldWalletPdf } from '@/lib/fieldWalletReportPdf';
 import { resolveLogoUrl, DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE } from '@/lib/brand';
+import { fetchNextWorkingDayAfter } from '@/lib/nextWorkingDayRpc';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 
@@ -103,6 +104,13 @@ const FieldWalletCashFlow = () => {
   const [addTakenOpen, setAddTakenOpen] = useState(false);
   const [additionalTakenInput, setAdditionalTakenInput] = useState('');
   const [addTakenSaving, setAddTakenSaving] = useState(false);
+  const [withdrawDialogOpen, setWithdrawDialogOpen] = useState(false);
+  /** choose | carry | summary */
+  const [withdrawStep, setWithdrawStep] = useState('choose');
+  const [carryChoice, setCarryChoice] = useState(null);
+  const [nextDayTakenInput, setNextDayTakenInput] = useState('');
+  const [nextWorkingDayMeta, setNextWorkingDayMeta] = useState({ dateStr: '', label: '' });
+  const [nextWorkingDayLoading, setNextWorkingDayLoading] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,7 +223,7 @@ const FieldWalletCashFlow = () => {
       const withdrawQuery = () => {
         let q = supabase
           .from('officer_withdraw_to_bank')
-          .select('id, officer_id, business_date, created_at')
+          .select('id, officer_id, business_date, created_at, amount_deposited, closing_deposit, carried_to_next_day, next_business_date')
           .gte('business_date', fromStr)
           .lte('business_date', toStr);
         if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
@@ -441,45 +449,27 @@ const FieldWalletCashFlow = () => {
   const walletDateToStr = useMemo(() => format(range.to, 'yyyy-MM-dd'), [range.to]);
   const isSingleWalletDay = walletDateFromStr === walletDateToStr;
 
-  const officerWithdrawForDay = useMemo(() => {
-    if (role !== 'officer' || !user?.id || !isSingleWalletDay) return false;
-    return withdrawRows.some((w) => w.officer_id === user.id && w.business_date === walletDateFromStr);
+  /** After withdraw-to-bank: full withdraw → 0 in hand; carry → carried_to_next_day remains. */
+  const officerWithdrawRowForDay = useMemo(() => {
+    if (role !== 'officer' || !user?.id || !isSingleWalletDay) return null;
+    return withdrawRows.find((w) => w.officer_id === user.id && w.business_date === walletDateFromStr) ?? null;
   }, [role, user?.id, isSingleWalletDay, walletDateFromStr, withdrawRows]);
 
-  /** Single-day manager: sum per-officer deposit, 0 in hand for officers who withdrew (aligns with officer UI). */
-  const managerSingleDayNetInHand = useMemo(() => {
-    if (role !== 'manager' || !isSingleWalletDay) return null;
-    const withdrawSet = new Set(
-      withdrawRows.filter((w) => w.business_date === walletDateFromStr).map((w) => w.officer_id)
-    );
-    return reportBlocks.reduce((s, b) => {
-      const d = Number(b.totals.deposit) || 0;
-      return s + (withdrawSet.has(b.officer.id) ? 0 : d);
-    }, 0);
-  }, [role, isSingleWalletDay, withdrawRows, walletDateFromStr, reportBlocks]);
+  const officerWithdrawForDay = !!officerWithdrawRowForDay;
 
-  /** Manager wallet table: show 0 balance for officers who confirmed withdraw on this day (Excel still uses full DEPOSIT). */
-  const managerSingleDayBlocks = useMemo(() => {
-    if (role !== 'manager' || !isSingleWalletDay) return reportBlocks;
-    const withdrawSet = new Set(
-      withdrawRows.filter((w) => w.business_date === walletDateFromStr).map((w) => w.officer_id)
-    );
-    return reportBlocks.map((block) => {
-      if (!withdrawSet.has(block.officer.id)) return block;
-      return { ...block, totals: { ...block.totals, deposit: 0 } };
-    });
-  }, [role, isSingleWalletDay, reportBlocks, withdrawRows, walletDateFromStr]);
+  const closingDeposit = useMemo(() => Number(totals.net) || 0, [totals.net]);
 
-  /** After withdraw-to-bank, UI shows 0; Excel/PDF still use computed DEPOSIT. */
-  const displayNet = useMemo(() => {
-    if (role === 'officer' && officerWithdrawForDay) return 0;
-    if (role === 'manager' && managerSingleDayNetInHand != null) return managerSingleDayNetInHand;
-    return totals.net;
-  }, [role, officerWithdrawForDay, managerSingleDayNetInHand, totals.net]);
+  const parsedNextDayTaken = useMemo(() => parseAdditionalTakenInput(nextDayTakenInput), [nextDayTakenInput]);
 
-  const handleWithdrawToBank = useCallback(async () => {
+  const withdrawToBankAmount = useMemo(() => {
+    if (!carryChoice) return closingDeposit;
+    if (Number.isNaN(parsedNextDayTaken)) return null;
+    return Math.max(0, closingDeposit - parsedNextDayTaken);
+  }, [carryChoice, closingDeposit, parsedNextDayTaken]);
+
+  const openWithdrawDialog = useCallback(async () => {
     if (role !== 'officer' || !user?.id || !isSingleWalletDay || officerWithdrawForDay) return;
-    if (totals.net < 0) {
+    if (closingDeposit < 0) {
       toast({
         title: 'Cannot confirm yet',
         description: 'Wallet is negative for this day — reconcile before confirming to bank.',
@@ -487,32 +477,119 @@ const FieldWalletCashFlow = () => {
       });
       return;
     }
+    setWithdrawStep('choose');
+    setCarryChoice(null);
+    setNextDayTakenInput('');
+    setWithdrawDialogOpen(true);
+    setNextWorkingDayLoading(true);
+    try {
+      const meta = await fetchNextWorkingDayAfter(supabase, walletDateFromStr);
+      setNextWorkingDayMeta(meta);
+    } finally {
+      setNextWorkingDayLoading(false);
+    }
+  }, [role, user?.id, isSingleWalletDay, officerWithdrawForDay, closingDeposit, walletDateFromStr, toast]);
+
+  const handleConfirmWithdraw = useCallback(async () => {
+    if (role !== 'officer' || !user?.id || !isSingleWalletDay || officerWithdrawForDay) return;
+    if (carryChoice && (Number.isNaN(parsedNextDayTaken) || parsedNextDayTaken < 0)) {
+      toast({ title: 'Invalid amount', description: 'Enter a valid taken amount for the next working day.', variant: 'destructive' });
+      return;
+    }
+    if (carryChoice && parsedNextDayTaken > closingDeposit + 0.01) {
+      toast({
+        title: 'Amount too high',
+        description: 'Next-day taken cannot exceed today’s closing deposit.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setWithdrawSaving(true);
     try {
-      const { error } = await supabase.from('officer_withdraw_to_bank').insert({
-        officer_id: user.id,
-        business_date: walletDateFromStr,
+      const { data, error } = await supabase.rpc('officer_confirm_withdraw_with_carry', {
+        p_business_date: walletDateFromStr,
+        p_carry: !!carryChoice,
+        p_next_day_taken: carryChoice ? parsedNextDayTaken : 0,
       });
       if (error) throw error;
-      const zero = (Number(totals.net) || 0) <= 0;
+      const banked = Number(data?.amount_deposited ?? withdrawToBankAmount ?? 0);
+      const carried = Number(data?.carried_to_next_day ?? 0);
+      setWithdrawDialogOpen(false);
       toast({
         title: 'Recorded',
-        description: zero
-          ? 'End-of-day confirmed (0 in hand to bank). Excel still shows DEPOSIT for today if any.'
-          : 'Marked as withdrawn to bank. Balance shows 0; Excel still shows DEPOSIT for today.',
+        description: carryChoice && carried > 0
+          ? `${currency} ${banked.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to bank; ${currency} ${carried.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} planned for ${nextWorkingDayMeta.label || 'next working day'}.`
+          : closingDeposit <= 0
+            ? 'End-of-day confirmed (0 in hand to bank). Excel still shows DEPOSIT for today if any.'
+            : 'Full deposit marked as withdrawn to bank.',
       });
       await fetchData();
     } catch (e) {
       const msg = e?.message || String(e);
       toast({
         title: 'Save failed',
-        description: msg.includes('duplicate') || msg.includes('unique') ? 'Withdraw was already recorded for this day.' : msg,
+        description: msg.includes('duplicate') || msg.includes('unique') || msg.includes('already recorded')
+          ? 'Withdraw was already recorded for this day.'
+          : msg,
         variant: 'destructive',
       });
     } finally {
       setWithdrawSaving(false);
     }
-  }, [role, user?.id, isSingleWalletDay, officerWithdrawForDay, totals.net, walletDateFromStr, toast, fetchData]);
+  }, [
+    role,
+    user?.id,
+    isSingleWalletDay,
+    officerWithdrawForDay,
+    carryChoice,
+    parsedNextDayTaken,
+    closingDeposit,
+    walletDateFromStr,
+    withdrawToBankAmount,
+    nextWorkingDayMeta.label,
+    currency,
+    toast,
+    fetchData,
+  ]);
+
+  /** Single-day manager: sum per-officer in-hand deposit (0 after full withdraw; carry keeps float). */
+  const managerSingleDayNetInHand = useMemo(() => {
+    if (role !== 'manager' || !isSingleWalletDay) return null;
+    const withdrawByOfficer = new Map(
+      withdrawRows.filter((w) => w.business_date === walletDateFromStr).map((w) => [w.officer_id, w])
+    );
+    return reportBlocks.reduce((s, b) => {
+      const d = Number(b.totals.deposit) || 0;
+      const w = withdrawByOfficer.get(b.officer.id);
+      if (!w) return s + d;
+      const carried = Number(w.carried_to_next_day) || 0;
+      return s + (carried > 0 ? carried : 0);
+    }, 0);
+  }, [role, isSingleWalletDay, withdrawRows, walletDateFromStr, reportBlocks]);
+
+  /** Manager wallet table: in-hand balance after withdraw (carry shows float retained). */
+  const managerSingleDayBlocks = useMemo(() => {
+    if (role !== 'manager' || !isSingleWalletDay) return reportBlocks;
+    const withdrawByOfficer = new Map(
+      withdrawRows.filter((w) => w.business_date === walletDateFromStr).map((w) => [w.officer_id, w])
+    );
+    return reportBlocks.map((block) => {
+      const w = withdrawByOfficer.get(block.officer.id);
+      if (!w) return block;
+      const carried = Number(w.carried_to_next_day) || 0;
+      return { ...block, totals: { ...block.totals, deposit: carried > 0 ? carried : 0 } };
+    });
+  }, [role, isSingleWalletDay, reportBlocks, withdrawRows, walletDateFromStr]);
+
+  /** After withdraw-to-bank: full withdraw → 0 in hand; carry → carried float. Excel/PDF still use computed DEPOSIT. */
+  const displayNet = useMemo(() => {
+    if (role === 'officer' && officerWithdrawRowForDay) {
+      const carried = Number(officerWithdrawRowForDay.carried_to_next_day) || 0;
+      return carried > 0 ? carried : 0;
+    }
+    if (role === 'manager' && managerSingleDayNetInHand != null) return managerSingleDayNetInHand;
+    return totals.net;
+  }, [role, officerWithdrawRowForDay, managerSingleDayNetInHand, totals.net]);
 
   const toggleDate = (dateKey) => {
     setExpandedDates((prev) => {
@@ -731,14 +808,18 @@ const FieldWalletCashFlow = () => {
                     {displayNet.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                   {officerWithdrawForDay && (
-                    <p className="text-sm font-medium text-muted-foreground">Withdrawn to bank — cash no longer in hand.</p>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {Number(officerWithdrawRowForDay?.carried_to_next_day) > 0
+                        ? `Withdrawn to bank — ${currency} ${Number(officerWithdrawRowForDay.carried_to_next_day).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} carried to next working day${officerWithdrawRowForDay.next_business_date ? ` (${officerWithdrawRowForDay.next_business_date})` : ''}.`
+                        : 'Withdrawn to bank — cash no longer in hand.'}
+                    </p>
                   )}
                   {isSingleWalletDay && !officerWithdrawForDay && totals.net >= 0 && (
                     <Button
                       type="button"
                       variant="default"
                       className="w-full sm:w-auto"
-                      onClick={handleWithdrawToBank}
+                      onClick={openWithdrawDialog}
                       disabled={withdrawSaving}
                     >
                       {withdrawSaving ? (
@@ -759,7 +840,7 @@ const FieldWalletCashFlow = () => {
                   <CardTitle className="text-base">Wallet balance</CardTitle>
                   {isSingleWalletDay && (
                     <CardDescription className="text-xs">
-                      Officers who withdrew to bank show 0 in hand for this day (same as their screen). Excel still shows full
+                      Officers who withdrew show in-hand balance (0 after full bank; carry retains float). Excel still shows full
                       deposit.
                     </CardDescription>
                   )}
@@ -1122,6 +1203,162 @@ const FieldWalletCashFlow = () => {
           </>
         )}
       </div>
+
+      <Dialog
+        open={withdrawDialogOpen}
+        onOpenChange={(open) => {
+          if (!withdrawSaving) setWithdrawDialogOpen(open);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Withdraw to bank</DialogTitle>
+            <DialogDescription>
+              Business date: {walletDateFromStr}. Closing deposit: {currency}{' '}
+              {closingDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.
+            </DialogDescription>
+          </DialogHeader>
+
+          {withdrawStep === 'choose' && (
+            <div className="space-y-4 py-2">
+              <p className="text-sm text-foreground">
+                Do you want to carry taken to the next working day, or withdraw the full amount to the bank?
+              </p>
+              {nextWorkingDayLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading next working day…
+                </div>
+              ) : nextWorkingDayMeta.label ? (
+                <p className="text-xs text-muted-foreground">
+                  Next working day after today: <strong>{nextWorkingDayMeta.label}</strong>
+                </p>
+              ) : null}
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="default"
+                  disabled={nextWorkingDayLoading}
+                  onClick={() => {
+                    setCarryChoice(true);
+                    setWithdrawStep('carry');
+                  }}
+                >
+                  Yes — carry taken to next working day
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={nextWorkingDayLoading}
+                  onClick={() => {
+                    setCarryChoice(false);
+                    setWithdrawStep('summary');
+                  }}
+                >
+                  No — withdraw full amount
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {withdrawStep === 'carry' && (
+            <div className="space-y-3 py-2">
+              <p className="text-sm text-muted-foreground">
+                Enter taken for <strong>{nextWorkingDayMeta.label || 'next working day'}</strong>. The remainder goes to the bank today.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="next-day-taken">Taken for next working day ({currency})</Label>
+                <Input
+                  id="next-day-taken"
+                  type="text"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  placeholder="0"
+                  value={nextDayTakenInput}
+                  onChange={(e) => setNextDayTakenInput(e.target.value)}
+                  className="tabular-nums text-lg"
+                />
+              </div>
+              <Button type="button" variant="secondary" className="w-full" onClick={() => setWithdrawStep('summary')}>
+                Review summary
+              </Button>
+            </div>
+          )}
+
+          {withdrawStep === 'summary' && (
+            <div className="space-y-3 py-2 text-sm">
+              <div className="rounded-md border bg-muted/40 px-3 py-2 space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Closing deposit: </span>
+                  <span className="font-semibold tabular-nums">
+                    {currency}{' '}
+                    {closingDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </p>
+                {carryChoice ? (
+                  <>
+                    <p>
+                      <span className="text-muted-foreground">Carried to {nextWorkingDayMeta.label || 'next working day'}: </span>
+                      <span className="font-semibold tabular-nums">
+                        {currency}{' '}
+                        {(Number.isNaN(parsedNextDayTaken) ? 0 : parsedNextDayTaken).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">To bank today: </span>
+                      <span className="font-semibold tabular-nums">
+                        {currency}{' '}
+                        {(withdrawToBankAmount ?? 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </p>
+                  </>
+                ) : (
+                  <p>
+                    <span className="text-muted-foreground">To bank today: </span>
+                    <span className="font-semibold tabular-nums">
+                      {currency}{' '}
+                      {closingDeposit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </p>
+                )}
+              </div>
+              {carryChoice && (
+                <p className="text-xs text-muted-foreground">
+                  You will confirm this taken amount on your first login on {nextWorkingDayMeta.label || 'that day'} (you can edit it then).
+                </p>
+              )}
+            </div>
+          )}
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            {withdrawStep !== 'choose' && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={withdrawSaving}
+                onClick={() => setWithdrawStep(withdrawStep === 'summary' && carryChoice ? 'carry' : 'choose')}
+              >
+                Back
+              </Button>
+            )}
+            <Button type="button" variant="outline" disabled={withdrawSaving} onClick={() => setWithdrawDialogOpen(false)}>
+              Cancel
+            </Button>
+            {withdrawStep === 'summary' && (
+              <Button type="button" onClick={handleConfirmWithdraw} disabled={withdrawSaving}>
+                {withdrawSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Confirm withdraw
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addTakenOpen} onOpenChange={setAddTakenOpen}>
         <DialogContent className="sm:max-w-md">

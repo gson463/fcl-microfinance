@@ -175,13 +175,15 @@ const FieldWalletTrace = () => {
 		return n;
 	}, [blocks, withdrawByOfficer]);
 
-	/** Sum of same-day formula deposit for each officer who recorded withdraw to bank (matches cash handed in). */
+	/** Sum of cash deposited to bank for officers who recorded withdraw (amount_deposited; legacy rows use formula deposit). */
 	const totalWithdrawnAmount = useMemo(() => {
 		let s = 0;
 		for (const block of blocks) {
-			if (!withdrawByOfficer.has(block.officer.id)) continue;
+			const w = withdrawByOfficer.get(block.officer.id);
+			if (!w) continue;
 			const raw = Number(block.totals.rawDeposit ?? block.totals.deposit) || 0;
-			s += raw;
+			const banked = w.amount_deposited != null ? Number(w.amount_deposited) : raw;
+			s += Number.isNaN(banked) ? raw : banked;
 		}
 		return s;
 	}, [blocks, withdrawByOfficer]);
@@ -363,7 +365,7 @@ const FieldWalletTrace = () => {
 								{formatMoney(totalWithdrawnAmount)}
 							</p>
 							<p className="text-xs text-muted-foreground mt-1">
-								Total withdraws (sum of same-day formula deposit for those officers)
+								Total to bank (sum of amount deposited for officers who withdrew)
 							</p>
 						</CardContent>
 					</Card>
@@ -432,13 +434,19 @@ const FieldWalletTrace = () => {
 									{blocks.map((block) => {
 										const t = block.totals;
 										const totalRep = repaymentTotalsByOfficer.get(block.officer.id) ?? 0;
-										const wAt = withdrawByOfficer.get(block.officer.id);
+										const wRow = withdrawByOfficer.get(block.officer.id);
 										const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
+										const banked = wRow
+											? wRow.amount_deposited != null
+												? Number(wRow.amount_deposited)
+												: rawDep
+											: null;
+										const carried = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
 										return (
 											<TableRow
 												key={block.officer.id}
 												className={cn(
-													!wAt &&
+													!wRow &&
 														'!bg-amber-50/95 hover:!bg-amber-100/90 border-l-4 border-l-amber-400 dark:!bg-amber-950/40 dark:hover:!bg-amber-950/55 dark:border-l-amber-500'
 												)}
 											>
@@ -453,7 +461,7 @@ const FieldWalletTrace = () => {
 												<TableCell className="text-right align-top tabular-nums">
 													<div className="inline-block text-right">
 														<span className="font-semibold block">{formatMoney(t.deposit)}</span>
-														{wAt ? (
+														{wRow ? (
 															<span className="block text-xs font-normal text-muted-foreground mt-0.5 max-w-[13rem] ml-auto leading-snug">
 																Same day (formula): {formatMoney(rawDep)}
 															</span>
@@ -461,18 +469,25 @@ const FieldWalletTrace = () => {
 													</div>
 												</TableCell>
 												<TableCell>
-													{wAt ? (
+													{wRow ? (
 														<div className="space-y-1">
 															<span className="inline-flex flex-wrap items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
 																<CheckCircle2 className="h-4 w-4 shrink-0" />
 																Withdrawn
 																<span className="text-xs text-muted-foreground">
-																	({new Date(wAt).toLocaleString()})
+																	({new Date(wRow.created_at).toLocaleString()})
 																</span>
 															</span>
 															<p className="text-xs tabular-nums text-muted-foreground">
-																After withdraw — total to bank: <span className="font-medium text-foreground">{formatMoney(rawDep)}</span>
+																To bank: <span className="font-medium text-foreground">{formatMoney(banked)}</span>
 															</p>
+															{carried > 0 ? (
+																<p className="text-xs tabular-nums text-muted-foreground">
+																	Carried to next day
+																	{wRow.next_business_date ? ` (${wRow.next_business_date})` : ''}:{' '}
+																	<span className="font-medium text-foreground">{formatMoney(carried)}</span>
+																</p>
+															) : null}
 														</div>
 													) : (
 														<div className="text-sm text-muted-foreground">

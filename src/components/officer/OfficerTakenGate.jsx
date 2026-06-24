@@ -46,7 +46,7 @@ function normalizeHolidayDate(h) {
 /**
  * Loan officers: on working days, must record "taken" (float) before using the app.
  * On Sundays and configured public holidays, shows "No work today" with OK (no taken required).
- * Saving taken dispatches `officer-field-taken-updated` so pages can refetch.
+ * Prefilled taken from end-of-day withdraw requires confirm on first login that working day.
  */
 const OfficerTakenGate = () => {
   const { user, signOut } = useAuth();
@@ -57,10 +57,11 @@ const OfficerTakenGate = () => {
   const [showNoWorkModal, setShowNoWorkModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [todayStr, setTodayStr] = useState('');
+  /** Row prefilled at withdraw; needs confirm (confirmed_at null). */
+  const [prefilledRow, setPrefilledRow] = useState(null);
 
   const [yesterdayDeposit, setYesterdayDeposit] = useState(null);
   const [depositLoading, setDepositLoading] = useState(false);
-  /** When yesterday deposit > 0: use_deposit | add_on. When 0: manual only. */
   const [mode, setMode] = useState('use_deposit');
   const [extraOnTop, setExtraOnTop] = useState('');
   const [manualTaken, setManualTaken] = useState('');
@@ -70,12 +71,14 @@ const OfficerTakenGate = () => {
       setResolved(true);
       setNeedsGate(false);
       setShowNoWorkModal(false);
+      setPrefilledRow(null);
       return;
     }
     if (!user?.id) {
       setResolved(true);
       setNeedsGate(false);
       setShowNoWorkModal(false);
+      setPrefilledRow(null);
       return;
     }
     setResolved(false);
@@ -95,18 +98,20 @@ const OfficerTakenGate = () => {
         setResolved(true);
         setNeedsGate(false);
         setShowNoWorkModal(false);
+        setPrefilledRow(null);
         return;
       }
       setResolved(true);
       setNeedsGate(false);
       setShowNoWorkModal(true);
+      setPrefilledRow(null);
       return;
     }
 
     setShowNoWorkModal(false);
     const { data, error } = await supabase
       .from('officer_field_taken')
-      .select('id')
+      .select('id, amount_taken, prefilled_at, confirmed_at')
       .eq('officer_id', user.id)
       .eq('business_date', d)
       .maybeSingle();
@@ -116,20 +121,33 @@ const OfficerTakenGate = () => {
       toast({ title: 'Could not verify float', description: error.message, variant: 'destructive' });
       setResolved(true);
       setNeedsGate(true);
+      setPrefilledRow(null);
       return;
     }
+
+    const needsConfirm = !!(data?.prefilled_at && !data?.confirmed_at);
+    setPrefilledRow(needsConfirm ? data : null);
     setResolved(true);
-    setNeedsGate(!data?.id);
+    setNeedsGate(!data?.id || needsConfirm);
   }, [user?.id, role, toast]);
 
   useEffect(() => {
     checkToday();
   }, [checkToday]);
 
-  /** Load yesterday's closing deposit and reset form when gate opens. */
   useEffect(() => {
     if (!needsGate || !user?.id || !todayStr) return;
     let cancelled = false;
+
+    if (prefilledRow) {
+      setDepositLoading(false);
+      setYesterdayDeposit(null);
+      setMode('manual');
+      setExtraOnTop('');
+      setManualTaken(String(Number(prefilledRow.amount_taken) || 0));
+      return undefined;
+    }
+
     setDepositLoading(true);
     setYesterdayDeposit(null);
     setMode('use_deposit');
@@ -158,9 +176,12 @@ const OfficerTakenGate = () => {
     return () => {
       cancelled = true;
     };
-  }, [needsGate, todayStr, user?.id]);
+  }, [needsGate, todayStr, user?.id, prefilledRow]);
 
   const totalTakenToday = useMemo(() => {
+    if (prefilledRow) {
+      return parseAmountInput(manualTaken);
+    }
     if (depositLoading || yesterdayDeposit === null) return null;
     if (yesterdayDeposit > 0) {
       if (mode === 'use_deposit') return yesterdayDeposit;
@@ -168,7 +189,7 @@ const OfficerTakenGate = () => {
       return NaN;
     }
     return parseAmountInput(manualTaken);
-  }, [depositLoading, yesterdayDeposit, mode, extraOnTop, manualTaken]);
+  }, [prefilledRow, depositLoading, yesterdayDeposit, mode, extraOnTop, manualTaken]);
 
   const handleSave = async () => {
     if (totalTakenToday === null || Number.isNaN(totalTakenToday) || totalTakenToday < 0) {
@@ -178,18 +199,25 @@ const OfficerTakenGate = () => {
     if (!user?.id || !todayStr) return;
     setSaving(true);
     try {
+      const nowIso = new Date().toISOString();
       const { error } = await supabase.from('officer_field_taken').upsert(
         {
           officer_id: user.id,
           business_date: todayStr,
           amount_taken: totalTakenToday,
+          confirmed_at: nowIso,
+          updated_at: nowIso,
         },
         { onConflict: 'officer_id,business_date' }
       );
       if (error) throw error;
       setNeedsGate(false);
+      setPrefilledRow(null);
       window.dispatchEvent(new CustomEvent('officer-field-taken-updated'));
-      toast({ title: 'Saved', description: "Today's float recorded." });
+      toast({
+        title: 'Saved',
+        description: prefilledRow ? "Today's planned float confirmed." : "Today's float recorded.",
+      });
     } catch (e) {
       toast({ title: 'Save failed', description: e.message, variant: 'destructive' });
     } finally {
@@ -263,7 +291,36 @@ const OfficerTakenGate = () => {
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">Business date (Africa/Nairobi): {todayStr}</p>
 
-        {depositLoading ? (
+        {prefilledRow ? (
+          <>
+            <div className="mt-4 rounded-md border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-sm dark:border-emerald-900 dark:bg-emerald-950/30">
+              <p className="font-medium text-foreground">Planned from yesterday&apos;s withdraw</p>
+              <p className="mt-1 text-muted-foreground">
+                You entered this amount when you withdrew to bank. Confirm or edit before you continue.
+              </p>
+            </div>
+            <div className="mt-4 space-y-2">
+              <Label htmlFor="officer-taken-prefilled">Total taken today</Label>
+              <Input
+                id="officer-taken-prefilled"
+                type="text"
+                inputMode="decimal"
+                autoComplete="off"
+                value={manualTaken}
+                onChange={(e) => setManualTaken(e.target.value)}
+                className="text-lg tabular-nums"
+              />
+            </div>
+            <div className="mt-4 rounded-md border border-brand-gold/30 bg-brand-gold/5 px-3 py-2 text-sm">
+              <span className="font-medium">Total taken today (saved): </span>
+              <span className="tabular-nums font-bold">
+                {totalTakenToday !== null && !Number.isNaN(totalTakenToday)
+                  ? totalTakenToday.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                  : '—'}
+              </span>
+            </div>
+          </>
+        ) : depositLoading ? (
           <div className="mt-6 flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading yesterday&apos;s closing deposit…
@@ -321,7 +378,9 @@ const OfficerTakenGate = () => {
 
             {yesterdayDeposit != null && yesterdayDeposit <= 0 && (
               <div className="mt-4 space-y-2">
-                <p className="text-sm text-muted-foreground">There was no closing deposit yesterday (or it was zero). Enter today&apos;s total taken from the office, or <strong>0</strong> if you have no float.</p>
+                <p className="text-sm text-muted-foreground">
+                  There was no closing deposit yesterday (or it was zero). Enter today&apos;s total taken from the office, or <strong>0</strong> if you have no float.
+                </p>
                 <Label htmlFor="officer-taken-manual">Total taken today</Label>
                 <Input
                   id="officer-taken-manual"
@@ -355,9 +414,13 @@ const OfficerTakenGate = () => {
           <Button type="button" variant="outline" onClick={() => signOut()} disabled={saving || depositLoading}>
             Sign out
           </Button>
-          <Button type="button" onClick={handleSave} disabled={saving || depositLoading || totalTakenToday === null || Number.isNaN(totalTakenToday)}>
+          <Button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || depositLoading || totalTakenToday === null || Number.isNaN(totalTakenToday)}
+          >
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-            Save and continue
+            {prefilledRow ? 'Confirm and continue' : 'Save and continue'}
           </Button>
         </div>
       </div>
