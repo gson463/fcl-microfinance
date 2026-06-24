@@ -53,7 +53,7 @@ const UserManagement = () => {
   const [branches, setBranches] = useState([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [formData, setFormData] = useState({ full_name: '', email: '', password: '', role: '', branch_id: '' });
+  const [formData, setFormData] = useState({ full_name: '', email: '', password: '', role: '', branch_id: '', phone_number: '' });
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
@@ -259,13 +259,14 @@ const UserManagement = () => {
       setFormData({ 
         full_name: user.full_name, 
         email: user.email, 
-        password: '', // Reset password field
+        password: '',
         role: user.role, 
-        branch_id: user.branch_id || '' 
+        branch_id: user.branch_id || '',
+        phone_number: user.phone_number || '',
       });
     } else { // For creating a new user
       setEditingUser(null);
-      setFormData({ full_name: '', email: '', password: '', role: '', branch_id: '' });
+      setFormData({ full_name: '', email: '', password: '', role: '', branch_id: '', phone_number: '' });
     }
     setDialogOpen(true);
   };
@@ -275,19 +276,28 @@ const UserManagement = () => {
     let error;
 
     if (editingUser) {
-        if (!formData.password) {
-            toast({ title: 'Error', description: 'Please enter a new password to reset.', variant: 'destructive' });
+        const nameChanged = formData.full_name.trim() !== (editingUser.full_name || '').trim();
+        const emailChanged = formData.email.trim().toLowerCase() !== (editingUser.email || '').trim().toLowerCase();
+        const phoneChanged = (formData.phone_number || '').trim() !== (editingUser.phone_number || '').trim();
+        const hasPassword = !!formData.password?.trim();
+        if (!nameChanged && !emailChanged && !phoneChanged && !hasPassword) {
+            toast({ title: 'Nothing to save', description: 'Change name, email, phone, or enter a new password.', variant: 'destructive' });
             setIsSaving(false);
             return;
         }
+        if (!formData.full_name?.trim() || !formData.email?.trim()) {
+            toast({ title: 'Error', description: 'Name and email are required.', variant: 'destructive' });
+            setIsSaving(false);
+            return;
+        }
+        const body = { userId: editingUser.id };
+        if (nameChanged) body.full_name = formData.full_name.trim();
+        if (emailChanged) body.email = formData.email.trim().toLowerCase();
+        if (phoneChanged) body.phone_number = formData.phone_number.trim();
+        if (hasPassword) body.password = formData.password;
         const { error: invokeError } = await invokeEdgeFunction(
           'update-user',
-          {
-            body: {
-              userId: editingUser.id,
-              password: formData.password,
-            },
-          },
+          { body },
           session?.access_token,
         );
         error = invokeError;
@@ -522,22 +532,37 @@ const UserManagement = () => {
                 <DialogHeader>
                   <DialogTitle>{editingUser ? `Edit User: ${editingUser.full_name}` : 'Add New User'}</DialogTitle>
                   <DialogDescription className="sr-only">
-                    Create a new user or reset an existing user password. Assign role and branch where applicable.
+                    Create a new user or update an existing user profile. Assign role and branch where applicable.
                   </DialogDescription>
-                  {editingUser && <CardDescription>You can only reset the password for this user. Role and branch are shown for reference.</CardDescription>}
+                  {editingUser && (
+                    <CardDescription>
+                      Update name, email, or phone. Portfolio and loans stay on this account (same user ID). To move
+                      portfolio between officers, use Officer transfer or territory swap. Password is optional.
+                    </CardDescription>
+                  )}
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
                     <Label htmlFor="full_name">Full Name</Label>
-                    <Input id="full_name" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })} disabled={!isCreateFlow}/>
+                    <Input id="full_name" value={formData.full_name} onChange={(e) => setFormData({ ...formData, full_name: e.target.value })} />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} disabled={!isCreateFlow} />
+                    <Input id="email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
                   </div>
+                  {editingUser && (
+                    <div className="space-y-2">
+                      <Label htmlFor="phone_number">Phone</Label>
+                      <Input
+                        id="phone_number"
+                        value={formData.phone_number}
+                        onChange={(e) => setFormData({ ...formData, phone_number: e.target.value })}
+                      />
+                    </div>
+                  )}
                   <div className="space-y-2">
                     <Label htmlFor="password">Password</Label>
-                    <Input id="password" type="password" placeholder={editingUser ? 'Enter new password to reset' : ''} value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                    <Input id="password" type="password" placeholder={editingUser ? 'Leave blank to keep current password' : ''} value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
                   </div>
                   {!isCreateFlow && editingUser ? (
                     <>
@@ -602,7 +627,7 @@ const UserManagement = () => {
                     </>
                   )}
                   <Button onClick={handleSave} className="w-full" disabled={isSaving}>
-                    {isSaving ? <><RotateCw className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : (editingUser ? 'Reset Password' : 'Create User')}
+                    {isSaving ? <><RotateCw className="mr-2 h-4 w-4 animate-spin" /> Saving...</> : (editingUser ? 'Save changes' : 'Create User')}
                   </Button>
                 </div>
               </DialogContent>
@@ -719,8 +744,9 @@ const UserManagement = () => {
                   <DialogHeader>
                     <DialogTitle>Bulk assign branch</DialogTitle>
                     <DialogDescription>
-                      Sets <span className="font-medium text-foreground">branch</span> for selected managers and officers.
-                      Admin accounts are not changed.
+                      Sets <span className="font-medium text-foreground">branch</span> on the user profile only for
+                      selected managers and officers. It does <strong>not</strong> move centres, groups, borrowers, or
+                      loans. For relocation with portfolio, use Admin → Officer transfer → Territory swap.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3 py-2">

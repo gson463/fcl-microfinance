@@ -292,19 +292,26 @@ const LoanOfficerManagement = () => {
     let error;
 
     if (editingOfficer) {
-      if (!formData.password) {
-        toast({ title: 'Error', description: 'Please enter a new password to reset.', variant: 'destructive' });
+      const nameChanged = formData.full_name.trim() !== (editingOfficer.full_name || '').trim();
+      const emailChanged = formData.email.trim().toLowerCase() !== (editingOfficer.email || '').trim().toLowerCase();
+      const hasPassword = !!formData.password?.trim();
+      if (!nameChanged && !emailChanged && !hasPassword) {
+        toast({ title: 'Nothing to save', description: 'Change name or email, or enter a new password.', variant: 'destructive' });
         setSaving(false);
         return;
       }
+      if (!formData.full_name?.trim() || !formData.email?.trim()) {
+        toast({ title: 'Error', description: 'Name and email are required.', variant: 'destructive' });
+        setSaving(false);
+        return;
+      }
+      const body = { userId: editingOfficer.id };
+      if (nameChanged) body.full_name = formData.full_name.trim();
+      if (emailChanged) body.email = formData.email.trim().toLowerCase();
+      if (hasPassword) body.password = formData.password;
       const { error: invokeError } = await invokeEdgeFunction(
         'update-user',
-        {
-          body: {
-            userId: editingOfficer.id,
-            password: formData.password,
-          },
-        },
+        { body },
         session?.access_token,
       );
       error = invokeError;
@@ -344,7 +351,7 @@ const LoanOfficerManagement = () => {
       const errorData = error.context ? await error.context.json() : { error: error.message };
       toast({ title: `Error ${editingOfficer ? 'updating' : 'creating'} officer`, description: errorData.error, variant: 'destructive' });
     } else {
-      toast({ title: 'Success', description: `Officer ${editingOfficer ? 'password reset' : 'registered'} successfully.` });
+      toast({ title: 'Success', description: `Officer ${editingOfficer ? 'updated' : 'registered'} successfully.` });
       setDialogOpen(false);
       fetchOfficers();
     }
@@ -563,24 +570,29 @@ const LoanOfficerManagement = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingOfficer ? `Edit Officer: ${editingOfficer.full_name}` : 'Register New Loan Officer'}</DialogTitle>
-            {editingOfficer && <CardDescription>You can only reset the password for this user.</CardDescription>}
+            {editingOfficer && (
+              <CardDescription>
+                Update name or email. Their portfolio stays on this account. Password is optional. To swap branches and
+                portfolios with another officer, ask an admin to use Territory swap.
+              </CardDescription>
+            )}
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label htmlFor="officer-name">Name</Label>
-              <Input id="officer-name" placeholder="John Doe" value={formData.full_name} onChange={e => setFormData({ ...formData, full_name: e.target.value })} disabled={!isCreateFlow} />
+              <Input id="officer-name" placeholder="John Doe" value={formData.full_name} onChange={e => setFormData({ ...formData, full_name: e.target.value })} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="officer-email">Email</Label>
-              <Input id="officer-email" type="email" placeholder="officer@example.com" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} disabled={!isCreateFlow} />
+              <Input id="officer-email" type="email" placeholder="officer@example.com" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="officer-password">Password</Label>
-              <Input id="officer-password" type="password" placeholder={editingOfficer ? 'Enter new password to reset' : '••••••••'} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+              <Input id="officer-password" type="password" placeholder={editingOfficer ? 'Leave blank to keep current password' : '••••••••'} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
             </div>
             <Button onClick={handleSave} disabled={saving} className="w-full">
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              {editingOfficer ? 'Reset Password' : 'Register Officer'}
+              {editingOfficer ? 'Save changes' : 'Register Officer'}
             </Button>
           </div>
         </DialogContent>

@@ -194,41 +194,147 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { userId, password } = body as { userId?: string; password?: string };
-    if (!userId || !password) {
-      return new Response(JSON.stringify({ error: "userId and password required" }), {
+    const {
+      userId,
+      password,
+      full_name: fullNameRaw,
+      email: emailRaw,
+      phone_number: phoneRaw,
+    } = body as {
+      userId?: string;
+      password?: string;
+      full_name?: string;
+      email?: string;
+      phone_number?: string;
+    };
+
+    if (!userId) {
+      return new Response(JSON.stringify({ error: "userId is required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    if (callerRole === "manager") {
-      const { data: target } = await supabaseAdmin
-        .from("users")
-        .select("id, role, branch_id")
-        .eq("id", userId)
-        .maybeSingle();
+    const passwordStr = typeof password === "string" && password.trim() !== "" ? password : null;
+    const fullNameStr = typeof fullNameRaw === "string" ? fullNameRaw.trim() : null;
+    const emailStr = typeof emailRaw === "string" ? emailRaw.trim().toLowerCase() : null;
+    const phoneStr =
+      phoneRaw === null || phoneRaw === undefined
+        ? null
+        : typeof phoneRaw === "string"
+          ? phoneRaw.trim()
+          : null;
 
-      if (!target || target.role !== "officer") {
+    if (!passwordStr && !fullNameStr && !emailStr && phoneStr === null) {
+      return new Response(
+        JSON.stringify({ error: "Provide at least one of: password, full_name, email, phone_number" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const { data: targetRow, error: targetErr } = await supabaseAdmin
+      .from("users")
+      .select("id, full_name, email, role, branch_id, phone_number")
+      .eq("id", userId)
+      .maybeSingle();
+
+    if (targetErr || !targetRow?.id) {
+      return new Response(JSON.stringify({ error: "User not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    if (callerRole === "manager") {
+      if (targetRow.role !== "officer") {
         return new Response(
-          JSON.stringify({ error: "Managers can only reset passwords for loan officers" }),
+          JSON.stringify({ error: "Managers can only update loan officers" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
       const a = normUuid(callerBranchId);
-      const b = normUuid(target.branch_id);
+      const b = normUuid(targetRow.branch_id);
       if (!a || !b || a !== b) {
         return new Response(
-          JSON.stringify({ error: "You can only reset passwords for officers in your branch" }),
+          JSON.stringify({ error: "You can only update officers in your branch" }),
           { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
       }
     }
 
-    const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
-      password: String(password),
+    if (emailStr && emailStr !== String(targetRow.email ?? "").trim().toLowerCase()) {
+      const { data: emailConflict } = await supabaseAdmin
+        .from("users")
+        .select("id")
+        .ilike("email", emailStr)
+        .neq("id", userId)
+        .maybeSingle();
+      if (emailConflict?.id) {
+        return new Response(JSON.stringify({ error: "Email is already used by another user" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    const { data: authTarget, error: authTargetErr } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (authTargetErr || !authTarget.user) {
+      return new Response(JSON.stringify({ error: "Auth user not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const authMeta = (authTarget.user.user_metadata ?? {}) as Record<string, unknown>;
+    const nextFullName = fullNameStr ?? targetRow.full_name ?? "";
+    const nextEmail = emailStr ?? String(targetRow.email ?? authTarget.user.email ?? "").trim().toLowerCase();
+    const nextPhone = phoneStr !== null ? (phoneStr === "" ? null : phoneStr) : targetRow.phone_number;
+
+    const authUpdate: {
+      email?: string;
+      password?: string;
+      user_metadata?: Record<string, unknown>;
+    } = {
+      user_metadata: {
+        ...authMeta,
+        full_name: nextFullName,
+        role: targetRow.role,
+        branch_id: targetRow.branch_id,
+      },
+    };
+    if (emailStr) authUpdate.email = nextEmail;
+    if (passwordStr) authUpdate.password = passwordStr;
+
+    const { error: authUpdateErr } = await supabaseAdmin.auth.admin.updateUserById(userId, authUpdate);
+    if (authUpdateErr) throw authUpdateErr;
+
+    const pubUpdate: Record<string, unknown> = {
+      full_name: nextFullName,
+      email: nextEmail,
+      updated_at: new Date().toISOString(),
+    };
+    if (phoneStr !== null) pubUpdate.phone_number = nextPhone;
+
+    const { error: pubUpdateErr } = await supabaseAdmin.from("users").update(pubUpdate).eq("id", userId);
+    if (pubUpdateErr) throw pubUpdateErr;
+
+    const { error: auditErr } = await supabaseAdmin.from("audit_logs").insert({
+      user_id: jwtUser.user.id,
+      action: "user.profile.update",
+      entity_type: "user",
+      entity_id: userId,
+      metadata: {
+        target_role: targetRow.role,
+        changed: {
+          full_name: fullNameStr ? { from: targetRow.full_name, to: nextFullName } : undefined,
+          email: emailStr ? { from: targetRow.email, to: nextEmail } : undefined,
+          phone_number:
+            phoneStr !== null ? { from: targetRow.phone_number, to: nextPhone } : undefined,
+          password: passwordStr ? true : undefined,
+        },
+      },
     });
-    if (error) throw error;
+    if (auditErr) console.warn("audit_logs profile update:", auditErr);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

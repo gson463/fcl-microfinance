@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
-import { AlertTriangle, ArrowRightLeft, UserCheck, RotateCw, Building, Users2, User } from 'lucide-react';
+import { AlertTriangle, ArrowRightLeft, UserCheck, RotateCw, Building, Users2, User, Repeat2 } from 'lucide-react';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
@@ -21,6 +21,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const OfficerReassignment = () => {
   const { toast } = useToast();
@@ -36,6 +37,13 @@ const OfficerReassignment = () => {
 
   const [sourceOfficerId, setSourceOfficerId] = useState('');
   const [targetOfficerId, setTargetOfficerId] = useState('');
+
+  const [mode, setMode] = useState('transfer');
+  const [swapOfficerA, setSwapOfficerA] = useState('');
+  const [swapOfficerB, setSwapOfficerB] = useState('');
+  const [swapPreview, setSwapPreview] = useState(null);
+  const [loadingSwapPreview, setLoadingSwapPreview] = useState(false);
+  const [swapProcessing, setSwapProcessing] = useState(false);
 
   const [transferEverything, setTransferEverything] = useState(true);
   const [transferExpensesWithRebalance, setTransferExpensesWithRebalance] = useState(true);
@@ -108,6 +116,104 @@ const OfficerReassignment = () => {
     };
     fetchResources();
   }, [sourceOfficerId, toast]);
+
+  const branchNameFor = useCallback(
+    (branchId) => branches.find((b) => b.id === branchId)?.name || 'No branch',
+    [branches]
+  );
+
+  useEffect(() => {
+    if (mode !== 'swap' || !swapOfficerA || !swapOfficerB || swapOfficerA === swapOfficerB) {
+      setSwapPreview(null);
+      return;
+    }
+
+    let cancelled = false;
+    const loadPreview = async () => {
+      setLoadingSwapPreview(true);
+      try {
+        const loadFor = async (officerId) => {
+          const [{ count: centersCount }, { count: borrowersCount }, { count: loansCount }] = await Promise.all([
+            supabase.from('centers').select('id', { count: 'exact', head: true }).eq('loan_officer_id', officerId),
+            supabase.from('borrowers').select('id', { count: 'exact', head: true }).eq('loan_officer_id', officerId),
+            supabase
+              .from('loans')
+              .select('id', { count: 'exact', head: true })
+              .eq('officer_id', officerId)
+              .in('status', ['active', 'delinquent', 'defaulted']),
+          ]);
+          return {
+            centers: centersCount ?? 0,
+            borrowers: borrowersCount ?? 0,
+            activeLoans: loansCount ?? 0,
+          };
+        };
+
+        const officerA = officers.find((o) => o.id === swapOfficerA);
+        const officerB = officers.find((o) => o.id === swapOfficerB);
+        const [statsA, statsB] = await Promise.all([loadFor(swapOfficerA), loadFor(swapOfficerB)]);
+
+        if (cancelled) return;
+        setSwapPreview({
+          a: { officer: officerA, branchName: branchNameFor(officerA?.branch_id), ...statsA },
+          b: { officer: officerB, branchName: branchNameFor(officerB?.branch_id), ...statsB },
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error(error);
+          toast({ title: 'Preview failed', description: error.message, variant: 'destructive' });
+          setSwapPreview(null);
+        }
+      } finally {
+        if (!cancelled) setLoadingSwapPreview(false);
+      }
+    };
+
+    loadPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, swapOfficerA, swapOfficerB, officers, branchNameFor, toast]);
+
+  const handleSwapTerritories = async () => {
+    if (!swapOfficerA || !swapOfficerB) {
+      toast({ title: 'Error', description: 'Select both officers to swap.', variant: 'destructive' });
+      return;
+    }
+    if (swapOfficerA === swapOfficerB) {
+      toast({ title: 'Error', description: 'Officers must be different.', variant: 'destructive' });
+      return;
+    }
+
+    setSwapProcessing(true);
+    try {
+      const { data, error } = await supabase.rpc('admin_swap_officer_territories', {
+        p_officer_a: swapOfficerA,
+        p_officer_b: swapOfficerB,
+      });
+      if (error) throw error;
+
+      const counts = data?.counts || {};
+      toast({
+        title: 'Territory swap complete',
+        description: `Swapped branches and portfolios. ${counts.loans ?? 0} loan row(s), ${counts.borrowers ?? 0} borrower(s) updated.`,
+      });
+
+      setSwapOfficerA('');
+      setSwapOfficerB('');
+      setSwapPreview(null);
+      await fetchData();
+    } catch (error) {
+      console.error('Swap error:', error);
+      toast({
+        title: 'Swap failed',
+        description: error.message || 'An error occurred during the swap.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSwapProcessing(false);
+    }
+  };
 
   const getOfficerLabel = (officer) => {
     const branch = branches.find((b) => b.id === officer.branch_id);
@@ -368,7 +474,7 @@ const OfficerReassignment = () => {
 
   if (loading) {
     return (
-      <DashboardLayout title="Officer & borrower transfer">
+      <DashboardLayout title="Officer transfer & territory swap">
         <div className="flex justify-center py-16">
           <RotateCw className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
@@ -377,8 +483,15 @@ const OfficerReassignment = () => {
   }
 
   return (
-    <DashboardLayout title="Officer & borrower transfer">
+    <DashboardLayout title="Officer transfer & territory swap">
       <div className="max-w-5xl mx-auto space-y-6">
+        <Tabs value={mode} onValueChange={setMode} className="w-full">
+          <TabsList className="grid w-full max-w-md grid-cols-2">
+            <TabsTrigger value="transfer">One-way transfer</TabsTrigger>
+            <TabsTrigger value="swap">Territory swap</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="transfer" className="space-y-6 mt-6">
         <div className="mb-6 flex items-start gap-4">
           <div className="rounded-full bg-brand-gold/15 p-3">
             <ArrowRightLeft className="h-8 w-8 text-brand-gold-deep" aria-hidden />
@@ -769,6 +882,180 @@ const OfficerReassignment = () => {
             </CardContent>
           </Card>
         )}
+          </TabsContent>
+
+          <TabsContent value="swap" className="space-y-6 mt-6">
+            <div className="mb-6 flex items-start gap-4">
+              <div className="rounded-full bg-violet-100 p-3 dark:bg-violet-950/40">
+                <Repeat2 className="h-8 w-8 text-violet-700 dark:text-violet-300" aria-hidden />
+              </div>
+              <div>
+                <p className="text-sm text-neutral-600">
+                  Swap two loan officers&apos; <strong>branches and full portfolios</strong> in one step. Each officer
+                  takes the other&apos;s branch, centres, groups, borrowers, loans, repayments, and expenses. Use this
+                  when both officers are relocating and exchanging territories — not when only one officer is leaving.
+                </p>
+                <p className="mt-2 flex items-start gap-2 text-xs text-amber-800 dark:text-amber-200/90">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  Field wallet taken/withdraw history stays on each officer&apos;s account (UUID). After swap, update
+                  names or emails separately if new people are using those accounts.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base text-gray-600">Officer A</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Select value={swapOfficerA} onValueChange={setSwapOfficerA}>
+                    <SelectTrigger className="h-12">
+                      <SelectValue placeholder="Select first officer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {officers
+                        .filter((o) => o.id !== swapOfficerB)
+                        .map((officer) => (
+                          <SelectItem key={officer.id} value={officer.id}>
+                            {getOfficerLabel(officer)}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base text-gray-600">Officer B</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <Select value={swapOfficerB} onValueChange={setSwapOfficerB}>
+                    <SelectTrigger className="h-12">
+                      <SelectValue placeholder="Select second officer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {officers
+                        .filter((o) => o.id !== swapOfficerA)
+                        .map((officer) => (
+                          <SelectItem key={officer.id} value={officer.id}>
+                            {getOfficerLabel(officer)}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </CardContent>
+              </Card>
+            </div>
+
+            {swapOfficerA && swapOfficerB && swapOfficerA !== swapOfficerB && (
+              <Card className="border-violet-200 shadow-md">
+                <CardHeader className="bg-violet-50 border-b border-violet-100 dark:bg-violet-950/30">
+                  <CardTitle className="text-violet-900 dark:text-violet-100">Swap preview</CardTitle>
+                  <CardDescription>
+                    After swap, each officer&apos;s branch and portfolio counts will exchange.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="p-6">
+                  {loadingSwapPreview ? (
+                    <div className="flex justify-center py-10">
+                      <RotateCw className="h-8 w-8 animate-spin text-gray-400" />
+                    </div>
+                  ) : swapPreview ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {['a', 'b'].map((key) => {
+                        const side = swapPreview[key];
+                        const otherKey = key === 'a' ? 'b' : 'a';
+                        const other = swapPreview[otherKey];
+                        return (
+                          <div key={key} className="rounded-lg border p-4 space-y-3">
+                            <p className="font-semibold">{side.officer?.full_name}</p>
+                            <div className="text-sm space-y-1 text-muted-foreground">
+                              <p>
+                                Branch now: <strong className="text-foreground">{side.branchName}</strong>
+                              </p>
+                              <p>
+                                Branch after:{' '}
+                                <strong className="text-foreground">{other.branchName}</strong>
+                              </p>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 pt-2 text-center text-sm">
+                              <div className="rounded bg-muted p-2">
+                                <p className="text-lg font-bold">{side.centers}</p>
+                                <p className="text-xs text-muted-foreground">Centres</p>
+                              </div>
+                              <div className="rounded bg-muted p-2">
+                                <p className="text-lg font-bold">{side.borrowers}</p>
+                                <p className="text-xs text-muted-foreground">Borrowers</p>
+                              </div>
+                              <div className="rounded bg-muted p-2">
+                                <p className="text-lg font-bold">{side.activeLoans}</p>
+                                <p className="text-xs text-muted-foreground">Active loans</p>
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Will receive {other.centers} centre(s), {other.borrowers} borrower(s),{' '}
+                              {other.activeLoans} active loan(s).
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+
+                  <div className="flex justify-end pt-8">
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button
+                          size="lg"
+                          className="w-full md:w-auto min-w-[200px] bg-violet-700 hover:bg-violet-800 text-white"
+                          disabled={!swapPreview || swapProcessing || loadingSwapPreview}
+                        >
+                          {swapProcessing ? (
+                            <RotateCw className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Repeat2 className="mr-2 h-4 w-4" />
+                          )}
+                          {swapProcessing ? 'Swapping…' : 'Confirm territory swap'}
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent className="max-w-lg">
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Confirm territory swap</AlertDialogTitle>
+                          <AlertDialogDescription asChild>
+                            <div className="text-sm text-muted-foreground space-y-3">
+                              <p>
+                                Swap <strong>{swapPreview?.a?.officer?.full_name}</strong> and{' '}
+                                <strong>{swapPreview?.b?.officer?.full_name}</strong> — branches and full portfolios
+                                exchange in one transaction.
+                              </p>
+                              <p className="flex items-start gap-2 text-amber-800 dark:text-amber-200/90">
+                                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                                Cash taken/withdraw history does not swap; each officer keeps their wallet history on
+                                their account.
+                              </p>
+                              <p>This updates live records immediately and cannot be undone from this screen.</p>
+                            </div>
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction
+                            onClick={handleSwapTerritories}
+                            className="bg-violet-700 hover:bg-violet-800"
+                          >
+                            Yes, swap territories
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </DashboardLayout>
   );
