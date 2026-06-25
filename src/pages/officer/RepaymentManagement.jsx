@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { format, parseISO, startOfDay, endOfDay, subDays } from 'date-fns';
+import { format, parseISO, subDays } from 'date-fns';
 import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 import { formatApiErrorValue } from '@/lib/formatApiError';
@@ -38,11 +38,19 @@ import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { scheduledDueRpcName, normalizeWalletPrepaymentSplitMode, WALLET_PREPAYMENT_ARREARS_ONLY } from '@/lib/walletPrepaymentSplitMode';
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
 import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
-import { fetchAllSupabaseRows } from '@/lib/supabaseFetchAllRows';
+import {
+    REPAYMENT_PAGE_SIZE,
+    LOAN_PICKER_SELECT,
+    defaultRepaymentDateRange,
+    fetchRepaymentPage,
+    fetchRepaymentStatsRows,
+    aggregateRepaymentStats,
+    fetchAllFilteredRepayments,
+} from '@/lib/repaymentManagementQuery';
 import { installmentPrincipalInterestPaidDisplay } from '@/lib/installmentScheduleDisplay';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
-const PAGE_SIZE = 25;
+const PAGE_SIZE = REPAYMENT_PAGE_SIZE;
 /** Native <select> avoids Popover+Dialog focus issues (same as Admin → Add User → Assign Branch). */
 const NATIVE_SELECT_DIALOG =
     'flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-background';
@@ -79,12 +87,17 @@ const StatCard = ({ title, value, icon: Icon, color }) => (
 const RepaymentManagement = () => {
     const { user, session } = useAuth();
     const { toast } = useToast();
-    const { branchId: officerProfileBranchId } = useUserProfileScope(user?.id);
+    const { loading: profileLoading, branchId: officerProfileBranchId } = useUserProfileScope(user?.id);
     const [repayments, setRepayments] = useState([]);
+    const [totalRepaymentCount, setTotalRepaymentCount] = useState(0);
+    const [statsRows, setStatsRows] = useState([]);
     const [loans, setLoans] = useState([]);
     const [groups, setGroups] = useState([]);
     const [centers, setCenters] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [listLoading, setListLoading] = useState(false);
+    const [loadAllHistory, setLoadAllHistory] = useState(false);
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currency, setCurrency] = useState('TZS');
     const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -124,7 +137,7 @@ const RepaymentManagement = () => {
     const [groupFilter, setGroupFilter] = useState('all');
     const [centerFilter, setCenterFilter] = useState('all');
     const [borrowerStatusFilter, setBorrowerStatusFilter] = useState('all');
-    const [dateRangeFilter, setDateRangeFilter] = useState(null);
+    const [dateRangeFilter, setDateRangeFilter] = useState(() => defaultRepaymentDateRange());
     const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(1);
 
@@ -132,7 +145,8 @@ const RepaymentManagement = () => {
         setGroupFilter('all');
         setCenterFilter('all');
         setBorrowerStatusFilter('all');
-        setDateRangeFilter(null);
+        setDateRangeFilter(defaultRepaymentDateRange());
+        setLoadAllHistory(false);
         setSearchTerm('');
         setSelectedRepayments([]);
         setPage(1);
@@ -164,8 +178,7 @@ const RepaymentManagement = () => {
     }, []);
 
     /**
-     * Recompute loan statuses for this officer only (can be slow on huge portfolios — do after the list renders).
-     * Never shows raw Postgres text to officers.
+     * Recompute loan statuses after save/delete — not on every page load.
      */
     const refreshOfficerLoanStatusesInBackground = useCallback(async () => {
         if (!user?.id) return;
@@ -190,71 +203,72 @@ const RepaymentManagement = () => {
             }
             const { data: freshLoans, error: lfErr } = await supabase
                 .from('loans')
-                .select('*, borrowers(*, groups(*))')
+                .select(LOAN_PICKER_SELECT)
                 .eq('officer_id', user.id);
             if (!lfErr && freshLoans) setLoans(freshLoans);
         } catch (e) {
-            console.warn('loan status reconciliation after load', e);
+            console.warn('loan status reconciliation after save', e);
         }
     }, [user?.id]);
 
-    const fetchData = useCallback(async () => {
-        if (!user) return;
+    const listFilters = useMemo(
+        () => ({
+            singleOfficerId: user?.id,
+            dateRange: dateRangeFilter,
+            loadAllHistory,
+            centerFilter,
+            groupFilter,
+            borrowerStatusFilter,
+            searchTerm: debouncedSearchTerm,
+        }),
+        [
+            user?.id,
+            dateRangeFilter,
+            loadAllHistory,
+            centerFilter,
+            groupFilter,
+            borrowerStatusFilter,
+            debouncedSearchTerm,
+        ],
+    );
+
+    const fetchMetadata = useCallback(async () => {
+        if (!user || profileLoading) return;
         setLoading(true);
-        let loadSucceeded = false;
         try {
-            const { data: config } = await supabase.from('system_config').select('value').eq('key', 'currency').single();
-            if (config) setCurrency(config.value);
-
-            let { data: loansData, error: loansError } = await supabase
-                .from('loans')
-                .select('*, borrowers(*, groups(*))')
-                .eq('officer_id', user.id);
-            if (loansError) throw loansError;
-            setLoans(loansData || []);
-
-            const repaymentsData = await fetchAllSupabaseRows(
-                () =>
-                    supabase
-                        .from('repayments')
-                        .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
-                        .eq('officer_id', user.id)
-                        .order('actual_payment_date', { ascending: false })
-                        .order('id', { ascending: false }),
-            );
-
-            setRepayments(repaymentsData || []);
-
-            const { data: pendingDeletes } = await supabase
-                .from('repayment_delete_requests')
-                .select('repayment_id')
-                .eq('officer_id', user.id)
-                .eq('status', 'pending');
-            setPendingDeleteRepaymentIds(new Set((pendingDeletes || []).map((p) => p.repayment_id)));
-
-            const { data: groupsData, error: groupsError } = await supabase.from('groups').select('*').eq('loan_officer_id', user.id);
-            if (groupsError) throw groupsError;
-            setGroups(groupsData || []);
-
-            let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
             const bid = officerProfileBranchId ?? user.user_metadata?.branch_id;
+            let centersQuery = supabase.from('centers').select('id, name').eq('loan_officer_id', user.id).order('name');
             if (bid) {
                 centersQuery = centersQuery.eq('branch_id', bid);
             }
-            const { data: centersData, error: centersError } = await centersQuery;
-            if (centersError) throw centersError;
-            setCenters(centersData || []);
 
-            const { data: holidaysData } = await supabase.from('holidays').select('date');
-            setHolidays(holidaysData || []);
+            const [configRes, loansRes, pendingRes, groupsRes, holidaysRes, splitRes, centersRes] =
+                await Promise.all([
+                    supabase.from('system_config').select('value').eq('key', 'currency').maybeSingle(),
+                    supabase.from('loans').select(LOAN_PICKER_SELECT).eq('officer_id', user.id),
+                    supabase
+                        .from('repayment_delete_requests')
+                        .select('repayment_id')
+                        .eq('officer_id', user.id)
+                        .eq('status', 'pending'),
+                    supabase.from('groups').select('*').eq('loan_officer_id', user.id),
+                    supabase.from('holidays').select('date'),
+                    supabase.from('system_config').select('value').eq('key', 'walletPrepaymentSplitMode').maybeSingle(),
+                    centersQuery,
+                ]);
 
-            const { data: splitRow } = await supabase
-                .from('system_config')
-                .select('value')
-                .eq('key', 'walletPrepaymentSplitMode')
-                .maybeSingle();
-            setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRow?.value));
-            loadSucceeded = true;
+            if (configRes.error) throw configRes.error;
+            if (loansRes.error) throw loansRes.error;
+            if (groupsRes.error) throw groupsRes.error;
+            if (centersRes.error) throw centersRes.error;
+
+            if (configRes.data?.value) setCurrency(configRes.data.value);
+            setLoans(loansRes.data || []);
+            setPendingDeleteRepaymentIds(new Set((pendingRes.data || []).map((p) => p.repayment_id)));
+            setGroups(groupsRes.data || []);
+            setCenters(centersRes.data || []);
+            setHolidays(holidaysRes.data || []);
+            setWalletPrepaymentSplitMode(normalizeWalletPrepaymentSplitMode(splitRes.data?.value));
         } catch (error) {
             console.error(error);
             toast({
@@ -265,14 +279,72 @@ const RepaymentManagement = () => {
         } finally {
             setLoading(false);
         }
-        if (loadSucceeded) {
-            void refreshOfficerLoanStatusesInBackground();
+    }, [user, profileLoading, officerProfileBranchId, toast, repaymentFetchFriendlyError]);
+
+    const fetchRepaymentList = useCallback(async () => {
+        if (!user?.id || profileLoading) return;
+        setListLoading(true);
+        try {
+            const [pageResult, statsData] = await Promise.all([
+                fetchRepaymentPage({ supabase, filters: listFilters, page }),
+                fetchRepaymentStatsRows({ supabase, filters: listFilters }),
+            ]);
+            setRepayments(pageResult.rows);
+            setTotalRepaymentCount(pageResult.totalCount);
+            setStatsRows(statsData);
+            setSelectedRepayments([]);
+        } catch (error) {
+            console.error(error);
+            toast({
+                title: 'Could not load collections',
+                description: repaymentFetchFriendlyError(error),
+                variant: 'destructive',
+            });
+        } finally {
+            setListLoading(false);
         }
-    }, [user, toast, officerProfileBranchId, repaymentFetchFriendlyError, refreshOfficerLoanStatusesInBackground]);
+    }, [user?.id, profileLoading, listFilters, page, toast, repaymentFetchFriendlyError]);
+
+    const refreshAfterMutation = useCallback(async () => {
+        await fetchMetadata();
+        await fetchRepaymentList();
+        void refreshOfficerLoanStatusesInBackground();
+    }, [fetchMetadata, fetchRepaymentList, refreshOfficerLoanStatusesInBackground]);
 
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        fetchMetadata();
+    }, [fetchMetadata]);
+
+    useEffect(() => {
+        fetchRepaymentList();
+    }, [fetchRepaymentList]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 350);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, loadAllHistory, debouncedSearchTerm]);
+
+    useEffect(() => {
+        const id = repaymentFormData.loanId;
+        if (!id) return;
+        let cancelled = false;
+        (async () => {
+            const { data: row, error } = await supabase.from('loans').select('schedule').eq('id', id).maybeSingle();
+            if (cancelled || error || !row?.schedule) return;
+            setLoans((prev) => {
+                const existing = prev.find((l) => l.id === id);
+                if (existing?.schedule) return prev;
+                return prev.map((l) => (l.id === id ? { ...l, schedule: row.schedule } : l));
+            });
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [repaymentFormData.loanId]);
 
     /** Keep group filter valid when center changes (portfolio table). */
     useEffect(() => {
@@ -396,96 +468,50 @@ const RepaymentManagement = () => {
         return groups.filter((g) => g.center_id === centerFilter);
     }, [groups, centerFilter]);
 
-    const filteredRepayments = useMemo(() => {
-        return repayments.filter(r => {
-            const borrowerRow = r.loans?.borrowers;
-            const centerMatch = borrowerMatchesCenter(borrowerRow, centerFilter);
-            const groupMatch = borrowerMatchesGroup(borrowerRow, groupFilter);
-            const statusMatch =
-                borrowerStatusFilter === 'all' || borrowerRow?.status === borrowerStatusFilter;
-            const dateMatch = !dateRangeFilter?.from || (
-                new Date(r.actual_payment_date) >= startOfDay(dateRangeFilter.from) &&
-                new Date(r.actual_payment_date) <= endOfDay(dateRangeFilter.to || dateRangeFilter.from)
-            );
+    const pagedRepayments = repayments;
+    const totalPages = Math.max(1, Math.ceil(totalRepaymentCount / PAGE_SIZE));
 
-            const searchLower = searchTerm.toLowerCase();
-            const loanId = r.loans?.loan_id?.toLowerCase() || '';
-            const fName = r.loans?.borrowers?.first_name?.toLowerCase() || '';
-            const sName = r.loans?.borrowers?.surname?.toLowerCase() || '';
-            const borrowerName = `${fName} ${sName}`;
-            const borrowerId = r.loans?.borrowers?.borrower_id?.toLowerCase() || '';
-
-            const searchMatch = !searchTerm || 
-                loanId.includes(searchLower) ||
-                borrowerName.includes(searchLower) ||
-                borrowerId.includes(searchLower);
-
-            return centerMatch && groupMatch && statusMatch && dateMatch && searchMatch;
-        });
-    }, [repayments, centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
-
-    useEffect(() => {
-        setPage(1);
-    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
-
-    const pagedRepayments = useMemo(() => {
-        const start = (page - 1) * PAGE_SIZE;
-        return filteredRepayments.slice(start, start + PAGE_SIZE);
-    }, [filteredRepayments, page]);
-
-    const totalPages = Math.max(1, Math.ceil(filteredRepayments.length / PAGE_SIZE));
-    
     const stats = useMemo(() => {
-        const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
-        const totalPrepayment = filteredRepayments.reduce((sum, r) => sum + prepaymentAmount(r), 0);
-        const totalScheduledCollection = filteredRepayments.reduce(
-            (sum, r) => sum + scheduledCollectionAmount(r),
-            0
-        );
-        const totalInterest = filteredRepayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0);
-        const totalPrincipalPaid = filteredRepayments.reduce((sum, r) => sum + (r.principal_paid || 0), 0);
-        
-        // Stats calculation needs to be aware of the search scope to be meaningful, but currently calculates
-        // outstanding principal based on *loans* associated with the filtered repayments, or all loans if filtering logic is tricky.
-        // Simplified approach: Calculate outstanding principal for all loans that match the current filters
-        
-        const relevantLoans = loans.filter(l => {
+        const base = aggregateRepaymentStats(statsRows);
+        const relevantLoans = loans.filter((l) => {
             const b = l.borrowers;
             const centerMatch = borrowerMatchesCenter(b, centerFilter);
             const groupMatch = borrowerMatchesGroup(b, groupFilter);
             const statusMatch =
                 borrowerStatusFilter === 'all' || b?.status === borrowerStatusFilter;
 
-            const searchLower = searchTerm.toLowerCase();
+            const searchLower = debouncedSearchTerm.toLowerCase();
             const loanId = l.loan_id?.toLowerCase() || '';
             const fName = l.borrowers?.first_name?.toLowerCase() || '';
             const sName = l.borrowers?.surname?.toLowerCase() || '';
             const borrowerName = `${fName} ${sName}`;
             const borrowerId = l.borrowers?.borrower_id?.toLowerCase() || '';
 
-            const searchMatch = !searchTerm || 
+            const searchMatch =
+                !debouncedSearchTerm ||
                 loanId.includes(searchLower) ||
                 borrowerName.includes(searchLower) ||
                 borrowerId.includes(searchLower);
 
-            return centerMatch && groupMatch && statusMatch && searchMatch; // Date range applies to repayments, not loans generally, so we exclude it here for portfolio health context
+            return centerMatch && groupMatch && statusMatch && searchMatch;
         });
-        
-        let totalOutstandingPrincipal = relevantLoans.reduce((sum, loan) => {
-             if (loan.status === 'paid' || loan.status === 'written_off') return sum;
-             const principalPaid = loan.schedule?.reduce((s, i) => s + (i.principalPaid || 0), 0) || 0;
-             return sum + (loan.principal - principalPaid);
+
+        const totalOutstandingPrincipal = relevantLoans.reduce((sum, loan) => {
+            if (loan.status === 'paid' || loan.status === 'written_off') return sum;
+            const bal = Number(loan.balance);
+            if (Number.isFinite(bal)) return sum + Math.max(0, bal);
+            return sum;
         }, 0);
 
-        return {
-            totalPaid,
-            totalPrepayment,
-            totalScheduledCollection,
-            totalInterest,
-            totalPrincipalPaid,
-            totalOutstandingPrincipal,
-        };
-    }, [filteredRepayments, loans, centerFilter, groupFilter, borrowerStatusFilter, searchTerm]);
+        return { ...base, totalOutstandingPrincipal };
+    }, [
+        statsRows,
+        loans,
+        centerFilter,
+        groupFilter,
+        borrowerStatusFilter,
+        debouncedSearchTerm,
+    ]);
 
     const handleEdit = (repayment) => {
         if (!isWorkingDayEAT(todayYyyyMmDdEAT(), holidays)) {
@@ -540,7 +566,7 @@ const RepaymentManagement = () => {
 
             toast({ title: 'Success', description: 'Repayment updated successfully.' });
             setEditDialogOpen(false);
-            fetchData();
+            refreshAfterMutation();
         } catch (error) {
             toast({ title: 'Error updating repayment', description: error.message, variant: 'destructive' });
         } finally {
@@ -725,7 +751,7 @@ const RepaymentManagement = () => {
                 title: 'Success',
                 description: successDescription ?? 'Collection recorded successfully!',
             });
-            await fetchData();
+            await refreshAfterMutation();
             if (closeDialog) {
                 setRepaymentDialogOpen(false);
                 resetRepaymentForm();
@@ -831,7 +857,7 @@ const RepaymentManagement = () => {
                 title: 'Requested',
                 description: 'Deletion request sent to your branch manager for approval.',
             });
-            fetchData();
+            fetchRepaymentList();
         } catch (error) {
             toast({ title: 'Request failed', description: error.message, variant: 'destructive' });
         }
@@ -878,7 +904,7 @@ const RepaymentManagement = () => {
                 description: `Deletion requested for ${ok} repayment(s). Manager approval is required before removal.`,
             });
             setSelectedRepayments([]);
-            fetchData();
+            fetchRepaymentList();
         } catch (error) {
             toast({ title: 'Error', description: error.message, variant: 'destructive' });
         } finally {
@@ -887,7 +913,7 @@ const RepaymentManagement = () => {
     };
     
     const handleExportSelectedRepaymentsCsv = () => {
-        const rows = filteredRepayments.filter((r) => selectedRepayments.includes(r.id));
+        const rows = repayments.filter((r) => selectedRepayments.includes(r.id));
         if (rows.length === 0) {
             toast({ title: 'Nothing selected', description: 'Select one or more repayments first.', variant: 'destructive' });
             return;
@@ -913,13 +939,27 @@ const RepaymentManagement = () => {
         toast({ title: 'Exported', description: `${rows.length} repayment(s) to CSV.` });
     };
 
-    const handleExport = (loan) => {
+    const handleExport = async (loan) => {
         if (!loan || !loan.borrowers) {
             toast({ title: 'Error', description: 'Cannot export, loan data is incomplete.', variant: 'destructive' });
             return;
         }
 
-        const borrower = loan.borrowers;
+        let exportLoan = loan;
+        if (!exportLoan.schedule) {
+            const { data: fullLoan, error } = await supabase
+                .from('loans')
+                .select(`${LOAN_PICKER_SELECT}, schedule`)
+                .eq('id', loan.id)
+                .single();
+            if (error || !fullLoan?.schedule) {
+                toast({ title: 'Error', description: 'Could not load loan schedule for export.', variant: 'destructive' });
+                return;
+            }
+            exportLoan = fullLoan;
+        }
+
+        const borrower = exportLoan.borrowers;
         const group = borrower.groups;
 
         const summaryData = [
@@ -927,15 +967,15 @@ const RepaymentManagement = () => {
             { 'Field': 'Borrower ID', 'Value': borrower.borrower_id },
             { 'Field': 'Phone Number', 'Value': borrower.phone_number },
             { 'Field': 'Group', 'Value': group ? group.name : 'N/A' },
-            { 'Field': 'Loan ID', 'Value': loan.loan_id },
-            { 'Field': 'Principal Amount', 'Value': loan.principal, 'Format': 'currency' },
-            { 'Field': 'Total Payable', 'Value': loan.total_payable, 'Format': 'currency' },
-            { 'Field': 'Outstanding Balance', 'Value': loan.balance, 'Format': 'currency' },
-            { 'Field': 'Loan Status', 'Value': loan.status },
+            { 'Field': 'Loan ID', 'Value': exportLoan.loan_id },
+            { 'Field': 'Principal Amount', 'Value': exportLoan.principal, 'Format': 'currency' },
+            { 'Field': 'Total Payable', 'Value': exportLoan.total_payable, 'Format': 'currency' },
+            { 'Field': 'Outstanding Balance', 'Value': exportLoan.balance, 'Format': 'currency' },
+            { 'Field': 'Loan Status', 'Value': exportLoan.status },
         ];
 
-        const scheduleData = loan.schedule.map((inst) => {
-            const pi = installmentPrincipalInterestPaidDisplay(inst, loan);
+        const scheduleData = exportLoan.schedule.map((inst) => {
+            const pi = installmentPrincipalInterestPaidDisplay(inst, exportLoan);
             const paid = Number(inst.paidAmount ?? inst.paid_amount ?? 0) || 0;
             return {
             'Installment No.': inst.installmentNumber,
@@ -951,7 +991,17 @@ const RepaymentManagement = () => {
         };
         });
 
-        const repaymentsForLoan = repayments.filter(r => r.loan_id === loan.id).map(r => ({
+        const { data: loanRepaymentRows, error: repErr } = await supabase
+            .from('repayments')
+            .select('actual_payment_date, principal_paid, interest_paid, amount')
+            .eq('loan_id', exportLoan.id)
+            .order('actual_payment_date', { ascending: true });
+        if (repErr) {
+            toast({ title: 'Error', description: 'Could not load payments for export.', variant: 'destructive' });
+            return;
+        }
+
+        const repaymentsForLoan = (loanRepaymentRows || []).map((r) => ({
             'Payment Date': formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
             'Principal Paid': r.principal_paid,
             'Interest Paid': r.interest_paid,
@@ -1598,15 +1648,47 @@ const RepaymentManagement = () => {
                         </select>
                         <Popover>
                             <PopoverTrigger asChild>
-                                <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
+                                <Button
+                                    variant="outline"
+                                    className="w-[280px] justify-start text-left font-normal"
+                                    disabled={loadAllHistory}
+                                >
                                     <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {dateRangeFilter?.from ? (dateRangeFilter.to ? `${formatTZ(dateRangeFilter.from, "LLL dd, y")} - ${formatTZ(dateRangeFilter.to, "LLL dd, y")}` : formatTZ(dateRangeFilter.from, "LLL dd, y")) : <span>Pick a date range</span>}
+                                    {loadAllHistory
+                                        ? 'All history'
+                                        : dateRangeFilter?.from
+                                          ? dateRangeFilter.to
+                                              ? `${formatTZ(dateRangeFilter.from, 'LLL dd, y')} - ${formatTZ(dateRangeFilter.to, 'LLL dd, y')}`
+                                              : formatTZ(dateRangeFilter.from, 'LLL dd, y')
+                                          : 'Pick a date range'}
                                 </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar mode="range" selected={dateRangeFilter} onSelect={setDateRangeFilter} numberOfMonths={2} />
+                                <Calendar
+                                    mode="range"
+                                    selected={dateRangeFilter}
+                                    onSelect={(range) => {
+                                        setLoadAllHistory(false);
+                                        setDateRangeFilter(range);
+                                    }}
+                                    numberOfMonths={2}
+                                />
                             </PopoverContent>
                         </Popover>
+                        <Button
+                            type="button"
+                            variant={loadAllHistory ? 'secondary' : 'outline'}
+                            onClick={() => {
+                                setLoadAllHistory((v) => !v);
+                                if (!loadAllHistory) {
+                                    setDateRangeFilter(null);
+                                } else {
+                                    setDateRangeFilter(defaultRepaymentDateRange());
+                                }
+                            }}
+                        >
+                            {loadAllHistory ? 'Last 90 days' : 'Load all history'}
+                        </Button>
                         <Button onClick={resetFilters} variant="ghost">Reset</Button>
                     </CardContent>
                 </Card>
@@ -1640,7 +1722,12 @@ const RepaymentManagement = () => {
                         )}
                         </div>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className={cn(listLoading && 'opacity-60 pointer-events-none')}>
+                        {listLoading && (
+                            <div className="flex justify-center py-2">
+                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                        )}
                         <Table>
                             <TableHeader>
                                 <TableRow>
@@ -1724,7 +1811,7 @@ const RepaymentManagement = () => {
                                         </TableCell>
                                     </TableRow>
                                 ))}
-                                {filteredRepayments.length === 0 && (
+                                {totalRepaymentCount === 0 && !listLoading && (
                                     <TableRow>
                                         <TableCell colSpan={12} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
@@ -1742,10 +1829,11 @@ const RepaymentManagement = () => {
                                 </TableRow>
                             </TableFooter>
                         </Table>
-                        {filteredRepayments.length > 0 && (
+                        {totalRepaymentCount > 0 && (
                             <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t pt-4">
                                 <p className="text-sm text-muted-foreground">
-                                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredRepayments.length)} of {filteredRepayments.length}
+                                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalRepaymentCount)} of {totalRepaymentCount}
+                                    {!loadAllHistory && ' (last 90 days by default)'}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button

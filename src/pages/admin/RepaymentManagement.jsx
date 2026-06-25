@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { format } from 'date-fns';
 import { format as formatTZ, toZonedTime } from 'date-fns-tz';
-import { startOfDay, endOfDay } from 'date-fns';
 import { supabase } from '@/lib/customSupabaseClient';
-import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -24,13 +22,20 @@ import { Badge } from '@/components/ui/badge';
 import { RepaymentScheduleGrid } from '@/components/loans/RepaymentScheduleGrid';
 import { scheduleExportMetaFromLoan } from '@/lib/scheduleExport';
 import { SCHEDULE_DIALOG_CONTENT, SCHEDULE_DIALOG_SCROLL } from '@/lib/dialogLayout';
-import { borrowerMatchesCenter } from '@/lib/loanBorrowerLocationFilter';
 import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
 import { BORROWER_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
-import { fetchAllSupabaseRows } from '@/lib/supabaseFetchAllRows';
+import { cn } from '@/lib/utils';
+import {
+    REPAYMENT_PAGE_SIZE,
+    defaultRepaymentDateRange,
+    fetchRepaymentPage,
+    fetchRepaymentStatsRows,
+    aggregateRepaymentStats,
+    fetchAllFilteredRepayments,
+} from '@/lib/repaymentManagementQuery';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
-const PAGE_SIZE = 25;
+const PAGE_SIZE = REPAYMENT_PAGE_SIZE;
 
 const StatCard = ({ title, value, icon: Icon, color }) => (
     <Card>
@@ -47,10 +52,15 @@ const StatCard = ({ title, value, icon: Icon, color }) => (
 const AdminRepaymentManagement = () => {
     const { toast } = useToast();
     const [repayments, setRepayments] = useState([]);
+    const [totalRepaymentCount, setTotalRepaymentCount] = useState(0);
+    const [statsRows, setStatsRows] = useState([]);
     const [branches, setBranches] = useState([]);
     const [centers, setCenters] = useState([]);
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [listLoading, setListLoading] = useState(false);
+    const [loadAllHistory, setLoadAllHistory] = useState(false);
+    const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [currency, setCurrency] = useState('TZS');
 
     // Filters
@@ -59,7 +69,7 @@ const AdminRepaymentManagement = () => {
     const [centerFilter, setCenterFilter] = useState('all');
     const [borrowerStatusFilter, setBorrowerStatusFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
-    const [dateRangeFilter, setDateRangeFilter] = useState(null);
+    const [dateRangeFilter, setDateRangeFilter] = useState(() => defaultRepaymentDateRange());
     const [page, setPage] = useState(1);
 
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
@@ -71,41 +81,59 @@ const AdminRepaymentManagement = () => {
         setCenterFilter('all');
         setBorrowerStatusFilter('all');
         setSearchTerm('');
-        setDateRangeFilter(null);
+        setDateRangeFilter(defaultRepaymentDateRange());
+        setLoadAllHistory(false);
         setPage(1);
     };
 
-    const fetchData = useCallback(async () => {
+    const scopedOfficerIds = useMemo(() => {
+        if (officerFilter !== 'all') return undefined;
+        if (branchFilter === 'all') return null;
+        return users
+            .filter((u) => u.role === 'officer' && u.branch_id === branchFilter)
+            .map((u) => u.id);
+    }, [users, branchFilter, officerFilter]);
+
+    const listFilters = useMemo(
+        () => ({
+            officerFilter: officerFilter !== 'all' ? officerFilter : undefined,
+            officerIds: scopedOfficerIds,
+            dateRange: dateRangeFilter,
+            loadAllHistory,
+            centerFilter,
+            borrowerStatusFilter,
+            searchTerm: debouncedSearchTerm,
+        }),
+        [
+            officerFilter,
+            scopedOfficerIds,
+            dateRangeFilter,
+            loadAllHistory,
+            centerFilter,
+            borrowerStatusFilter,
+            debouncedSearchTerm,
+        ],
+    );
+
+    const fetchMetadata = useCallback(async () => {
         setLoading(true);
         try {
-            const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
-            const cfg = Object.fromEntries((cfgRows || []).map((r) => [r.key, r.value]));
+            const [cfgRes, branchesRes, usersRes, centersRes] = await Promise.all([
+                supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']),
+                supabase.from('branches').select('id, name'),
+                supabase.from('users').select('id, full_name, branch_id, role'),
+                supabase.from('centers').select('id, name, branch_id').order('name'),
+            ]);
+            if (cfgRes.error) throw cfgRes.error;
+            if (branchesRes.error) throw branchesRes.error;
+            if (usersRes.error) throw usersRes.error;
+            if (centersRes.error) throw centersRes.error;
+
+            const cfg = Object.fromEntries((cfgRes.data || []).map((r) => [r.key, r.value]));
             if (cfg.currency) setCurrency(cfg.currency);
-
-            const { data: branchesData, error: branchesError } = await supabase.from('branches').select('id, name');
-            if (branchesError) throw branchesError;
-            setBranches(branchesData || []);
-
-            const { data: usersData, error: usersError } = await supabase.from('users').select('id, full_name, branch_id, role');
-            if (usersError) throw usersError;
-            setUsers(usersData || []);
-
-            const { data: centersData, error: centersError } = await supabase
-                .from('centers')
-                .select('id, name, branch_id')
-                .order('name');
-            if (centersError) throw centersError;
-            setCenters(centersData || []);
-
-            const repaymentsData = await fetchAllSupabaseRows(() =>
-                supabase
-                    .from('repayments')
-                    .select('*, loans(id, borrower_id, loan_id, borrowers(*, groups(*)))')
-                    .order('actual_payment_date', { ascending: false })
-                    .order('id', { ascending: false }),
-            );
-            setRepayments(repaymentsData || []);
-
+            setBranches(branchesRes.data || []);
+            setUsers(usersRes.data || []);
+            setCenters(centersRes.data || []);
         } catch (error) {
             toast({ title: 'Error fetching data', description: error.message, variant: 'destructive' });
         } finally {
@@ -113,9 +141,47 @@ const AdminRepaymentManagement = () => {
         }
     }, [toast]);
 
+    const fetchRepaymentList = useCallback(async () => {
+        setListLoading(true);
+        try {
+            const searchScope =
+                officerFilter !== 'all'
+                    ? { singleOfficerId: officerFilter }
+                    : scopedOfficerIds?.length
+                      ? { officerIds: scopedOfficerIds }
+                      : {};
+            const filtersWithScope = { ...listFilters, ...searchScope };
+            const [pageResult, statsData] = await Promise.all([
+                fetchRepaymentPage({ supabase, filters: filtersWithScope, page }),
+                fetchRepaymentStatsRows({ supabase, filters: filtersWithScope }),
+            ]);
+            setRepayments(pageResult.rows);
+            setTotalRepaymentCount(pageResult.totalCount);
+            setStatsRows(statsData);
+        } catch (error) {
+            toast({ title: 'Error fetching repayments', description: error.message, variant: 'destructive' });
+        } finally {
+            setListLoading(false);
+        }
+    }, [listFilters, page, officerFilter, scopedOfficerIds, toast]);
+
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        fetchMetadata();
+    }, [fetchMetadata]);
+
+    useEffect(() => {
+        if (loading) return;
+        fetchRepaymentList();
+    }, [fetchRepaymentList, loading]);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearchTerm(searchTerm), 350);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, loadAllHistory, debouncedSearchTerm]);
 
     const filteredOfficers = useMemo(() => {
         const officers = users.filter(u => u.role === 'officer');
@@ -142,59 +208,20 @@ const AdminRepaymentManagement = () => {
         [centersForFilter, branchFilter, branches],
     );
 
-    const filteredRepayments = useMemo(() => {
-        return repayments.filter(r => {
-            const officer = users.find(u => u.id === r.officer_id);
-            const borrowerRow = r.loans?.borrowers;
-            const branchMatch = branchFilter === 'all' || officer?.branch_id === branchFilter;
-            const officerMatch = officerFilter === 'all' || r.officer_id === officerFilter;
-            const centerMatch = borrowerMatchesCenter(borrowerRow, centerFilter);
-            const statusMatch =
-                borrowerStatusFilter === 'all' || borrowerRow?.status === borrowerStatusFilter;
-            const dateMatch = !dateRangeFilter?.from || (
-                new Date(r.actual_payment_date) >= startOfDay(dateRangeFilter.from) &&
-                new Date(r.actual_payment_date) <= endOfDay(dateRangeFilter.to || dateRangeFilter.from)
-            );
+    const pagedRepayments = repayments;
+    const totalPages = Math.max(1, Math.ceil(totalRepaymentCount / PAGE_SIZE));
 
-            const searchLower = searchTerm.toLowerCase();
-            const loanId = r.loans?.loan_id?.toLowerCase() || '';
-            const fName = borrowerRow?.first_name?.toLowerCase() || '';
-            const sName = borrowerRow?.surname?.toLowerCase() || '';
-            const borrowerName = `${fName} ${sName}`;
-            const borrowerId = borrowerRow?.borrower_id?.toLowerCase() || '';
-            const searchMatch =
-                !searchTerm ||
-                loanId.includes(searchLower) ||
-                borrowerName.includes(searchLower) ||
-                borrowerId.includes(searchLower);
+    const stats = useMemo(() => aggregateRepaymentStats(statsRows), [statsRows]);
 
-            return branchMatch && officerMatch && centerMatch && statusMatch && dateMatch && searchMatch;
-        });
-    }, [repayments, users, branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
+    const pageRepaymentIds = useMemo(() => repayments.map((r) => r.id), [repayments]);
+    const bulk = useBulkSelection(pageRepaymentIds);
 
     useEffect(() => {
-        setPage(1);
-    }, [branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, searchTerm]);
-
-    const pagedRepayments = useMemo(() => {
-        const start = (page - 1) * PAGE_SIZE;
-        return filteredRepayments.slice(start, start + PAGE_SIZE);
-    }, [filteredRepayments, page]);
-
-    const totalPages = Math.max(1, Math.ceil(filteredRepayments.length / PAGE_SIZE));
-
-    const stats = useMemo(() => {
-        const totalPaid = filteredRepayments.reduce((sum, r) => sum + r.amount, 0);
-        const totalInterest = filteredRepayments.reduce((sum, r) => sum + (r.interest_paid || 0), 0);
-        const totalPrincipalPaid = filteredRepayments.reduce((sum, r) => sum + (r.principal_paid || 0), 0);
-        return { totalPaid, totalInterest, totalPrincipalPaid };
-    }, [filteredRepayments]);
-
-    const filteredRepaymentIds = useMemo(() => filteredRepayments.map((r) => r.id), [filteredRepayments]);
-    const bulk = useBulkSelection(filteredRepaymentIds);
+        bulk.clear();
+    }, [repayments]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const exportSelectedRepaymentsCsv = () => {
-        const rows = filteredRepayments.filter((r) => bulk.isSelected(r.id));
+        const rows = repayments.filter((r) => bulk.isSelected(r.id));
         if (rows.length === 0) {
             toast({ title: 'Nothing selected', description: 'Select one or more repayments first.', variant: 'destructive' });
             return;
@@ -242,25 +269,39 @@ const AdminRepaymentManagement = () => {
         setScheduleDialogOpen(true);
     };
 
-    const handleExport = () => {
-        const dataToExport = filteredRepayments.map(r => {
-            const officer = users.find(u => u.id === r.officer_id);
-            const branch = branches.find(b => b.id === officer?.branch_id);
-            return {
-                'Payment Date': formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
-                'Borrower': `${r.loans?.borrowers?.first_name} ${r.loans?.borrowers?.surname}`,
-                'Loan ID': r.loans?.loan_id,
-                'Branch': branch?.name || 'N/A',
-                'Loan Officer': officer?.full_name || 'N/A',
-                'Principal Paid': r.principal_paid || 0,
-                'Interest Paid': r.interest_paid || 0,
-                'Total Paid': r.amount,
-            };
-        });
-        const ws = XLSX.utils.json_to_sheet(dataToExport);
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, 'Repayments');
-        XLSX.writeFile(wb, 'repayment_history_full.xlsx');
+    const handleExport = async () => {
+        try {
+            const searchScope =
+                officerFilter !== 'all'
+                    ? { singleOfficerId: officerFilter }
+                    : scopedOfficerIds?.length
+                      ? { officerIds: scopedOfficerIds }
+                      : {};
+            const rows = await fetchAllFilteredRepayments({
+                supabase,
+                filters: { ...listFilters, ...searchScope },
+            });
+            const dataToExport = rows.map((r) => {
+                const officer = users.find((u) => u.id === r.officer_id);
+                const branch = branches.find((b) => b.id === officer?.branch_id);
+                return {
+                    'Payment Date': formatTZ(toZonedTime(new Date(r.actual_payment_date), EAT_TIMEZONE), 'yyyy-MM-dd'),
+                    Borrower: `${r.loans?.borrowers?.first_name} ${r.loans?.borrowers?.surname}`,
+                    'Loan ID': r.loans?.loan_id,
+                    Branch: branch?.name || 'N/A',
+                    'Loan Officer': officer?.full_name || 'N/A',
+                    'Principal Paid': r.principal_paid || 0,
+                    'Interest Paid': r.interest_paid || 0,
+                    'Total Paid': r.amount,
+                };
+            });
+            const ws = XLSX.utils.json_to_sheet(dataToExport);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Repayments');
+            XLSX.writeFile(wb, 'repayment_history_full.xlsx');
+        } catch (error) {
+            toast({ title: 'Export failed', description: error.message, variant: 'destructive' });
+        }
     };
 
     if (loading) return <DashboardLayout title="Collections"><Loader2 className="h-8 w-8 animate-spin mx-auto mt-8" /></DashboardLayout>;
@@ -346,15 +387,47 @@ const AdminRepaymentManagement = () => {
                         />
                         <Popover>
                             <PopoverTrigger asChild>
-                                <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
+                                <Button
+                                    variant="outline"
+                                    className="w-[280px] justify-start text-left font-normal"
+                                    disabled={loadAllHistory}
+                                >
                                     <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {dateRangeFilter?.from ? (dateRangeFilter.to ? `${format(dateRangeFilter.from, "LLL dd, y")} - ${format(dateRangeFilter.to, "LLL dd, y")}` : format(dateRangeFilter.from, "LLL dd, y")) : <span>Pick a date range</span>}
+                                    {loadAllHistory
+                                        ? 'All history'
+                                        : dateRangeFilter?.from
+                                          ? dateRangeFilter.to
+                                              ? `${format(dateRangeFilter.from, 'LLL dd, y')} - ${format(dateRangeFilter.to, 'LLL dd, y')}`
+                                              : format(dateRangeFilter.from, 'LLL dd, y')
+                                          : 'Pick a date range'}
                                 </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0" align="start">
-                                <Calendar mode="range" selected={dateRangeFilter} onSelect={setDateRangeFilter} numberOfMonths={2} />
+                                <Calendar
+                                    mode="range"
+                                    selected={dateRangeFilter}
+                                    onSelect={(range) => {
+                                        setLoadAllHistory(false);
+                                        setDateRangeFilter(range);
+                                    }}
+                                    numberOfMonths={2}
+                                />
                             </PopoverContent>
                         </Popover>
+                        <Button
+                            type="button"
+                            variant={loadAllHistory ? 'secondary' : 'outline'}
+                            onClick={() => {
+                                setLoadAllHistory((v) => !v);
+                                if (!loadAllHistory) {
+                                    setDateRangeFilter(null);
+                                } else {
+                                    setDateRangeFilter(defaultRepaymentDateRange());
+                                }
+                            }}
+                        >
+                            {loadAllHistory ? 'Last 90 days' : 'Load all history'}
+                        </Button>
                         <Button onClick={resetFilters} variant="ghost">Reset</Button>
                     </CardContent>
                 </Card>
@@ -364,7 +437,12 @@ const AdminRepaymentManagement = () => {
                         <CardTitle>Repayment History</CardTitle>
                         <Button onClick={handleExport}><FileDown className="mr-2 h-4 w-4" /> Export</Button>
                     </CardHeader>
-                    <CardContent>
+                    <CardContent className={cn(listLoading && 'opacity-60 pointer-events-none')}>
+                        {listLoading && (
+                            <div className="flex justify-center py-2">
+                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                            </div>
+                        )}
                         <BulkDataTableToolbar
                             selectedCount={bulk.count}
                             onClear={bulk.clear}
@@ -425,7 +503,7 @@ const AdminRepaymentManagement = () => {
                                         </TableCell>
                                     </TableRow>
                                 )})}
-                                {filteredRepayments.length === 0 && (
+                                {totalRepaymentCount === 0 && !listLoading && (
                                     <TableRow>
                                         <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No repayments match the current filters.</TableCell>
                                     </TableRow>
@@ -440,10 +518,11 @@ const AdminRepaymentManagement = () => {
                                 </TableRow>
                             </TableFooter>
                         </Table>
-                        {filteredRepayments.length > 0 && (
+                        {totalRepaymentCount > 0 && (
                             <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t pt-4">
                                 <p className="text-sm text-muted-foreground">
-                                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filteredRepayments.length)} of {filteredRepayments.length}
+                                    Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalRepaymentCount)} of {totalRepaymentCount}
+                                    {!loadAllHistory && ' (last 90 days by default)'}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button
