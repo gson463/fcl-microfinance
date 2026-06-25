@@ -1,18 +1,19 @@
 import React, { useMemo } from 'react';
 import { CheckCircle2, CircleDashed } from 'lucide-react';
+import { TraceMoney } from '@/components/admin/TraceMoney';
 import { computeFieldWalletSummaryTotals, officerExpensesTotal, officerCollectionsTotal } from '@/lib/fieldWalletTraceTotals';
 import { cn } from '@/lib/utils';
 
 const thClass =
-	'border border-border bg-muted/80 px-1.5 py-2 text-left text-[0.62rem] sm:text-[0.68rem] font-semibold uppercase leading-tight break-words whitespace-normal text-muted-foreground';
-const tdClass = 'border border-border px-1.5 py-2 align-top text-[0.72rem] sm:text-xs tabular-nums break-words';
-const tdNumClass = cn(tdClass, 'text-right');
+	'border border-border bg-muted/80 px-1 py-1.5 text-left text-[0.6rem] sm:text-[0.65rem] font-semibold uppercase leading-tight whitespace-normal text-muted-foreground';
+const tdClass = 'border border-border px-1 py-1.5 align-top text-xs';
+const tdNumClass = cn(tdClass, 'text-right align-middle');
 
 function SubLine({ children }) {
-	return <span className="mt-0.5 block text-[0.68rem] leading-snug text-muted-foreground">{children}</span>;
+	return <span className="mt-0.5 block text-[0.62rem] sm:text-[0.68rem] leading-snug text-muted-foreground">{children}</span>;
 }
 
-/** Summary table — matches agreed standalone sample (fixed width, bordered, full footer totals). */
+/** Summary table — bordered, column-aligned, responsive horizontal scroll on small screens. */
 export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, formatMoney }) {
 	const totals = useMemo(
 		() => computeFieldWalletSummaryTotals(blocks, withdrawByOfficer),
@@ -24,8 +25,21 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 	}
 
 	return (
-		<div className="w-full">
-			<table className="w-full table-fixed border-collapse text-[0.72rem] sm:text-sm">
+		<div className="-mx-1 w-full overflow-x-auto sm:mx-0">
+			<table className="w-full min-w-[920px] table-fixed border-collapse">
+				<colgroup>
+					<col className="w-[11%]" />
+					<col className="w-[8%]" />
+					<col className="w-[9%]" />
+					<col className="w-[7%]" />
+					<col className="w-[8%]" />
+					<col className="w-[7%]" />
+					<col className="w-[9%]" />
+					<col className="w-[8%]" />
+					<col className="w-[8%]" />
+					<col className="w-[8%]" />
+					<col className="w-[17%]" />
+				</colgroup>
 				<thead>
 					<tr>
 						<th className={thClass}>Officer</th>
@@ -45,7 +59,6 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 					{blocks.map((block) => {
 						const t = block.totals || {};
 						const oid = block.officer?.id;
-						const totalRep = officerCollectionsTotal(block);
 						const wRow = withdrawByOfficer?.get?.(oid);
 						const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
 						const banked = wRow
@@ -68,20 +81,36 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 										'bg-amber-50/95 dark:bg-amber-950/40 [&>td:first-child]:border-l-4 [&>td:first-child]:border-l-amber-400 dark:[&>td:first-child]:border-l-amber-500'
 								)}
 							>
-								<td className={cn(tdClass, 'font-semibold')}>{block.officer?.full_name || '—'}</td>
-								<td className={tdNumClass}>{formatMoney(t.amountTaken)}</td>
-								<td className={tdNumClass}>{formatMoney(totalRep)}</td>
-								<td className={tdNumClass}>{formatMoney(t.applicationFee)}</td>
-								<td className={tdNumClass}>{formatMoney(t.disbursement)}</td>
-								<td className={tdNumClass}>{formatMoney(officerExpensesTotal(t))}</td>
+								<td className={cn(tdClass, 'break-words font-semibold leading-snug')}>
+									{block.officer?.full_name || '—'}
+								</td>
 								<td className={tdNumClass}>
-									<span className="block font-semibold">{formatMoney(t.deposit)}</span>
-									{wRow ? <SubLine>Same day: {formatMoney(rawDep)}</SubLine> : null}
+									<TraceMoney value={t.amountTaken} formatMoney={formatMoney} />
+								</td>
+								<td className={tdNumClass}>
+									<TraceMoney value={officerCollectionsTotal(block)} formatMoney={formatMoney} />
+								</td>
+								<td className={tdNumClass}>
+									<TraceMoney value={t.applicationFee} formatMoney={formatMoney} />
+								</td>
+								<td className={tdNumClass}>
+									<TraceMoney value={t.disbursement} formatMoney={formatMoney} />
+								</td>
+								<td className={tdNumClass}>
+									<TraceMoney value={officerExpensesTotal(t)} formatMoney={formatMoney} />
+								</td>
+								<td className={tdNumClass}>
+									<TraceMoney value={t.deposit} formatMoney={formatMoney} bold />
+									{wRow ? (
+										<SubLine>
+											Same day: <TraceMoney value={rawDep} formatMoney={formatMoney} className="inline-flex !w-auto" />
+										</SubLine>
+									) : null}
 								</td>
 								<td className={tdNumClass}>
 									{carried > 0 ? (
 										<>
-											<span className="block font-medium">{formatMoney(carried)}</span>
+											<TraceMoney value={carried} formatMoney={formatMoney} />
 											{wRow?.next_business_date ? <SubLine>Overnight</SubLine> : null}
 										</>
 									) : (
@@ -89,12 +118,16 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 									)}
 								</td>
 								<td className={tdNumClass}>
-									{topUp > 0 ? formatMoney(topUp) : <span className="text-muted-foreground">—</span>}
+									{topUp > 0 ? (
+										<TraceMoney value={topUp} formatMoney={formatMoney} />
+									) : (
+										<span className="text-muted-foreground">—</span>
+									)}
 								</td>
 								<td className={tdNumClass}>
 									{planned > 0 ? (
 										<>
-											<span className="block font-medium">{formatMoney(planned)}</span>
+											<TraceMoney value={planned} formatMoney={formatMoney} />
 											{wRow?.next_business_date ? <SubLine>For {wRow.next_business_date}</SubLine> : null}
 										</>
 									) : (
@@ -110,7 +143,8 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 											</span>
 											<SubLine>{new Date(wRow.created_at).toLocaleString()}</SubLine>
 											<SubLine>
-												To bank: <span className="font-medium text-foreground">{formatMoney(banked)}</span>
+												To bank:{' '}
+												<TraceMoney value={banked} formatMoney={formatMoney} className="inline-flex !w-auto !items-end" />
 											</SubLine>
 										</>
 									) : (
@@ -135,18 +169,39 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 				<tfoot>
 					<tr className="border-t-2 border-border bg-muted/40 font-semibold">
 						<td className={cn(tdClass, 'font-semibold')}>Totals</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalTaken)}</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalCollections)}</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalAppFees)}</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalDisbursed)}</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalExpenses)}</td>
 						<td className={tdNumClass}>
-							<span className="block">{formatMoney(totals.totalNet)}</span>
-							{totals.hasWithdrawn ? <SubLine>Same day: {formatMoney(totals.totalSameDay)}</SubLine> : null}
+							<TraceMoney value={totals.totalTaken} formatMoney={formatMoney} bold />
 						</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalCarry)}</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalTopUp)}</td>
-						<td className={tdNumClass}>{formatMoney(totals.totalNext)}</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalCollections} formatMoney={formatMoney} bold />
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalAppFees} formatMoney={formatMoney} bold />
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalDisbursed} formatMoney={formatMoney} bold />
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalExpenses} formatMoney={formatMoney} bold />
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalNet} formatMoney={formatMoney} bold />
+							{totals.hasWithdrawn ? (
+								<SubLine>
+									Same day:{' '}
+									<TraceMoney value={totals.totalSameDay} formatMoney={formatMoney} className="inline-flex !w-auto" bold />
+								</SubLine>
+							) : null}
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalCarry} formatMoney={formatMoney} bold />
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalTopUp} formatMoney={formatMoney} bold />
+						</td>
+						<td className={tdNumClass}>
+							<TraceMoney value={totals.totalNext} formatMoney={formatMoney} bold />
+						</td>
 						<td className={tdClass} />
 					</tr>
 				</tfoot>

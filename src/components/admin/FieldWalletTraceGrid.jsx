@@ -1,14 +1,9 @@
 import React from 'react';
 import { CheckCircle2, CircleDashed } from 'lucide-react';
 import { FIELD_WALLET_GRID_HEADERS } from '@/lib/fieldWalletReportColumns';
+import { TraceMoney } from '@/components/admin/TraceMoney';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-
-function fmtMoney(formatMoney, n) {
-  const x = Number(n);
-  if (Number.isNaN(x)) return '—';
-  return formatMoney(x);
-}
 
 function WithdrawMetaCards({ wRow, formatMoney, depositShown, depositSameDay }) {
   const carry = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
@@ -22,31 +17,54 @@ function WithdrawMetaCards({ wRow, formatMoney, depositShown, depositSameDay }) 
       <Card className="shadow-none">
         <CardContent className="p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Deposit (in hand)</p>
-          <p className="mt-1 text-xl font-bold tabular-nums">{fmtMoney(formatMoney, depositShown)}</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Same day: {fmtMoney(formatMoney, depositSameDay)}
+          <div className="mt-1">
+            <TraceMoney value={depositShown} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
+          </div>
+          <p className="mt-1 flex flex-wrap items-baseline justify-end gap-x-1 text-xs text-muted-foreground">
+            Same day: <TraceMoney value={depositSameDay} formatMoney={formatMoney} className="!w-auto inline-flex" />
           </p>
         </CardContent>
       </Card>
       <Card className="shadow-none">
         <CardContent className="p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Carry forward</p>
-          <p className="mt-1 text-xl font-bold tabular-nums">{carry > 0 ? fmtMoney(formatMoney, carry) : '—'}</p>
+          <div className="mt-1">
+            {carry > 0 ? (
+              <TraceMoney value={carry} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
+            ) : (
+              <span className="text-lg font-bold">—</span>
+            )}
+          </div>
         </CardContent>
       </Card>
       <Card className="shadow-none">
         <CardContent className="p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Office Topup</p>
-          <p className="mt-1 text-xl font-bold tabular-nums">{topUp > 0 ? fmtMoney(formatMoney, topUp) : '—'}</p>
+          <div className="mt-1">
+            {topUp > 0 ? (
+              <TraceMoney value={topUp} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
+            ) : (
+              <span className="text-lg font-bold">—</span>
+            )}
+          </div>
         </CardContent>
       </Card>
       <Card className="shadow-none">
         <CardContent className="p-4">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Next day taken · To bank</p>
-          <p className="mt-1 text-xl font-bold tabular-nums">
-            {planned > 0 ? fmtMoney(formatMoney, planned) : '—'}
-            {wRow ? ` · ${bank != null ? fmtMoney(formatMoney, bank) : '—'}` : ''}
-          </p>
+          <div className="mt-1 flex flex-wrap items-end justify-end gap-x-2 gap-y-1">
+            {planned > 0 ? (
+              <TraceMoney value={planned} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
+            ) : (
+              <span className="text-lg font-bold">—</span>
+            )}
+            {wRow ? (
+              <>
+                <span className="text-muted-foreground">·</span>
+                <TraceMoney value={bank} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
+              </>
+            ) : null}
+          </div>
           {wRow?.next_business_date ? (
             <p className="mt-1 text-xs text-muted-foreground">For {wRow.next_business_date}</p>
           ) : null}
@@ -65,12 +83,19 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
   const totalRowSpan = Math.max(centreRows.length, 1) + 1;
 
   const thClass =
-    'border border-border bg-muted/80 px-1 py-2 text-left text-[0.62rem] sm:text-[0.65rem] font-semibold uppercase leading-tight break-words whitespace-normal';
-  const tdClass = 'border border-border px-1 py-2 text-[0.68rem] sm:text-xs tabular-nums break-words';
+    'border border-border bg-muted/80 px-1 py-1.5 text-left text-[0.58rem] sm:text-[0.62rem] font-semibold uppercase leading-tight whitespace-normal';
+  const tdClass = 'border border-border px-1 py-1.5 align-middle text-[0.65rem] sm:text-xs';
+  const tdNumClass = cn(tdClass, 'text-right');
   const totalClass = cn(tdClass, 'bg-amber-100/90 font-semibold dark:bg-amber-950/50');
   const officerCellClass = cn(
     tdClass,
-    'bg-foreground text-background font-bold text-left align-middle min-w-[4rem] max-w-[8rem] px-1.5 py-2 text-[0.68rem] sm:text-xs leading-snug'
+    'bg-foreground text-background font-bold text-left break-words leading-snug'
+  );
+
+  const numCell = (value) => (
+    <td className={tdNumClass}>
+      <TraceMoney value={value} formatMoney={formatMoney} />
+    </td>
   );
 
   return (
@@ -90,13 +115,23 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
         )}
       </div>
 
-      <div className="rounded-md border border-border">
-        <table className="w-full table-fixed border-collapse">
+      <div className="-mx-1 overflow-x-auto sm:mx-0">
+        <table className="w-full min-w-[880px] table-fixed border-collapse">
           <colgroup>
-            <col className="w-[8%]" />
-            <col className="w-[5.5%]" />
+            <col className="w-[9%]" />
             <col className="w-[7%]" />
-            <col span={11} />
+            <col className="w-[8%]" />
+            <col className="w-[7%]" />
+            <col className="w-[5%]" />
+            <col className="w-[8%]" />
+            <col className="w-[6%]" />
+            <col className="w-[6%]" />
+            <col className="w-[5%]" />
+            <col className="w-[5%]" />
+            <col className="w-[6%]" />
+            <col className="w-[6%]" />
+            <col className="w-[6%]" />
+            <col className="w-[8%]" />
           </colgroup>
           <thead>
             <tr>
@@ -126,14 +161,14 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
                     </td>
                   ) : null}
                   <td className={tdClass} />
-                  <td className={cn(tdClass, 'font-medium')}>{cr.centerName}</td>
-                  <td className={cn(tdClass, 'text-right')}>{fmtMoney(formatMoney, cr.disbursement)}</td>
-                  <td className={cn(tdClass, 'text-center')}>{cr.disbursedClients ?? 0}</td>
-                  <td className={cn(tdClass, 'text-right')}>{fmtMoney(formatMoney, cr.collectionWithoutPrepayment)}</td>
-                  <td className={cn(tdClass, 'text-right')}>{fmtMoney(formatMoney, cr.applicationFee)}</td>
-                  <td className={cn(tdClass, 'text-right')}>{fmtMoney(formatMoney, cr.prepayment)}</td>
-                  <td className={cn(tdClass, 'text-center')}>{cr.prepaidClients ?? 0}</td>
-                  <td className={cn(tdClass, 'text-right')}>{fmtMoney(formatMoney, cr.penalty)}</td>
+                  <td className={cn(tdClass, 'break-words font-medium')}>{cr.centerName}</td>
+                  {numCell(cr.disbursement)}
+                  <td className={cn(tdClass, 'text-center tabular-nums')}>{cr.disbursedClients ?? 0}</td>
+                  {numCell(cr.collectionWithoutPrepayment)}
+                  {numCell(cr.applicationFee)}
+                  {numCell(cr.prepayment)}
+                  <td className={cn(tdClass, 'text-center tabular-nums')}>{cr.prepaidClients ?? 0}</td>
+                  {numCell(cr.penalty)}
                   <td className={tdClass} />
                   <td className={tdClass} />
                   <td className={tdClass} />
@@ -142,20 +177,39 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
             )}
 
             <tr>
-              <td className={totalClass} />
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.amountTaken)}</td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.amountTaken} formatMoney={formatMoney} bold />
+              </td>
               <td className={totalClass}>TOTAL</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.disbursement)}</td>
-              <td className={cn(totalClass, 'text-center')}>{t.disbursedClients ?? 0}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.collectionWithoutPrepayment)}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.applicationFee)}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.prepayment)}</td>
-              <td className={cn(totalClass, 'text-center')}>{t.prepaidClients ?? 0}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.penalty)}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.transport)}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.expense1 ?? t.otherExpenses)}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, t.expense2)}</td>
-              <td className={cn(totalClass, 'text-right')}>{fmtMoney(formatMoney, depositSameDay)}</td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.disbursement} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-center tabular-nums')}>{t.disbursedClients ?? 0}</td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.collectionWithoutPrepayment} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.applicationFee} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.prepayment} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-center tabular-nums')}>{t.prepaidClients ?? 0}</td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.penalty} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.transport} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.expense1 ?? t.otherExpenses} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={t.expense2} formatMoney={formatMoney} bold />
+              </td>
+              <td className={cn(totalClass, 'text-right')}>
+                <TraceMoney value={depositSameDay} formatMoney={formatMoney} bold />
+              </td>
             </tr>
           </tbody>
         </table>
