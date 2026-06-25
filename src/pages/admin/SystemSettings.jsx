@@ -31,6 +31,7 @@ const SystemSettings = () => {
     currency: '',
     applicationFeePerDisbursement: '0',
     walletPrepaymentSplitMode: 'arrears_only',
+    officerLockAfterWithdraw: 'true',
     attendanceMinMeetingsForIncreaseEligibility: '6',
     attendanceRequireNoDefaultForAutoIncrease: 'true',
   });
@@ -68,6 +69,8 @@ const SystemSettings = () => {
           dbConfig.attendanceRequireNoDefaultForAutoIncrease === 'false' ? 'false' : 'true',
         walletPrepaymentSplitMode:
           dbConfig.walletPrepaymentSplitMode === 'standard' ? 'standard' : 'arrears_only',
+        officerLockAfterWithdraw:
+          dbConfig.officerLockAfterWithdraw === 'false' ? 'false' : 'true',
       };
       setConfig(fetchedConfig);
       setLogoPreview(fetchedConfig.logoUrl || resolveLogoUrl(''));
@@ -80,8 +83,11 @@ const SystemSettings = () => {
   }, [toast]);
 
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setConfig(prev => ({ ...prev, [name]: value }));
+    const { name, value, type, checked } = e.target;
+    setConfig(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? (checked ? 'true' : 'false') : value,
+    }));
   };
   
   const handleLogoUploadClick = () => {
@@ -321,6 +327,32 @@ const SystemSettings = () => {
                         Use <strong>Arrears-only</strong> when you want on-time payments (no past arrears) to appear under
                         prepayment in the wallet. New repayments follow this; existing repayment rows are unchanged.
                       </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/25 p-4">
+                    <div>
+                      <p className="text-sm font-medium">Officer day lock after withdraw</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        When enabled, loan officers cannot record repayments, loans, expenses, or other writes after they
+                        confirm withdraw to bank until the next working day. They can still view dashboard and field wallet.
+                      </p>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="officerLockAfterWithdraw"
+                        name="officerLockAfterWithdraw"
+                        checked={config.officerLockAfterWithdraw === 'true'}
+                        onCheckedChange={(checked) =>
+                          setConfig((prev) => ({
+                            ...prev,
+                            officerLockAfterWithdraw: checked ? 'true' : 'false',
+                          }))
+                        }
+                      />
+                      <Label htmlFor="officerLockAfterWithdraw" className="cursor-pointer font-normal">
+                        Lock officer activity after withdraw until next working day
+                      </Label>
                     </div>
                   </div>
 

@@ -19,6 +19,12 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { getSidebarPreset } from '@/lib/sidebarPresets';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import OfficerTakenGate from '@/components/officer/OfficerTakenGate';
+import {
+  OfficerDayClosedProvider,
+  OfficerDayClosedGate,
+  useOfficerDayClosed,
+  OFFICER_DAY_CLOSED_ALLOWED_PREFIXES,
+} from '@/contexts/OfficerDayClosedContext';
 import { ImpersonationBanner } from '@/components/admin/ImpersonationBanner';
 
 function headerProfileInitials(user) {
@@ -108,12 +114,13 @@ const SidebarLink = ({ to, icon: Icon, text, collapsed }) => (
   </NavLink>
 );
 
-const DashboardLayout = ({ children, title, description = "Microfinance Management System" }) => {
+const DashboardLayoutInner = ({ children, title, description = "Microfinance Management System" }) => {
   const { user, signOut, effectiveRole } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
   const { sidebarPreset } = useTheme();
   const sb = getSidebarPreset(sidebarPreset);
+  const { locked: officerDayClosed } = useOfficerDayClosed();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false); 
   const [isCollapsed, setIsCollapsed] = useState(false); 
   const [systemConfig, setSystemConfig] = useState({ name: DEFAULT_SYSTEM_NAME, logoUrl: null });
@@ -153,7 +160,15 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
         adminSystemSection = adminSystemLinks;
         break;
       case 'manager': links = managerLinks; break;
-      case 'officer': links = officerLinks; break;
+      case 'officer':
+        links = officerDayClosed
+          ? officerLinks.filter((link) =>
+              OFFICER_DAY_CLOSED_ALLOWED_PREFIXES.some(
+                (prefix) => link.to === prefix || link.to.startsWith(`${prefix}/`)
+              )
+            )
+          : officerLinks;
+        break;
       default: links = [];
     }
   }
@@ -171,6 +186,7 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
       </Helmet>
 
       <OfficerTakenGate />
+      <OfficerDayClosedGate />
 
       <div className="flex h-screen overflow-hidden bg-[#f4f2ed] dark:bg-neutral-950">
         {/* Mobile Overlay */}
@@ -416,7 +432,12 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
             </div>
           </header>
 
-          <main className="relative min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain bg-[#f4f2ed]/90 p-4 [-webkit-overflow-scrolling:touch] dark:bg-neutral-950/95 sm:p-6 lg:p-8">
+          <main
+            className={cn(
+              'relative min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain bg-[#f4f2ed]/90 p-4 [-webkit-overflow-scrolling:touch] dark:bg-neutral-950/95 sm:p-6 lg:p-8',
+              effectiveRole === 'officer' && officerDayClosed && 'pt-14'
+            )}
+          >
             <div className="mx-auto min-w-0 w-full max-w-7xl">
               <ImpersonationBanner />
               {children}
@@ -427,5 +448,11 @@ const DashboardLayout = ({ children, title, description = "Microfinance Manageme
     </>
   );
 };
+
+const DashboardLayout = (props) => (
+  <OfficerDayClosedProvider>
+    <DashboardLayoutInner {...props} />
+  </OfficerDayClosedProvider>
+);
 
 export default DashboardLayout;

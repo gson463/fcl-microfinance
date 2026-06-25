@@ -27,6 +27,7 @@ import {
   BadgePercent,
   Landmark,
   Plus,
+  AlertTriangle,
 } from 'lucide-react';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
@@ -36,6 +37,7 @@ import { downloadFieldWalletExcel, fetchLogoBufferFromUrl } from '@/lib/fieldWal
 import { downloadFieldWalletPdf } from '@/lib/fieldWalletReportPdf';
 import { resolveLogoUrl, DEFAULT_SYSTEM_NAME, DEFAULT_TAGLINE } from '@/lib/brand';
 import { fetchNextWorkingDayAfter } from '@/lib/nextWorkingDayRpc';
+import { OFFICER_WITHDRAW_RECORDED_EVENT } from '@/contexts/OfficerDayClosedContext';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 
@@ -524,6 +526,7 @@ const FieldWalletCashFlow = () => {
             : 'Full deposit marked as withdrawn to bank.',
       });
       await fetchData();
+      window.dispatchEvent(new CustomEvent(OFFICER_WITHDRAW_RECORDED_EVENT));
     } catch (e) {
       const msg = e?.message || String(e);
       toast({
@@ -1333,6 +1336,10 @@ const FieldWalletCashFlow = () => {
                   You will confirm this taken amount on your first login on {nextWorkingDayMeta.label || 'that day'} (you can edit it then).
                 </p>
               )}
+              <p className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-100">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" aria-hidden />
+                After you confirm, you will not be able to record repayments, loans, or other activity until the next working day. You can still view the dashboard, reports, and this field wallet page.
+              </p>
             </div>
           )}
 
