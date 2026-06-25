@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
@@ -189,6 +189,15 @@ const FieldWalletTrace = () => {
 	}, [blocks, withdrawByOfficer]);
 
 	const totalNet = useMemo(() => blocks.reduce((s, b) => s + (Number(b.totals.deposit) || 0), 0), [blocks]);
+
+	const totalNextDayTaken = useMemo(
+		() =>
+			blocks.reduce((s, block) => {
+				const w = withdrawByOfficer.get(block.officer.id);
+				return s + (w ? Number(w.carried_to_next_day) || 0 : 0);
+			}, 0),
+		[blocks, withdrawByOfficer]
+	);
 
 	const branchNameById = useMemo(() => Object.fromEntries((branches || []).map((b) => [b.id, b.name || ''])), [branches]);
 
@@ -397,9 +406,12 @@ const FieldWalletTrace = () => {
 									<span className="font-medium text-amber-800 dark:text-amber-200">
 										Amber background means they have not confirmed &quot;withdraw to bank&quot; for that day yet
 									</span>
-									. If <strong>Collections</strong> looks like zero here but their own wallet shows they received payments,
-									make sure you selected the <strong>same date</strong> and the correct <strong>branch or officer</strong> in the
-									filters above — small mismatches there are the usual reason totals don&apos;t match.
+									.{' '}
+									<strong className="text-foreground">Next day taken</strong> — float the officer planned to take on
+									the next working day when they chose carry at withdraw. If <strong>Collections</strong> looks like zero
+									here but their own wallet shows they received payments, make sure you selected the{' '}
+									<strong>same date</strong> and the correct <strong>branch or officer</strong> in the filters above — small
+									mismatches there are the usual reason totals don&apos;t match.
 								</CardDescription>
 							</div>
 							<Button
@@ -427,6 +439,7 @@ const FieldWalletTrace = () => {
 										<TableHead className="text-right">Disbursed</TableHead>
 										<TableHead className="text-right">Expenses</TableHead>
 										<TableHead className="text-right font-semibold">Deposit</TableHead>
+										<TableHead className="text-right">Next day taken</TableHead>
 										<TableHead>Bank withdraw</TableHead>
 									</TableRow>
 								</TableHeader>
@@ -468,6 +481,20 @@ const FieldWalletTrace = () => {
 														) : null}
 													</div>
 												</TableCell>
+												<TableCell className="text-right align-top tabular-nums">
+													{carried > 0 ? (
+														<div className="inline-block text-right">
+															<span className="font-medium block">{formatMoney(carried)}</span>
+															{wRow?.next_business_date ? (
+																<span className="block text-xs font-normal text-muted-foreground mt-0.5">
+																	For {wRow.next_business_date}
+																</span>
+															) : null}
+														</div>
+													) : (
+														<span className="text-muted-foreground">—</span>
+													)}
+												</TableCell>
 												<TableCell>
 													{wRow ? (
 														<div className="space-y-1">
@@ -481,13 +508,6 @@ const FieldWalletTrace = () => {
 															<p className="text-xs tabular-nums text-muted-foreground">
 																To bank: <span className="font-medium text-foreground">{formatMoney(banked)}</span>
 															</p>
-															{carried > 0 ? (
-																<p className="text-xs tabular-nums text-muted-foreground">
-																	Carried to next day
-																	{wRow.next_business_date ? ` (${wRow.next_business_date})` : ''}:{' '}
-																	<span className="font-medium text-foreground">{formatMoney(carried)}</span>
-																</p>
-															) : null}
 														</div>
 													) : (
 														<div className="text-sm text-muted-foreground">
@@ -507,6 +527,15 @@ const FieldWalletTrace = () => {
 										);
 									})}
 								</TableBody>
+								<TableFooter>
+									<TableRow className="border-t-2 bg-muted/30 font-semibold hover:bg-muted/30">
+										<TableCell colSpan={7} className="text-right">
+											Total next day taken
+										</TableCell>
+										<TableCell className="text-right tabular-nums">{formatMoney(totalNextDayTaken)}</TableCell>
+										<TableCell />
+									</TableRow>
+								</TableFooter>
 							</Table>
 						</CardContent>
 					</Card>
