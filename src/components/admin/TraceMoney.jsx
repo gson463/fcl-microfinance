@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils';
 
-/** Split "TZS 1,000,000.00" for stacked display in tight table cells. */
+/** Split "TZS 1,000,000.00" — returns amount only for trace table cells. */
 export function parseFormattedMoney(formatted) {
 	const text = String(formatted ?? '').trim();
 	const space = text.indexOf(' ');
@@ -10,26 +10,26 @@ export function parseFormattedMoney(formatted) {
 	return { currency: '', amount: text };
 }
 
+/** Amount only (no currency) — currency belongs in column headers / card labels. */
+export function formatTraceAmount(value, formatMoney) {
+	const { amount } = parseFormattedMoney(formatMoney(value));
+	return amount || '—';
+}
+
 /**
- * Money cell for trace tables — currency line + amount line, columns stay aligned.
+ * Money cell for trace tables — numeric value only; TZS shown in headers and labels.
  */
 export function TraceMoney({ value, formatMoney, className, amountClassName, bold = false }) {
-	const { currency, amount } = parseFormattedMoney(formatMoney(value));
-
 	return (
-		<span className={cn('inline-flex w-full flex-col items-end leading-tight', className)}>
-			{currency ? (
-				<span className="text-[0.58rem] sm:text-[0.62rem] leading-none text-muted-foreground">{currency}</span>
-			) : null}
-			<span
-				className={cn(
-					'whitespace-nowrap tabular-nums text-[0.68rem] sm:text-xs',
-					bold && 'font-semibold',
-					amountClassName
-				)}
-			>
-				{amount || '—'}
-			</span>
+		<span
+			className={cn(
+				'inline-block w-full whitespace-nowrap text-right tabular-nums text-[0.68rem] sm:text-xs',
+				bold && 'font-semibold',
+				amountClassName,
+				className
+			)}
+		>
+			{formatTraceAmount(value, formatMoney)}
 		</span>
 	);
 }

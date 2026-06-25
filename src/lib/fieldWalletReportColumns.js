@@ -16,20 +16,20 @@ export const FIELD_WALLET_REPORT_COLS = [
   'DEPOSIT',
 ];
 
-/** Shorter headers for on-screen trace grid (fits without horizontal scroll). */
+/** Shorter headers for on-screen trace grid (fits without horizontal scroll). TZS on money columns only. */
 export const FIELD_WALLET_GRID_HEADERS = [
   'Officer',
-  'Taken',
+  'Taken (TZS)',
   'Centre',
-  'Disburse',
+  'Disburse (TZS)',
   'Disb. clients',
-  'Coll. w/o prepay',
-  'App fee',
-  'Prepay',
+  'Coll. w/o prepay (TZS)',
+  'App fee (TZS)',
+  'Prepay (TZS)',
   'Prepaid #',
-  'Penalty',
-  'Transport',
-  'Exp (1)',
-  'Exp (2)',
-  'DEPOSIT',
+  'Penalty (TZS)',
+  'Transport (TZS)',
+  'Exp (1) (TZS)',
+  'Exp (2) (TZS)',
+  'Deposit (TZS)',
 ];

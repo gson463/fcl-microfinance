@@ -43,15 +43,15 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 				<thead>
 					<tr>
 						<th className={thClass}>Officer</th>
-						<th className={cn(thClass, 'text-right')}>Taken</th>
-						<th className={cn(thClass, 'text-right')}>Collections</th>
-						<th className={cn(thClass, 'text-right')}>App fees</th>
-						<th className={cn(thClass, 'text-right')}>Disbursed</th>
-						<th className={cn(thClass, 'text-right')}>Expenses</th>
-						<th className={cn(thClass, 'text-right')}>Deposit</th>
-						<th className={cn(thClass, 'text-right')}>Carry forward</th>
-						<th className={cn(thClass, 'text-right')}>Office Topup</th>
-						<th className={cn(thClass, 'text-right')}>Next day taken</th>
+						<th className={cn(thClass, 'text-right')}>Taken (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Collections (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>App fees (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Disbursed (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Expenses (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Deposit (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Carry forward (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Office Topup (TZS)</th>
+						<th className={cn(thClass, 'text-right')}>Next day taken (TZS)</th>
 						<th className={thClass}>Bank withdraw</th>
 					</tr>
 				</thead>
@@ -103,7 +103,7 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 									<TraceMoney value={t.deposit} formatMoney={formatMoney} bold />
 									{wRow ? (
 										<SubLine>
-											Same day: <TraceMoney value={rawDep} formatMoney={formatMoney} className="inline-flex !w-auto" />
+											Same day: <TraceMoney value={rawDep} formatMoney={formatMoney} className="!inline-block !w-auto" />
 										</SubLine>
 									) : null}
 								</td>
@@ -144,7 +144,7 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 											<SubLine>{new Date(wRow.created_at).toLocaleString()}</SubLine>
 											<SubLine>
 												To bank:{' '}
-												<TraceMoney value={banked} formatMoney={formatMoney} className="inline-flex !w-auto !items-end" />
+												<TraceMoney value={banked} formatMoney={formatMoney} className="!inline-block !w-auto" />
 											</SubLine>
 										</>
 									) : (
@@ -189,7 +189,7 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 							{totals.hasWithdrawn ? (
 								<SubLine>
 									Same day:{' '}
-									<TraceMoney value={totals.totalSameDay} formatMoney={formatMoney} className="inline-flex !w-auto" bold />
+									<TraceMoney value={totals.totalSameDay} formatMoney={formatMoney} className="!inline-block !w-auto" bold />
 								</SubLine>
 							) : null}
 						</td>

@@ -16,18 +16,18 @@ function WithdrawMetaCards({ wRow, formatMoney, depositShown, depositSameDay }) 
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       <Card className="shadow-none">
         <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Deposit (in hand)</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Deposit (in hand) (TZS)</p>
           <div className="mt-1">
             <TraceMoney value={depositShown} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
           </div>
           <p className="mt-1 flex flex-wrap items-baseline justify-end gap-x-1 text-xs text-muted-foreground">
-            Same day: <TraceMoney value={depositSameDay} formatMoney={formatMoney} className="!w-auto inline-flex" />
+            Same day: <TraceMoney value={depositSameDay} formatMoney={formatMoney} className="!inline-block !w-auto" />
           </p>
         </CardContent>
       </Card>
       <Card className="shadow-none">
         <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Carry forward</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Carry forward (TZS)</p>
           <div className="mt-1">
             {carry > 0 ? (
               <TraceMoney value={carry} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
@@ -39,7 +39,7 @@ function WithdrawMetaCards({ wRow, formatMoney, depositShown, depositSameDay }) 
       </Card>
       <Card className="shadow-none">
         <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Office Topup</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Office Topup (TZS)</p>
           <div className="mt-1">
             {topUp > 0 ? (
               <TraceMoney value={topUp} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
@@ -51,7 +51,7 @@ function WithdrawMetaCards({ wRow, formatMoney, depositShown, depositSameDay }) 
       </Card>
       <Card className="shadow-none">
         <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Next day taken · To bank</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Next day taken · To bank (TZS)</p>
           <div className="mt-1 flex flex-wrap items-end justify-end gap-x-2 gap-y-1">
             {planned > 0 ? (
               <TraceMoney value={planned} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
@@ -84,6 +84,7 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
 
   const thClass =
     'border border-border bg-muted/80 px-1 py-1.5 text-left text-[0.58rem] sm:text-[0.62rem] font-semibold uppercase leading-tight whitespace-normal';
+  const thNumClass = cn(thClass, 'text-right');
   const tdClass = 'border border-border px-1 py-1.5 align-middle text-[0.65rem] sm:text-xs';
   const tdNumClass = cn(tdClass, 'text-right');
   const totalClass = cn(tdClass, 'bg-amber-100/90 font-semibold dark:bg-amber-950/50');
@@ -136,7 +137,7 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
           <thead>
             <tr>
               {FIELD_WALLET_GRID_HEADERS.map((h) => (
-                <th key={h} className={thClass}>
+                <th key={h} className={h.includes('(TZS)') ? thNumClass : thClass}>
                   {h}
                 </th>
               ))}
@@ -169,6 +170,7 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
                   {numCell(cr.prepayment)}
                   <td className={cn(tdClass, 'text-center tabular-nums')}>{cr.prepaidClients ?? 0}</td>
                   {numCell(cr.penalty)}
+                  <td className={tdClass} />
                   <td className={tdClass} />
                   <td className={tdClass} />
                   <td className={tdClass} />

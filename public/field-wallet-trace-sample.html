@@ -308,9 +308,9 @@
   <script>
     /* Vifupi ili headers zifit bila scroll */
     const COLS = [
-      'Officer', 'Taken', 'Centre', 'Disburse',
-      'Disb. clients', 'Coll. w/o prepay', 'App fee',
-      'Prepay', 'Prepaid #', 'Penalty', 'Transport', 'Exp (1)', 'Exp (2)', 'DEPOSIT'
+      'Officer', 'Taken (TZS)', 'Centre', 'Disburse (TZS)',
+      'Disb. clients', 'Coll. w/o prepay (TZS)', 'App fee (TZS)',
+      'Prepay (TZS)', 'Prepaid #', 'Penalty (TZS)', 'Transport (TZS)', 'Exp (1) (TZS)', 'Exp (2) (TZS)', 'Deposit (TZS)'
     ];
 
     const SAMPLE = {
@@ -415,7 +415,7 @@
         tableBody += `<td class="num">${fmtPlain(cr.prepayment)}</td>`;
         tableBody += `<td class="center">${cr.prepaidClients}</td>`;
         tableBody += `<td class="num">${fmtPlain(cr.penalty)}</td>`;
-        tableBody += `<td></td><td></td><td></td>`;
+        tableBody += `<td></td><td></td><td></td><td></td>`;
         tableBody += '</tr>';
       });
 
@@ -468,10 +468,10 @@
             </table>
           </div>
           <div class="meta">
-            <div class="box"><label>Deposit (in hand)</label><div class="val">${fmt(depositShown)}</div><div class="sub">Same day: ${fmt(depositSameDay)}</div></div>
-            <div class="box"><label>Carry forward</label><div class="val">${carry > 0 ? fmt(carry) : '—'}</div>${w?.next_business_date ? `<div class="sub">Overnight</div>` : ''}</div>
-            <div class="box"><label>Office Topup</label><div class="val">${topUp > 0 ? fmt(topUp) : '—'}</div></div>
-            <div class="box"><label>Next day taken · To bank</label><div class="val">${planned > 0 ? fmt(planned) : '—'}${w ? ` · ${bank != null ? fmt(bank) : '—'}` : ''}</div>${w?.next_business_date ? `<div class="sub">For ${w.next_business_date}</div>` : ''}</div>
+            <div class="box"><label>Deposit (in hand) (TZS)</label><div class="val">${fmtPlain(depositShown)}</div><div class="sub">Same day: ${fmtPlain(depositSameDay)}</div></div>
+            <div class="box"><label>Carry forward (TZS)</label><div class="val">${carry > 0 ? fmtPlain(carry) : '—'}</div>${w?.next_business_date ? `<div class="sub">Overnight</div>` : ''}</div>
+            <div class="box"><label>Office Topup (TZS)</label><div class="val">${topUp > 0 ? fmtPlain(topUp) : '—'}</div></div>
+            <div class="box"><label>Next day taken · To bank (TZS)</label><div class="val">${planned > 0 ? fmtPlain(planned) : '—'}${w ? ` · ${bank != null ? fmtPlain(bank) : '—'}` : ''}</div>${w?.next_business_date ? `<div class="sub">For ${w.next_business_date}</div>` : ''}</div>
           </div>
         </section>`;
     }
@@ -554,30 +554,30 @@
         const banked = w ? (w.amount_deposited != null ? Number(w.amount_deposited) : rawDep) : null;
 
         const depositCell = w
-          ? `<span class="deposit-main">${fmt(t.deposit)}</span><span class="sub">Same day: ${fmt(rawDep)}</span>`
-          : `<span class="deposit-main">${fmt(t.deposit)}</span>`;
+          ? `<span class="deposit-main">${fmtPlain(t.deposit)}</span><span class="sub">Same day: ${fmtPlain(rawDep)}</span>`
+          : `<span class="deposit-main">${fmtPlain(t.deposit)}</span>`;
 
         const carryCell = carried > 0
-          ? `<span>${fmt(carried)}</span>${w?.next_business_date ? '<span class="sub">Overnight</span>' : ''}`
+          ? `<span>${fmtPlain(carried)}</span>${w?.next_business_date ? '<span class="sub">Overnight</span>' : ''}`
           : '<span class="sub">—</span>';
 
-        const topUpCell = topUp > 0 ? fmt(topUp) : '<span class="sub">—</span>';
+        const topUpCell = topUp > 0 ? fmtPlain(topUp) : '<span class="sub">—</span>';
 
         const nextCell = planned > 0
-          ? `<span>${fmt(planned)}</span>${w?.next_business_date ? `<span class="sub">For ${w.next_business_date}</span>` : ''}`
+          ? `<span>${fmtPlain(planned)}</span>${w?.next_business_date ? `<span class="sub">For ${w.next_business_date}</span>` : ''}`
           : '<span class="sub">—</span>';
 
         const bankCell = w
-          ? `<span class="status-ok">✓ Withdrawn</span><span class="sub">${new Date(w.created_at).toLocaleString()}</span><span class="sub">To bank: <strong>${fmt(banked)}</strong></span>`
+          ? `<span class="status-ok">✓ Withdrawn</span><span class="sub">${new Date(w.created_at).toLocaleString()}</span><span class="sub">To bank: <strong>${fmtPlain(banked)}</strong></span>`
           : `<span class="status-warn">○ Not recorded</span>${rawDep <= 0 ? '<span class="sub">Officer must open Field wallet and tap Withdraw to bank.</span>' : ''}`;
 
         return `<tr class="${pending ? 'pending-row' : ''}">
           <td class="name">${escapeHtml(block.officer.full_name)}</td>
-          <td class="num">${fmt(t.amountTaken)}</td>
-          <td class="num">${fmt(totalRep)}</td>
-          <td class="num">${fmt(t.applicationFee)}</td>
-          <td class="num">${fmt(t.disbursement)}</td>
-          <td class="num">${fmt(expensesTotal(t))}</td>
+          <td class="num">${fmtPlain(t.amountTaken)}</td>
+          <td class="num">${fmtPlain(totalRep)}</td>
+          <td class="num">${fmtPlain(t.applicationFee)}</td>
+          <td class="num">${fmtPlain(t.disbursement)}</td>
+          <td class="num">${fmtPlain(expensesTotal(t))}</td>
           <td class="num">${depositCell}</td>
           <td class="num">${carryCell}</td>
           <td class="num">${topUpCell}</td>
@@ -587,22 +587,22 @@
       }).join('');
 
       const depositFooter = totals.hasWithdrawn
-        ? `<span class="deposit-main">${fmt(totals.totalNet)}</span><span class="sub">Same day: ${fmt(totals.totalSameDay)}</span>`
-        : `<span class="deposit-main">${fmt(totals.totalNet)}</span>`;
+        ? `<span class="deposit-main">${fmtPlain(totals.totalNet)}</span><span class="sub">Same day: ${fmtPlain(totals.totalSameDay)}</span>`
+        : `<span class="deposit-main">${fmtPlain(totals.totalNet)}</span>`;
 
       return `<table>
         <thead>
           <tr>
             <th>Officer</th>
-            <th class="num">Taken</th>
-            <th class="num">Collections</th>
-            <th class="num">App fees</th>
-            <th class="num">Disbursed</th>
-            <th class="num">Expenses</th>
-            <th class="num">Deposit</th>
-            <th class="num">Carry forward</th>
-            <th class="num">Office Topup</th>
-            <th class="num">Next day taken</th>
+            <th class="num">Taken (TZS)</th>
+            <th class="num">Collections (TZS)</th>
+            <th class="num">App fees (TZS)</th>
+            <th class="num">Disbursed (TZS)</th>
+            <th class="num">Expenses (TZS)</th>
+            <th class="num">Deposit (TZS)</th>
+            <th class="num">Carry forward (TZS)</th>
+            <th class="num">Office Topup (TZS)</th>
+            <th class="num">Next day taken (TZS)</th>
             <th>Bank withdraw</th>
           </tr>
         </thead>
@@ -610,15 +610,15 @@
         <tfoot>
           <tr class="totals-row">
             <td class="name">Totals</td>
-            <td class="num">${fmt(totals.totalTaken)}</td>
-            <td class="num">${fmt(totals.totalCollections)}</td>
-            <td class="num">${fmt(totals.totalAppFees)}</td>
-            <td class="num">${fmt(totals.totalDisbursed)}</td>
-            <td class="num">${fmt(totals.totalExpenses)}</td>
+            <td class="num">${fmtPlain(totals.totalTaken)}</td>
+            <td class="num">${fmtPlain(totals.totalCollections)}</td>
+            <td class="num">${fmtPlain(totals.totalAppFees)}</td>
+            <td class="num">${fmtPlain(totals.totalDisbursed)}</td>
+            <td class="num">${fmtPlain(totals.totalExpenses)}</td>
             <td class="num">${depositFooter}</td>
-            <td class="num">${fmt(totals.totalCarry)}</td>
-            <td class="num">${fmt(totals.totalTopUp)}</td>
-            <td class="num">${fmt(totals.totalNext)}</td>
+            <td class="num">${fmtPlain(totals.totalCarry)}</td>
+            <td class="num">${fmtPlain(totals.totalTopUp)}</td>
+            <td class="num">${fmtPlain(totals.totalNext)}</td>
             <td></td>
           </tr>
         </tfoot>
