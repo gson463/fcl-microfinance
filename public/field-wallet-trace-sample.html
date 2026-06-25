@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="sw">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Field wallet trace — SAMPLE (standalone)</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #f4f4f5;
+      color: #18181b;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 100%; margin: 0 auto; padding: 1rem 0.75rem; }
+    .badge {
+      display: inline-block;
+      background: #e0f2fe;
+      color: #0c4a6e;
+      border: 1px solid #7dd3fc;
+      border-radius: 999px;
+      padding: 0.35rem 0.85rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    h1 { font-size: 1.5rem; margin: 0.75rem 0 0.25rem; }
+    .sub { color: #52525b; font-size: 0.9rem; margin-bottom: 1rem; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+    .btn {
+      border: 1px solid #d4d4d8;
+      background: #fff;
+      border-radius: 6px;
+      padding: 0.45rem 0.85rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .btn:hover { background: #fafafa; }
+    .btn.primary { background: #fef3c7; border-color: #fcd34d; color: #78350f; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #d4d4d8;
+      border-radius: 8px;
+      padding: 1rem 1.15rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+    .card .desc { font-size: 0.85rem; color: #52525b; }
+    .card .desc ul { margin: 0.5rem 0 0; padding-left: 1.25rem; }
+    .card .desc li { margin-bottom: 0.35rem; }
+
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      align-items: flex-end;
+      margin-top: 1rem;
+    }
+    .field label {
+      display: block;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #71717a;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+    .field input, .field select {
+      min-width: 200px;
+      padding: 0.5rem 0.65rem;
+      border: 1px solid #d4d4d8;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      background: #fff;
+    }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .kpi label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.04em; color: #71717a; font-weight: 600; }
+    .kpi .val { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 0.25rem; }
+    .kpi .hint { font-size: 0.75rem; color: #71717a; margin-top: 0.25rem; }
+    .kpi .subval { font-size: 1.05rem; font-weight: 600; margin-top: 0.65rem; padding-top: 0.65rem; border-top: 1px solid #e4e4e7; }
+
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .section-head h2 { margin: 0; font-size: 1rem; }
+    .section-head p { margin: 0.35rem 0 0; font-size: 0.85rem; color: #52525b; max-width: 52rem; }
+
+    .officer-block { margin-bottom: 2.5rem; }
+    .officer-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.35rem; }
+    .officer-head h3 { margin: 0; font-size: 1.05rem; }
+    .branch-tag { font-size: 0.75rem; color: #71717a; }
+    .pill-ok { background: #dcfce7; color: #166534; font-size: 0.7rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; }
+    .pill-warn { background: #fef3c7; color: #92400e; font-size: 0.7rem; font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; }
+    .pending { outline: 2px solid #fbbf24; outline-offset: 2px; border-radius: 8px; padding: 0.75rem; }
+
+    /* Grid inafit skrini — hakuna scroll ya kushoto/kulia */
+    .grid-wrap {
+      width: 100%;
+      overflow: visible;
+      border: 1px solid #a1a1aa;
+      border-radius: 6px;
+      background: #fff;
+    }
+    .grid-wrap table {
+      border-collapse: collapse;
+      table-layout: fixed;
+      width: 100%;
+      min-width: 0;
+      font-size: clamp(0.62rem, 0.72vw, 0.78rem);
+    }
+    .grid-wrap th,
+    .grid-wrap td {
+      border: 1px solid #a1a1aa;
+      padding: 0.35rem 0.2rem;
+      vertical-align: middle;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .grid-wrap th {
+      background: #e4e4e7;
+      font-size: clamp(0.52rem, 0.62vw, 0.65rem);
+      text-transform: uppercase;
+      letter-spacing: 0;
+      text-align: left;
+      white-space: normal;
+      line-height: 1.15;
+      hyphens: auto;
+    }
+    .grid-wrap td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      font-size: clamp(0.58rem, 0.68vw, 0.74rem);
+      line-height: 1.2;
+    }
+    .grid-wrap td.center { text-align: center; }
+    .grid-wrap tr.total td { background: #fef9c3; font-weight: 700; }
+    .grid-wrap td.officer-name {
+      background: #18181b;
+      color: #fff;
+      font-weight: 700;
+      text-align: left;
+      vertical-align: middle;
+      width: auto;
+      min-width: 4.5rem;
+      padding: 0.45rem 0.35rem;
+      font-size: clamp(0.58rem, 0.68vw, 0.74rem);
+      line-height: 1.25;
+      word-break: break-word;
+      overflow-wrap: normal;
+    }
+    .grid-wrap col.col-officer { width: 8%; }
+    .grid-wrap td.center-name { font-weight: 600; font-size: clamp(0.58rem, 0.68vw, 0.74rem); }
+    .grid-wrap col.col-centre { width: 7%; }
+    .grid-wrap col.col-num { width: 6.5%; }
+    .grid-wrap col.col-num-sm { width: 5%; }
+    .grid-wrap col.col-deposit { width: 7.5%; }
+
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 0.65rem;
+      margin-top: 0.85rem;
+    }
+    .meta .box {
+      background: #fff;
+      border: 1px solid #d4d4d8;
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .meta .box label { font-size: 0.65rem; text-transform: uppercase; color: #71717a; font-weight: 600; display: block; }
+    .meta .box .val { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 0.2rem; }
+    .meta .box .sub { font-size: 0.75rem; color: #71717a; margin-top: 0.2rem; }
+
+    .empty { padding: 2rem; text-align: center; color: #71717a; font-size: 0.9rem; }
+
+    /* Summary table — kama Field wallet trace halisi */
+    .summary-card { margin-top: 0.5rem; }
+    .summary-wrap { width: 100%; overflow: visible; }
+    .summary-wrap table {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+      font-size: clamp(0.72rem, 0.85vw, 0.875rem);
+    }
+    .summary-wrap th,
+    .summary-wrap td {
+      border: 1px solid #d4d4d8;
+      padding: 0.6rem 0.45rem;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .summary-wrap th {
+      background: #f4f4f5;
+      font-size: clamp(0.62rem, 0.72vw, 0.7rem);
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      font-weight: 600;
+      color: #52525b;
+      white-space: normal;
+      line-height: 1.15;
+    }
+    .summary-wrap td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .summary-wrap td.name { font-weight: 600; }
+    .summary-wrap tr.pending-row { background: #fffbeb; }
+    .summary-wrap tr.pending-row td:first-child { border-left: 4px solid #fbbf24; }
+    .summary-wrap tr.totals-row {
+      background: #f4f4f5;
+      font-weight: 700;
+      border-top: 2px solid #a1a1aa;
+    }
+    .summary-wrap tr.totals-row td { vertical-align: middle; }
+    .summary-wrap .sub { display: block; font-size: 0.72rem; color: #71717a; margin-top: 0.2rem; line-height: 1.25; }
+    .summary-wrap .deposit-main { font-weight: 700; }
+    .summary-wrap .status-ok { color: #166534; font-size: 0.82rem; }
+    .summary-wrap .status-warn { color: #71717a; font-size: 0.82rem; }
+
+    footer { margin-top: 2rem; font-size: 0.8rem; color: #71717a; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <span class="badge">STANDALONE SAMPLE — filters + data zote (dummy)</span>
+    <h1>Admin · Field wallet trace</h1>
+    <p class="sub">Muonekano kamili wa mpango — Excel grid, filters, KPI, export pending</p>
+
+    <div class="toolbar">
+      <button type="button" class="btn" id="btnRefresh">↻ Refresh status</button>
+      <button type="button" class="btn primary" id="btnExport" disabled>⬇ Export names (pending withdraw)</button>
+    </div>
+
+    <div class="card">
+      <h2>Field wallet — full day flow</h2>
+      <div class="desc">
+        <p><strong>What you're seeing.</strong> Siku moja tu — <strong id="descDate">—</strong>. Kila officer ni shughuli ya siku hiyo pekee.</p>
+        <ul>
+          <li><strong>Collections</strong> — malipo yote yaliyorekodi siku hiyo.</li>
+          <li><strong>Deposit</strong> — taken + collections + app fees − disbursement − expenses.</li>
+          <li>Baada ya withdraw: Deposit in hand = <strong>0</strong>; chini <strong>Same day:</strong> (si “formula”) — picha ya siku kabla ya withdraw.</li>
+        </ul>
+      </div>
+      <div class="filters">
+        <div class="field">
+          <label for="filterDate">Day</label>
+          <input type="date" id="filterDate" />
+        </div>
+        <div class="field">
+          <label for="filterBranch">Branch</label>
+          <select id="filterBranch">
+            <option value="">All branches</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="filterOfficer">Loan officer</label>
+          <select id="filterOfficer">
+            <option value="">All officers</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card">
+      <div class="section-head">
+        <div>
+          <h2>By officer — Excel grid</h2>
+          <p>
+            Kila officer ana grid yake (centre × columns). Amber = pending withdraw.
+            <strong>Office Topup</strong> · <strong>Carry forward</strong> · <strong>Next day taken</strong> chini ya grid.
+          </p>
+        </div>
+      </div>
+      <div id="grids"></div>
+    </div>
+
+    <div class="card summary-card" id="summarySection">
+      <div class="section-head">
+        <div>
+          <h2>By officer — summary</h2>
+          <p>
+            Jedwali kama kwenye mfumo sasa — kila officer safu moja. Amber = pending withdraw.
+            Chini: jumla ya Carry forward, Office Topup, Next day taken.
+          </p>
+        </div>
+      </div>
+      <div class="summary-wrap" id="summaryTable"></div>
+    </div>
+
+    <footer>
+      Data ni dummy (Juma + Asha). Filters zinafanya kazi ndani ya ukurasa huu pekee — hakuna database.
+    </footer>
+  </div>
+
+  <script>
+    /* Vifupi ili headers zifit bila scroll */
+    const COLS = [
+      'Officer', 'Taken', 'Centre', 'Disburse',
+      'Disb. clients', 'Coll. w/o prepay', 'App fee',
+      'Prepay', 'Prepaid #', 'Penalty', 'Transport', 'Exp (1)', 'Exp (2)', 'DEPOSIT'
+    ];
+
+    const SAMPLE = {
+      currency: 'TZS',
+      applicationFee: 5000,
+      walletDate: '2026-06-04',
+      branches: [
+        { id: 'br-dar', name: 'Dar es Salaam Main' },
+        { id: 'br-kin', name: 'Kinondoni' },
+      ],
+      officers: [
+        { id: 'sample-juma', full_name: 'Juma Mwangi', branch_id: 'br-dar' },
+        { id: 'sample-asha', full_name: 'Asha Kimaro', branch_id: 'br-kin' },
+      ],
+      blocks: [
+        {
+          officer: { id: 'sample-juma', full_name: 'Juma Mwangi' },
+          centerRows: [
+            { centerName: 'Kivukoni', disbursement: 200000, disbursedClients: 4, collectionWithoutPrepayment: 370000, applicationFee: 20000, prepayment: 80000, prepaidClients: 2, penalty: 0 },
+            { centerName: 'Mbagala', disbursement: 150000, disbursedClients: 3, collectionWithoutPrepayment: 330000, applicationFee: 15000, prepayment: 50000, prepaidClients: 1, penalty: 0 },
+          ],
+          totals: { amountTaken: 500000, disbursement: 350000, disbursedClients: 7, collectionWithoutPrepayment: 700000, applicationFee: 35000, prepayment: 130000, prepaidClients: 3, penalty: 0, transport: 25000, expense1: 10000, expense2: 0, deposit: 0, rawDeposit: 1000000 },
+        },
+        {
+          officer: { id: 'sample-asha', full_name: 'Asha Kimaro' },
+          centerRows: [
+            { centerName: 'Tabata', disbursement: 120000, disbursedClients: 2, collectionWithoutPrepayment: 250000, applicationFee: 10000, prepayment: 30000, prepaidClients: 1, penalty: 0 },
+          ],
+          totals: { amountTaken: 300000, disbursement: 120000, disbursedClients: 2, collectionWithoutPrepayment: 250000, applicationFee: 10000, prepayment: 30000, prepaidClients: 1, penalty: 0, transport: 15000, expense1: 5000, expense2: 0, deposit: 500000, rawDeposit: 500000 },
+        },
+      ],
+      withdrawByOfficer: {
+        'sample-juma': {
+          officer_id: 'sample-juma',
+          business_date: '2026-06-04',
+          amount_deposited: 0,
+          closing_deposit: 1000000,
+          carried_to_next_day: 1000000,
+          planned_next_day_taken: 2000000,
+          top_up_from_office: 1000000,
+          next_business_date: '2026-06-05',
+          created_at: '2026-06-04T18:30:00.000Z',
+        },
+      },
+    };
+
+    const fmt = (n) => {
+      const x = Number(n);
+      if (Number.isNaN(x)) return '—';
+      return SAMPLE.currency + ' ' + x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const fmtPlain = (n) => {
+      const x = Number(n);
+      if (Number.isNaN(x)) return '—';
+      return x.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    };
+
+    const branchName = (id) => SAMPLE.branches.find((b) => b.id === id)?.name || '—';
+
+    function getWithdraw(oid) {
+      return SAMPLE.withdrawByOfficer[oid] || null;
+    }
+
+    function repaymentTotal(block) {
+      const t = block.totals;
+      return Number(t.collectionWithoutPrepayment || 0) + Number(t.prepayment || 0);
+    }
+
+    function filteredBlocks() {
+      const branchId = document.getElementById('filterBranch').value;
+      const officerId = document.getElementById('filterOfficer').value;
+      let officerIds = SAMPLE.officers.map((o) => o.id);
+      if (officerId) officerIds = officerIds.filter((id) => id === officerId);
+      else if (branchId) officerIds = SAMPLE.officers.filter((o) => o.branch_id === branchId).map((o) => o.id);
+      return SAMPLE.blocks.filter((b) => officerIds.includes(b.officer.id));
+    }
+
+    function renderOfficerGrid(block) {
+      const oid = block.officer.id;
+      const w = getWithdraw(oid);
+      const pending = !w;
+      const officerMeta = SAMPLE.officers.find((o) => o.id === oid);
+      const t = block.totals;
+      const depositSameDay = Number(t.rawDeposit ?? t.deposit) || 0;
+      const depositShown = Number(t.deposit) || 0;
+      const rows = block.centerRows;
+      const totalRowSpan = rows.length + 1;
+
+      let tableBody = '';
+      rows.forEach((cr, i) => {
+        tableBody += '<tr>';
+        if (i === 0) {
+          tableBody += `<td class="officer-name" rowspan="${totalRowSpan}">${escapeHtml(block.officer.full_name)}</td>`;
+        }
+        tableBody += `<td></td>`;
+        tableBody += `<td class="center-name">${escapeHtml(cr.centerName)}</td>`;
+        tableBody += `<td class="num">${fmtPlain(cr.disbursement)}</td>`;
+        tableBody += `<td class="center">${cr.disbursedClients}</td>`;
+        tableBody += `<td class="num">${fmtPlain(cr.collectionWithoutPrepayment)}</td>`;
+        tableBody += `<td class="num">${fmtPlain(cr.applicationFee)}</td>`;
+        tableBody += `<td class="num">${fmtPlain(cr.prepayment)}</td>`;
+        tableBody += `<td class="center">${cr.prepaidClients}</td>`;
+        tableBody += `<td class="num">${fmtPlain(cr.penalty)}</td>`;
+        tableBody += `<td></td><td></td><td></td>`;
+        tableBody += '</tr>';
+      });
+
+      tableBody += `<tr class="total">
+        <td class="num">${fmtPlain(t.amountTaken)}</td>
+        <td>TOTAL</td>
+        <td class="num">${fmtPlain(t.disbursement)}</td>
+        <td class="center">${t.disbursedClients}</td>
+        <td class="num">${fmtPlain(t.collectionWithoutPrepayment)}</td>
+        <td class="num">${fmtPlain(t.applicationFee)}</td>
+        <td class="num">${fmtPlain(t.prepayment)}</td>
+        <td class="center">${t.prepaidClients}</td>
+        <td class="num">${fmtPlain(t.penalty)}</td>
+        <td class="num">${fmtPlain(t.transport)}</td>
+        <td class="num">${fmtPlain(t.expense1)}</td>
+        <td class="num">${fmtPlain(t.expense2)}</td>
+        <td class="num">${fmtPlain(depositSameDay)}</td>
+      </tr>`;
+
+      const carry = w ? Number(w.carried_to_next_day) || 0 : 0;
+      const topUp = w ? Number(w.top_up_from_office) || 0 : 0;
+      const planned = w && Number(w.planned_next_day_taken) > 0 ? Number(w.planned_next_day_taken) : carry;
+      const bank = w && w.amount_deposited != null ? Number(w.amount_deposited) : null;
+
+      const status = w
+        ? `<span class="pill-ok">Withdrawn</span> <span style="font-size:0.75rem;color:#71717a">${new Date(w.created_at).toLocaleString()}</span>`
+        : `<span class="pill-warn">Pending withdraw</span>`;
+
+      return `
+        <section class="officer-block ${pending ? 'pending' : ''}">
+          <div class="officer-head">
+            <h3>${escapeHtml(block.officer.full_name)}</h3>
+            ${status}
+            <span class="branch-tag">${escapeHtml(branchName(officerMeta?.branch_id))}</span>
+            <span class="branch-tag">Collections (repayments): ${fmt(repaymentTotal(block))}</span>
+          </div>
+          <div class="grid-wrap">
+            <table>
+              <colgroup>
+                <col class="col-officer" />
+                <col class="col-num-sm" />
+                <col class="col-centre" />
+                <col class="col-num" /><col class="col-num-sm" /><col class="col-num" />
+                <col class="col-num-sm" /><col class="col-num-sm" /><col class="col-num-sm" />
+                <col class="col-num-sm" /><col class="col-num-sm" /><col class="col-num-sm" /><col class="col-num-sm" />
+                <col class="col-deposit" />
+              </colgroup>
+              <thead><tr>${COLS.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>
+              <tbody>${tableBody}</tbody>
+            </table>
+          </div>
+          <div class="meta">
+            <div class="box"><label>Deposit (in hand)</label><div class="val">${fmt(depositShown)}</div><div class="sub">Same day: ${fmt(depositSameDay)}</div></div>
+            <div class="box"><label>Carry forward</label><div class="val">${carry > 0 ? fmt(carry) : '—'}</div>${w?.next_business_date ? `<div class="sub">Overnight</div>` : ''}</div>
+            <div class="box"><label>Office Topup</label><div class="val">${topUp > 0 ? fmt(topUp) : '—'}</div></div>
+            <div class="box"><label>Next day taken · To bank</label><div class="val">${planned > 0 ? fmt(planned) : '—'}${w ? ` · ${bank != null ? fmt(bank) : '—'}` : ''}</div>${w?.next_business_date ? `<div class="sub">For ${w.next_business_date}</div>` : ''}</div>
+          </div>
+        </section>`;
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function computeTotals(blocks) {
+      let totalNet = 0;
+      let totalSameDay = 0;
+      let totalTaken = 0;
+      let totalCollections = 0;
+      let totalAppFees = 0;
+      let totalDisbursed = 0;
+      let totalExpenses = 0;
+      let withdrawnCount = 0;
+      let totalBank = 0;
+      let totalCarry = 0;
+      let totalTopUp = 0;
+      let totalNext = 0;
+      let hasWithdrawn = false;
+
+      for (const block of blocks) {
+        const t = block.totals;
+        totalNet += Number(t.deposit) || 0;
+        totalSameDay += Number(t.rawDeposit ?? t.deposit) || 0;
+        totalTaken += Number(t.amountTaken) || 0;
+        totalCollections += repaymentTotal(block);
+        totalAppFees += Number(t.applicationFee) || 0;
+        totalDisbursed += Number(t.disbursement) || 0;
+        totalExpenses += expensesTotal(t);
+
+        const w = getWithdraw(block.officer.id);
+        if (w) {
+          hasWithdrawn = true;
+          withdrawnCount++;
+          const raw = Number(t.rawDeposit ?? t.deposit) || 0;
+          totalBank += w.amount_deposited != null ? Number(w.amount_deposited) : raw;
+          totalCarry += Number(w.carried_to_next_day) || 0;
+          totalTopUp += Number(w.top_up_from_office) || 0;
+          totalNext += Number(w.planned_next_day_taken) > 0 ? Number(w.planned_next_day_taken) : Number(w.carried_to_next_day) || 0;
+        }
+      }
+      return {
+        totalNet,
+        totalSameDay,
+        totalTaken,
+        totalCollections,
+        totalAppFees,
+        totalDisbursed,
+        totalExpenses,
+        withdrawnCount,
+        totalBank,
+        totalCarry,
+        totalTopUp,
+        totalNext,
+        hasWithdrawn,
+      };
+    }
+
+    function expensesTotal(t) {
+      return Number(t.transport || 0) + Number(t.expense1 || 0) + Number(t.expense2 || 0);
+    }
+
+    function renderSummaryTable(blocks, totals) {
+      if (!blocks.length) {
+        return '<div class="empty">No loan officers in the selected scope.</div>';
+      }
+
+      const rows = blocks.map((block) => {
+        const t = block.totals;
+        const w = getWithdraw(block.officer.id);
+        const pending = !w;
+        const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
+        const totalRep = repaymentTotal(block);
+        const carried = w ? Number(w.carried_to_next_day) || 0 : 0;
+        const topUp = w ? Number(w.top_up_from_office) || 0 : 0;
+        const planned = w && Number(w.planned_next_day_taken) > 0 ? Number(w.planned_next_day_taken) : carried;
+        const banked = w ? (w.amount_deposited != null ? Number(w.amount_deposited) : rawDep) : null;
+
+        const depositCell = w
+          ? `<span class="deposit-main">${fmt(t.deposit)}</span><span class="sub">Same day: ${fmt(rawDep)}</span>`
+          : `<span class="deposit-main">${fmt(t.deposit)}</span>`;
+
+        const carryCell = carried > 0
+          ? `<span>${fmt(carried)}</span>${w?.next_business_date ? '<span class="sub">Overnight</span>' : ''}`
+          : '<span class="sub">—</span>';
+
+        const topUpCell = topUp > 0 ? fmt(topUp) : '<span class="sub">—</span>';
+
+        const nextCell = planned > 0
+          ? `<span>${fmt(planned)}</span>${w?.next_business_date ? `<span class="sub">For ${w.next_business_date}</span>` : ''}`
+          : '<span class="sub">—</span>';
+
+        const bankCell = w
+          ? `<span class="status-ok">✓ Withdrawn</span><span class="sub">${new Date(w.created_at).toLocaleString()}</span><span class="sub">To bank: <strong>${fmt(banked)}</strong></span>`
+          : `<span class="status-warn">○ Not recorded</span>${rawDep <= 0 ? '<span class="sub">Officer must open Field wallet and tap Withdraw to bank.</span>' : ''}`;
+
+        return `<tr class="${pending ? 'pending-row' : ''}">
+          <td class="name">${escapeHtml(block.officer.full_name)}</td>
+          <td class="num">${fmt(t.amountTaken)}</td>
+          <td class="num">${fmt(totalRep)}</td>
+          <td class="num">${fmt(t.applicationFee)}</td>
+          <td class="num">${fmt(t.disbursement)}</td>
+          <td class="num">${fmt(expensesTotal(t))}</td>
+          <td class="num">${depositCell}</td>
+          <td class="num">${carryCell}</td>
+          <td class="num">${topUpCell}</td>
+          <td class="num">${nextCell}</td>
+          <td>${bankCell}</td>
+        </tr>`;
+      }).join('');
+
+      const depositFooter = totals.hasWithdrawn
+        ? `<span class="deposit-main">${fmt(totals.totalNet)}</span><span class="sub">Same day: ${fmt(totals.totalSameDay)}</span>`
+        : `<span class="deposit-main">${fmt(totals.totalNet)}</span>`;
+
+      return `<table>
+        <thead>
+          <tr>
+            <th>Officer</th>
+            <th class="num">Taken</th>
+            <th class="num">Collections</th>
+            <th class="num">App fees</th>
+            <th class="num">Disbursed</th>
+            <th class="num">Expenses</th>
+            <th class="num">Deposit</th>
+            <th class="num">Carry forward</th>
+            <th class="num">Office Topup</th>
+            <th class="num">Next day taken</th>
+            <th>Bank withdraw</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr class="totals-row">
+            <td class="name">Totals</td>
+            <td class="num">${fmt(totals.totalTaken)}</td>
+            <td class="num">${fmt(totals.totalCollections)}</td>
+            <td class="num">${fmt(totals.totalAppFees)}</td>
+            <td class="num">${fmt(totals.totalDisbursed)}</td>
+            <td class="num">${fmt(totals.totalExpenses)}</td>
+            <td class="num">${depositFooter}</td>
+            <td class="num">${fmt(totals.totalCarry)}</td>
+            <td class="num">${fmt(totals.totalTopUp)}</td>
+            <td class="num">${fmt(totals.totalNext)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>`;
+    }
+
+    function render() {
+      const blocks = filteredBlocks();
+      const walletDate = document.getElementById('filterDate').value || SAMPLE.walletDate;
+      const totals = computeTotals(blocks);
+
+      document.getElementById('descDate').textContent = walletDate;
+
+      document.getElementById('kpis').innerHTML = `
+        <div class="card kpi"><label>Sum — net deposit (computed)</label><div class="val">${fmt(totals.totalNet)}</div><div class="hint">Across ${blocks.length} officer(s) in scope · Day: ${walletDate}</div></div>
+        <div class="card kpi"><label>Withdrawn to bank</label><div class="val">${totals.withdrawnCount} / ${blocks.length}</div><div class="hint">Officers who confirmed for this date</div><div class="subval">${fmt(totals.totalBank)}</div><div class="hint">Total to bank (amount deposited)</div></div>
+        <div class="card kpi"><label>Application fee / disbursement</label><div class="val" style="font-size:1rem;font-weight:600;margin-top:0.5rem">Fee per disbursement: ${fmt(SAMPLE.applicationFee)}</div><div class="hint">Day filter: ${walletDate}</div></div>`;
+
+      const gridsEl = document.getElementById('grids');
+      const summaryEl = document.getElementById('summaryTable');
+      if (blocks.length === 0) {
+        gridsEl.innerHTML = '<div class="empty">No loan officers in the selected scope.</div>';
+        summaryEl.innerHTML = '<div class="empty">No loan officers in the selected scope.</div>';
+      } else {
+        gridsEl.innerHTML = blocks.map(renderOfficerGrid).join('');
+        summaryEl.innerHTML = renderSummaryTable(blocks, totals);
+      }
+
+      const pending = blocks.filter((b) => !getWithdraw(b.officer.id));
+      const btnExport = document.getElementById('btnExport');
+      btnExport.disabled = pending.length === 0;
+      btnExport.textContent = pending.length
+        ? `⬇ Export names (pending withdraw) (${pending.length})`
+        : '⬇ Export names (pending withdraw)';
+      btnExport.onclick = () => exportPending(pending, walletDate);
+    }
+
+    function exportPending(pending, walletDate) {
+      const rows = [['Officer name', 'Branch', 'Business date', 'Net deposit (computed)']];
+      pending.forEach((block) => {
+        const o = SAMPLE.officers.find((x) => x.id === block.officer.id);
+        const net = Number(block.totals.rawDeposit ?? block.totals.deposit) || 0;
+        rows.push([block.officer.full_name, branchName(o?.branch_id), walletDate, net.toFixed(2)]);
+      });
+      const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+      a.download = `officers-pending-withdraw_${walletDate}.csv`;
+      a.click();
+    }
+
+    function populateFilters() {
+      const branchSel = document.getElementById('filterBranch');
+      SAMPLE.branches.forEach((b) => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name;
+        branchSel.appendChild(opt);
+      });
+
+      function refreshOfficerOptions() {
+        const branchId = document.getElementById('filterBranch').value;
+        const officerSel = document.getElementById('filterOfficer');
+        const current = officerSel.value;
+        officerSel.innerHTML = '<option value="">All officers</option>';
+        const list = branchId ? SAMPLE.officers.filter((o) => o.branch_id === branchId) : SAMPLE.officers;
+        list.forEach((o) => {
+          const opt = document.createElement('option');
+          opt.value = o.id;
+          opt.textContent = o.full_name;
+          officerSel.appendChild(opt);
+        });
+        if (list.some((o) => o.id === current)) officerSel.value = current;
+        else officerSel.value = '';
+      }
+
+      branchSel.addEventListener('change', () => {
+        refreshOfficerOptions();
+        render();
+      });
+      document.getElementById('filterOfficer').addEventListener('change', render);
+      document.getElementById('filterDate').addEventListener('change', render);
+      refreshOfficerOptions();
+    }
+
+    document.getElementById('filterDate').value = SAMPLE.walletDate;
+    document.getElementById('btnRefresh').addEventListener('click', () => {
+      document.getElementById('btnRefresh').textContent = '↻ Refreshing…';
+      setTimeout(() => {
+        render();
+        document.getElementById('btnRefresh').textContent = '↻ Refresh status';
+      }, 300);
+    });
+
+    populateFilters();
+    render();
+  </script>
+</body>
+</html>

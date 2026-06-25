@@ -1,21 +1,7 @@
 import ExcelJS from 'exceljs';
+import { FIELD_WALLET_REPORT_COLS } from '@/lib/fieldWalletReportColumns';
 
-const COLS = [
-  'Officers Name',
-  'Amount Taken',
-  'Centers',
-  'Disbursement',
-  'No. of disbursed clients',
-  'Collection without Prepayment',
-  'Application Fee',
-  'Prepayment',
-  'No. of prepaid clients',
-  'Penalty',
-  'Transport',
-  'Expenses (1)',
-  'Expenses (2)',
-  'DEPOSIT',
-];
+const COLS = FIELD_WALLET_REPORT_COLS;
 
 function fmt(n, currency) {
   if (n === '' || n === null || n === undefined) return '';

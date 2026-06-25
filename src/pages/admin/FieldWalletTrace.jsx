@@ -1,19 +1,20 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { format, startOfDay } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
-import { ArrowLeft, Loader2, Wallet, CalendarIcon, CheckCircle2, CircleDashed, Download, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Loader2, Wallet, CalendarIcon, Download, RefreshCw, FlaskConical } from 'lucide-react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { SearchableSelect } from '@/components/ui/searchable-select';
+import { FieldWalletTraceGrid } from '@/components/admin/FieldWalletTraceGrid';
+import { FieldWalletTraceSummaryTable } from '@/components/admin/FieldWalletTraceSummaryTable';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { fetchAdminFieldWalletSnapshot } from '@/lib/adminFieldWalletSnapshot';
-import { cn } from '@/lib/utils';
+import { isFieldWalletTraceDummyMode, loadFieldWalletTraceSample } from '@/lib/loadFieldWalletTraceSample';
 import { exportObjectsToCsv } from '@/lib/tableExport';
 
 const EAT = 'Africa/Nairobi';
@@ -97,9 +98,20 @@ const FieldWalletTrace = () => {
 		return officers.filter((o) => o.branch_id === branchId);
 	}, [officers, branchId]);
 
+	const useDummyData = isFieldWalletTraceDummyMode(searchParams);
+
 	const fetchData = useCallback(async () => {
 		setLoading(true);
 		try {
+			if (useDummyData) {
+				const snap = loadFieldWalletTraceSample();
+				setCurrency(snap.currency);
+				setApplicationFee(snap.applicationFee);
+				setBlocks(snap.blocks);
+				setWithdrawByOfficer(snap.withdrawByOfficer);
+				setRepaymentTotalsByOfficer(snap.repaymentTotalsByOfficer);
+				return;
+			}
 			const snap = await fetchAdminFieldWalletSnapshot(supabase, walletDate, officersInScope);
 			setCurrency(snap.currency);
 			setApplicationFee(snap.applicationFee);
@@ -108,25 +120,28 @@ const FieldWalletTrace = () => {
 			setRepaymentTotalsByOfficer(snap.repaymentTotalsByOfficer);
 		} catch (e) {
 			console.error(e);
+			const snap = loadFieldWalletTraceSample();
+			setCurrency(snap.currency);
+			setApplicationFee(snap.applicationFee);
+			setBlocks(snap.blocks);
+			setWithdrawByOfficer(snap.withdrawByOfficer);
+			setRepaymentTotalsByOfficer(snap.repaymentTotalsByOfficer);
 			toast({
-				title: 'Could not load field wallet',
-				description: e.message || 'Please try again. If this keeps failing, contact support.',
-				variant: 'destructive',
+				title: 'Using dummy data',
+				description: 'Live load failed — showing sample layout (Juma / Asha).',
 			});
-			setBlocks([]);
-			setWithdrawByOfficer(new Map());
-			setRepaymentTotalsByOfficer(new Map());
 		} finally {
 			setLoading(false);
 		}
-	}, [walletDate, officersInScope, toast]);
+	}, [walletDate, officersInScope, toast, useDummyData]);
 
 	useEffect(() => {
 		fetchData();
 	}, [fetchData]);
 
-	/** Live updates when an officer records withdraw (requires migration: officer_withdraw_to_bank in supabase_realtime). */
+	/** Live updates when an officer records withdraw (skip in dummy mode). */
 	useEffect(() => {
+		if (useDummyData) return undefined;
 		const ch = supabase
 			.channel(`field-wallet-withdraw-${walletDate}`)
 			.on(
@@ -145,7 +160,7 @@ const FieldWalletTrace = () => {
 		return () => {
 			supabase.removeChannel(ch);
 		};
-	}, [walletDate, fetchData]);
+	}, [walletDate, fetchData, useDummyData]);
 
 	useEffect(() => {
 		const onFocus = () => fetchData();
@@ -189,36 +204,6 @@ const FieldWalletTrace = () => {
 	}, [blocks, withdrawByOfficer]);
 
 	const totalNet = useMemo(() => blocks.reduce((s, b) => s + (Number(b.totals.deposit) || 0), 0), [blocks]);
-
-	const totalNextDayTaken = useMemo(
-		() =>
-			blocks.reduce((s, block) => {
-				const w = withdrawByOfficer.get(block.officer.id);
-				if (!w) return s;
-				const planned = Number(w.planned_next_day_taken);
-				if (planned > 0) return s + planned;
-				return s + (Number(w.carried_to_next_day) || 0);
-			}, 0),
-		[blocks, withdrawByOfficer]
-	);
-
-	const totalCarryForward = useMemo(
-		() =>
-			blocks.reduce((s, block) => {
-				const w = withdrawByOfficer.get(block.officer.id);
-				return s + (w ? Number(w.carried_to_next_day) || 0 : 0);
-			}, 0),
-		[blocks, withdrawByOfficer]
-	);
-
-	const totalTopUpFromOffice = useMemo(
-		() =>
-			blocks.reduce((s, block) => {
-				const w = withdrawByOfficer.get(block.officer.id);
-				return s + (w ? Number(w.top_up_from_office) || 0 : 0);
-			}, 0),
-		[blocks, withdrawByOfficer]
-	);
 
 	const branchNameById = useMemo(() => Object.fromEntries((branches || []).map((b) => [b.id, b.name || ''])), [branches]);
 
@@ -266,6 +251,12 @@ const FieldWalletTrace = () => {
 						<ArrowLeft className="mr-2 h-4 w-4" />
 						Admin dashboard
 					</Button>
+					<Button type="button" variant="secondary" size="sm" asChild>
+						<Link to="/demo/field-wallet-trace">
+							<FlaskConical className="mr-2 h-4 w-4" />
+							View sample (dummy data)
+						</Link>
+					</Button>
 					<Button type="button" variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
 						{loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
 						Refresh status
@@ -302,7 +293,7 @@ const FieldWalletTrace = () => {
 									When it says <strong className="text-foreground">Withdrawn to bank</strong>, the main{' '}
 									<strong>Deposit</strong> figure shows <strong>0</strong> because the system treats that day&apos;s cash as{' '}
 									<strong>no longer in the officer&apos;s hands</strong> (it&apos;s at the bank). The smaller line underneath
-									— <strong>“Same day (formula)”</strong> — is still the <strong>day&apos;s cash picture before that step</strong>,
+									— <strong>Same day:</strong> — is still the <strong>day&apos;s cash picture before that step</strong>,
 									so you can check it against <strong>their report, PDF, or Excel</strong> for the same date.
 								</li>
 							</ul>
@@ -418,175 +409,62 @@ const FieldWalletTrace = () => {
 				) : officersInScope.length === 0 ? (
 					<p className="text-sm text-muted-foreground">No loan officers in the selected scope.</p>
 				) : (
-					<Card>
-						<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
-							<div>
-								<CardTitle className="text-base">By officer</CardTitle>
+					<>
+						<Card>
+							<CardHeader>
+								<CardTitle className="text-base">By officer — Excel grid</CardTitle>
 								<CardDescription>
-									Each line is one loan officer on the date you chose at the top.{' '}
-									<span className="font-medium text-amber-800 dark:text-amber-200">
-										Amber background means they have not confirmed &quot;withdraw to bank&quot; for that day yet
-									</span>
-									.{' '}
-									<strong className="text-foreground">Next day taken</strong> — total float planned for the next working day.{' '}
-									<strong className="text-foreground">Carry forward</strong> — cash kept overnight.{' '}
-									<strong className="text-foreground">Top-up from office</strong> — extra planned from office when taken exceeds closing deposit. If <strong>Collections</strong> looks like zero
-									here but their own wallet shows they received payments, make sure you selected the{' '}
-									<strong>same date</strong> and the correct <strong>branch or officer</strong> in the filters above — small
-									mismatches there are the usual reason totals don&apos;t match.
+									Each officer has a centre breakdown (Excel-style). Amber ring = pending withdraw. Meta cards show{' '}
+									<strong className="text-foreground">Office Topup</strong>, carry forward, and next day taken.
 								</CardDescription>
-							</div>
-							<Button
-								type="button"
-								variant="outline"
-								size="sm"
-								className="shrink-0 border-amber-300/80 bg-amber-50/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
-								onClick={exportReminderList}
-								disabled={pendingWithdrawExportRows.length === 0 || loading}
-							>
-								<Download className="mr-2 h-4 w-4" />
-								Export names (pending withdraw)
-								{pendingWithdrawExportRows.length > 0 ? ` (${pendingWithdrawExportRows.length})` : ''}
-							</Button>
-						</CardHeader>
-						<CardContent className="overflow-x-auto">
-							{/* default variant: excel zebra was overriding pending-withdraw amber on many rows */}
-							<Table variant="default">
-								<TableHeader>
-									<TableRow>
-										<TableHead>Officer</TableHead>
-										<TableHead className="text-right">Taken</TableHead>
-										<TableHead className="text-right">Collections</TableHead>
-										<TableHead className="text-right">App fees</TableHead>
-										<TableHead className="text-right">Disbursed</TableHead>
-										<TableHead className="text-right">Expenses</TableHead>
-										<TableHead className="text-right font-semibold">Deposit</TableHead>
-										<TableHead className="text-right">Carry forward</TableHead>
-										<TableHead className="text-right">Top-up office</TableHead>
-										<TableHead className="text-right">Next day taken</TableHead>
-										<TableHead>Bank withdraw</TableHead>
-									</TableRow>
-								</TableHeader>
-								<TableBody>
-									{blocks.map((block) => {
-										const t = block.totals;
-										const totalRep = repaymentTotalsByOfficer.get(block.officer.id) ?? 0;
-										const wRow = withdrawByOfficer.get(block.officer.id);
-										const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
-										const banked = wRow
-											? wRow.amount_deposited != null
-												? Number(wRow.amount_deposited)
-												: rawDep
-											: null;
-										const carried = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
-										const planned =
-											wRow && Number(wRow.planned_next_day_taken) > 0
-												? Number(wRow.planned_next_day_taken)
-												: carried;
-										const topUp = wRow ? Number(wRow.top_up_from_office) || 0 : 0;
-										return (
-											<TableRow
-												key={block.officer.id}
-												className={cn(
-													!wRow &&
-														'!bg-amber-50/95 hover:!bg-amber-100/90 border-l-4 border-l-amber-400 dark:!bg-amber-950/40 dark:hover:!bg-amber-950/55 dark:border-l-amber-500'
-												)}
-											>
-												<TableCell className="font-medium">{block.officer.full_name || '—'}</TableCell>
-												<TableCell className="text-right tabular-nums">{formatMoney(t.amountTaken)}</TableCell>
-												<TableCell className="text-right tabular-nums">{formatMoney(totalRep)}</TableCell>
-												<TableCell className="text-right tabular-nums">{formatMoney(t.applicationFee)}</TableCell>
-												<TableCell className="text-right tabular-nums">{formatMoney(t.disbursement)}</TableCell>
-												<TableCell className="text-right tabular-nums">
-													{formatMoney(Number(t.transport || 0) + Number(t.otherExpenses || 0))}
-												</TableCell>
-												<TableCell className="text-right align-top tabular-nums">
-													<div className="inline-block text-right">
-														<span className="font-semibold block">{formatMoney(t.deposit)}</span>
-														{wRow ? (
-															<span className="block text-xs font-normal text-muted-foreground mt-0.5 max-w-[13rem] ml-auto leading-snug">
-																Same day (formula): {formatMoney(rawDep)}
-															</span>
-														) : null}
-													</div>
-												</TableCell>
-												<TableCell className="text-right align-top tabular-nums">
-													{carried > 0 ? (
-														<div className="inline-block text-right">
-															<span className="font-medium block">{formatMoney(carried)}</span>
-															{wRow?.next_business_date ? (
-																<span className="block text-xs font-normal text-muted-foreground mt-0.5">
-																	Overnight
-																</span>
-															) : null}
-														</div>
-													) : (
-														<span className="text-muted-foreground">—</span>
-													)}
-												</TableCell>
-												<TableCell className="text-right tabular-nums">
-													{topUp > 0 ? formatMoney(topUp) : <span className="text-muted-foreground">—</span>}
-												</TableCell>
-												<TableCell className="text-right align-top tabular-nums">
-													{planned > 0 ? (
-														<div className="inline-block text-right">
-															<span className="font-medium block">{formatMoney(planned)}</span>
-															{wRow?.next_business_date ? (
-																<span className="block text-xs font-normal text-muted-foreground mt-0.5">
-																	For {wRow.next_business_date}
-																</span>
-															) : null}
-														</div>
-													) : (
-														<span className="text-muted-foreground">—</span>
-													)}
-												</TableCell>
-												<TableCell>
-													{wRow ? (
-														<div className="space-y-1">
-															<span className="inline-flex flex-wrap items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
-																<CheckCircle2 className="h-4 w-4 shrink-0" />
-																Withdrawn
-																<span className="text-xs text-muted-foreground">
-																	({new Date(wRow.created_at).toLocaleString()})
-																</span>
-															</span>
-															<p className="text-xs tabular-nums text-muted-foreground">
-																To bank: <span className="font-medium text-foreground">{formatMoney(banked)}</span>
-															</p>
-														</div>
-													) : (
-														<div className="text-sm text-muted-foreground">
-															<span className="inline-flex items-center gap-1.5">
-																<CircleDashed className="h-4 w-4 shrink-0" />
-																Not recorded
-															</span>
-															{rawDep <= 0 && (
-																<p className="mt-1 max-w-[14rem] text-xs text-amber-900/80 dark:text-amber-200/90">
-																	Officer must open Field wallet (same day) and tap &quot;Withdraw to bank&quot; — including when deposit is 0.
-																</p>
-															)}
-														</div>
-													)}
-												</TableCell>
-											</TableRow>
-										);
-									})}
-								</TableBody>
-								<TableFooter>
-									<TableRow className="border-t-2 bg-muted/30 font-semibold hover:bg-muted/30">
-										<TableCell colSpan={7} className="text-right">
-											Totals
-										</TableCell>
-										<TableCell className="text-right tabular-nums">{formatMoney(totalCarryForward)}</TableCell>
-										<TableCell className="text-right tabular-nums">{formatMoney(totalTopUpFromOffice)}</TableCell>
-										<TableCell className="text-right tabular-nums">{formatMoney(totalNextDayTaken)}</TableCell>
-										<TableCell />
-									</TableRow>
-								</TableFooter>
-							</Table>
-						</CardContent>
-					</Card>
+							</CardHeader>
+							<CardContent>
+								<FieldWalletTraceGrid
+									blocks={blocks}
+									withdrawByOfficer={withdrawByOfficer}
+									formatMoney={formatMoney}
+								/>
+							</CardContent>
+						</Card>
+
+						<Card>
+							<CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
+								<div>
+									<CardTitle className="text-base">By officer — summary</CardTitle>
+									<CardDescription>
+										Compact table — one row per officer.{' '}
+										<span className="font-medium text-amber-800 dark:text-amber-200">
+											Amber background means they have not confirmed &quot;withdraw to bank&quot; for that day yet
+										</span>
+										.{' '}
+										<strong className="text-foreground">Next day taken</strong> — total float planned for the next working day.{' '}
+										<strong className="text-foreground">Carry forward</strong> — cash kept overnight.{' '}
+										<strong className="text-foreground">Office Topup</strong> — extra from office when taken exceeds closing deposit.
+									</CardDescription>
+								</div>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									className="shrink-0 border-amber-300/80 bg-amber-50/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-950/70"
+									onClick={exportReminderList}
+									disabled={pendingWithdrawExportRows.length === 0 || loading}
+								>
+									<Download className="mr-2 h-4 w-4" />
+									Export names (pending withdraw)
+									{pendingWithdrawExportRows.length > 0 ? ` (${pendingWithdrawExportRows.length})` : ''}
+								</Button>
+							</CardHeader>
+							<CardContent>
+								<FieldWalletTraceSummaryTable
+									blocks={blocks}
+									withdrawByOfficer={withdrawByOfficer}
+									repaymentTotalsByOfficer={repaymentTotalsByOfficer}
+									formatMoney={formatMoney}
+								/>
+							</CardContent>
+						</Card>
+					</>
 				)}
 			</div>
 		</DashboardLayout>
