@@ -52,7 +52,7 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, format
 						<th className={cn(thClass, 'text-right')}>Carry forward (TZS)</th>
 						<th className={cn(thClass, 'text-right')}>Office Topup (TZS)</th>
 						<th className={cn(thClass, 'text-right')}>Next day taken (TZS)</th>
-						<th className={thClass}>Bank withdraw</th>
+						<th className={cn(thClass, 'text-right')}>To bank (TZS)</th>
 					</tr>
 				</thead>
 				<tbody>

@@ -5,71 +5,79 @@ import { TraceMoney } from '@/components/admin/TraceMoney';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
+const metaLabelClass = 'text-xs font-medium uppercase tracking-wide text-muted-foreground';
+const metaSubClass = 'mt-1 block text-right text-xs leading-snug text-muted-foreground';
+
+/** Label on top, amount below (right-aligned), optional sub-line below amount. */
+function MetaAmountCard({ label, formatMoney, value, showAmount = true, subLine }) {
+  return (
+    <Card className="shadow-none">
+      <CardContent className="flex flex-col p-4">
+        <p className={metaLabelClass}>{label}</p>
+        <div className="mt-1 text-right">
+          {showAmount ? (
+            <TraceMoney value={value} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
+          ) : (
+            <span className="block text-right text-lg font-bold tabular-nums">—</span>
+          )}
+        </div>
+        {subLine ? <p className={metaSubClass}>{subLine}</p> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function WithdrawMetaCards({ wRow, formatMoney, depositShown, depositSameDay }) {
   const carry = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
   const topUp = wRow ? Number(wRow.top_up_from_office) || 0 : 0;
   const planned =
     wRow && Number(wRow.planned_next_day_taken) > 0 ? Number(wRow.planned_next_day_taken) : carry;
-  const bank = wRow && wRow.amount_deposited != null ? Number(wRow.amount_deposited) : null;
+  const banked = wRow
+    ? wRow.amount_deposited != null
+      ? Number(wRow.amount_deposited)
+      : depositSameDay
+    : null;
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <Card className="shadow-none">
-        <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Deposit (in hand) (TZS)</p>
-          <div className="mt-1">
-            <TraceMoney value={depositShown} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
-          </div>
-          <p className="mt-1 flex flex-wrap items-baseline justify-end gap-x-1 text-xs text-muted-foreground">
-            Same day: <TraceMoney value={depositSameDay} formatMoney={formatMoney} className="!inline-block !w-auto" />
-          </p>
-        </CardContent>
-      </Card>
-      <Card className="shadow-none">
-        <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Carry forward (TZS)</p>
-          <div className="mt-1">
-            {carry > 0 ? (
-              <TraceMoney value={carry} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
-            ) : (
-              <span className="text-lg font-bold">—</span>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-      <Card className="shadow-none">
-        <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Office Topup (TZS)</p>
-          <div className="mt-1">
-            {topUp > 0 ? (
-              <TraceMoney value={topUp} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
-            ) : (
-              <span className="text-lg font-bold">—</span>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-      <Card className="shadow-none">
-        <CardContent className="p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Next day taken · To bank (TZS)</p>
-          <div className="mt-1 flex flex-wrap items-end justify-end gap-x-2 gap-y-1">
-            {planned > 0 ? (
-              <TraceMoney value={planned} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
-            ) : (
-              <span className="text-lg font-bold">—</span>
-            )}
-            {wRow ? (
-              <>
-                <span className="text-muted-foreground">·</span>
-                <TraceMoney value={bank} formatMoney={formatMoney} bold amountClassName="text-base sm:text-lg" />
-              </>
-            ) : null}
-          </div>
-          {wRow?.next_business_date ? (
-            <p className="mt-1 text-xs text-muted-foreground">For {wRow.next_business_date}</p>
-          ) : null}
-        </CardContent>
-      </Card>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <MetaAmountCard
+        label="Deposit (in hand) (TZS)"
+        formatMoney={formatMoney}
+        value={depositShown}
+        subLine={
+          <>
+            Same day:{' '}
+            <TraceMoney value={depositSameDay} formatMoney={formatMoney} className="!inline-block !w-auto" />
+          </>
+        }
+      />
+      <MetaAmountCard
+        label="Carry forward (TZS)"
+        formatMoney={formatMoney}
+        value={carry}
+        showAmount={carry > 0}
+        subLine={wRow?.next_business_date && carry > 0 ? 'Overnight' : null}
+      />
+      <MetaAmountCard
+        label="Office Topup (TZS)"
+        formatMoney={formatMoney}
+        value={topUp}
+        showAmount={topUp > 0}
+      />
+      <MetaAmountCard
+        label="Next day taken (TZS)"
+        formatMoney={formatMoney}
+        value={planned}
+        showAmount={planned > 0}
+        subLine={wRow?.next_business_date && planned > 0 ? `For ${wRow.next_business_date}` : null}
+      />
+      <MetaAmountCard
+        label="To bank (TZS)"
+        formatMoney={formatMoney}
+        value={banked}
+        showAmount={wRow != null}
+        subLine={wRow ? null : 'Not recorded'}
+      />
     </div>
   );
 }

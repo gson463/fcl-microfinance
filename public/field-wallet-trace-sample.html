@@ -181,8 +181,8 @@
       padding: 0.85rem 1rem;
     }
     .meta .box label { font-size: 0.65rem; text-transform: uppercase; color: #71717a; font-weight: 600; display: block; }
-    .meta .box .val { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 0.2rem; }
-    .meta .box .sub { font-size: 0.75rem; color: #71717a; margin-top: 0.2rem; }
+    .meta .box .val { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 0.2rem; text-align: right; }
+    .meta .box .sub { font-size: 0.75rem; color: #71717a; margin-top: 0.2rem; text-align: right; display: block; }
 
     .empty { padding: 2rem; text-align: center; color: #71717a; font-size: 0.9rem; }
 
@@ -280,7 +280,7 @@
           <h2>By officer — Excel grid</h2>
           <p>
             Kila officer ana grid yake (centre × columns). Amber = pending withdraw.
-            <strong>Office Topup</strong> · <strong>Carry forward</strong> · <strong>Next day taken</strong> chini ya grid.
+            <strong>Office Topup</strong> · <strong>Carry forward</strong> · <strong>Next day taken</strong> · <strong>To bank</strong> chini ya grid (kadi 5).
           </p>
         </div>
       </div>
@@ -438,7 +438,7 @@
       const carry = w ? Number(w.carried_to_next_day) || 0 : 0;
       const topUp = w ? Number(w.top_up_from_office) || 0 : 0;
       const planned = w && Number(w.planned_next_day_taken) > 0 ? Number(w.planned_next_day_taken) : carry;
-      const bank = w && w.amount_deposited != null ? Number(w.amount_deposited) : null;
+      const banked = w ? (w.amount_deposited != null ? Number(w.amount_deposited) : depositSameDay) : null;
 
       const status = w
         ? `<span class="pill-ok">Withdrawn</span> <span style="font-size:0.75rem;color:#71717a">${new Date(w.created_at).toLocaleString()}</span>`
@@ -469,9 +469,10 @@
           </div>
           <div class="meta">
             <div class="box"><label>Deposit (in hand) (TZS)</label><div class="val">${fmtPlain(depositShown)}</div><div class="sub">Same day: ${fmtPlain(depositSameDay)}</div></div>
-            <div class="box"><label>Carry forward (TZS)</label><div class="val">${carry > 0 ? fmtPlain(carry) : '—'}</div>${w?.next_business_date ? `<div class="sub">Overnight</div>` : ''}</div>
+            <div class="box"><label>Carry forward (TZS)</label><div class="val">${carry > 0 ? fmtPlain(carry) : '—'}</div>${w?.next_business_date && carry > 0 ? `<div class="sub">Overnight</div>` : ''}</div>
             <div class="box"><label>Office Topup (TZS)</label><div class="val">${topUp > 0 ? fmtPlain(topUp) : '—'}</div></div>
-            <div class="box"><label>Next day taken · To bank (TZS)</label><div class="val">${planned > 0 ? fmtPlain(planned) : '—'}${w ? ` · ${bank != null ? fmtPlain(bank) : '—'}` : ''}</div>${w?.next_business_date ? `<div class="sub">For ${w.next_business_date}</div>` : ''}</div>
+            <div class="box"><label>Next day taken (TZS)</label><div class="val">${planned > 0 ? fmtPlain(planned) : '—'}</div>${w?.next_business_date && planned > 0 ? `<div class="sub">For ${w.next_business_date}</div>` : ''}</div>
+            <div class="box"><label>To bank (TZS)</label><div class="val">${w ? fmtPlain(banked ?? 0) : '—'}</div>${!w ? '<div class="sub">Not recorded</div>' : ''}</div>
           </div>
         </section>`;
     }
@@ -603,7 +604,7 @@
             <th class="num">Carry forward (TZS)</th>
             <th class="num">Office Topup (TZS)</th>
             <th class="num">Next day taken (TZS)</th>
-            <th>Bank withdraw</th>
+            <th class="num">To bank (TZS)</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
