@@ -17,19 +17,7 @@ import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Toolti
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LOAN_STATUS_FILTER_OPTIONS } from '@/lib/domainStatuses';
 import { fetchReportsMetrics } from '@/lib/reportsMetricsRpc';
-
-const StatCard = ({ title, value, subtitle, icon: Icon, color }) => (
-  <Card>
-    <CardHeader className="flex flex-row items-center justify-between pb-2">
-      <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
-      <Icon className={`h-5 w-5 ${color}`} />
-    </CardHeader>
-    <CardContent>
-      <div className="text-2xl font-bold">{value}</div>
-      {subtitle ? <p className="text-xs text-muted-foreground mt-1 leading-snug">{subtitle}</p> : null}
-    </CardContent>
-  </Card>
-);
+import { KpiStatCard, KpiMoneyValue, KpiValue } from '@/components/ui/kpi-stat-card';
 
 const Reports = () => {
     const { user } = useAuth();
@@ -296,28 +284,36 @@ const Reports = () => {
     const statsCardsData = [
         {
             title: 'Total Portfolio',
-            value: `${currency} ${reportStats.totalPortfolio.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            money: true,
+            amount: reportStats.totalPortfolio,
+            maxFractionDigits: 0,
             subtitle: 'Current snapshot (filters apply; not limited by date range)',
             icon: Briefcase,
             color: 'text-blue-600',
         },
         {
             title: 'Principal Disbursed',
-            value: `${currency} ${reportStats.principalDisbursed.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            money: true,
+            amount: reportStats.principalDisbursed,
+            maxFractionDigits: 0,
             subtitle: 'In selected date range (disbursement date)',
             icon: TrendingUp,
             color: 'text-green-600',
         },
         {
             title: 'Repayments Collected',
-            value: `${currency} ${reportStats.repaymentsCollected.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            money: true,
+            amount: reportStats.repaymentsCollected,
+            maxFractionDigits: 0,
             subtitle: 'In selected date range (actual payment date)',
             icon: DollarSign,
             color: 'text-yellow-600',
         },
         {
             title: 'Prepayment (in range)',
-            value: `${currency} ${reportStats.prepaymentsCollected.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+            money: true,
+            amount: reportStats.prepaymentsCollected,
+            maxFractionDigits: 0,
             subtitle: 'In selected date range (actual payment date)',
             icon: PiggyBank,
             color: 'text-emerald-600',
@@ -458,8 +454,27 @@ const Reports = () => {
                         </div>
                     </CardContent></Card>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-6">
-                        {statsCardsData.map(stat => <StatCard key={stat.title} {...stat} />)}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-6 [&>*]:min-w-0">
+                        {statsCardsData.map((stat) => (
+                            <KpiStatCard
+                                key={stat.title}
+                                title={stat.title}
+                                subtitle={stat.subtitle}
+                                icon={stat.icon}
+                                iconClassName={stat.color}
+                            >
+                                {stat.money ? (
+                                    <KpiMoneyValue
+                                        currency={currency}
+                                        amount={stat.amount}
+                                        minimumFractionDigits={0}
+                                        maximumFractionDigits={stat.maxFractionDigits ?? 0}
+                                    />
+                                ) : (
+                                    <KpiValue>{stat.value}</KpiValue>
+                                )}
+                            </KpiStatCard>
+                        ))}
                     </div>
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

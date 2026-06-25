@@ -46,8 +46,10 @@ import {
     fetchRepaymentStatsRows,
     aggregateRepaymentStats,
     fetchAllFilteredRepayments,
+    isTodayRepaymentDateRange,
 } from '@/lib/repaymentManagementQuery';
 import { installmentPrincipalInterestPaidDisplay } from '@/lib/installmentScheduleDisplay';
+import { KpiStatCard, KpiMoneyValue } from '@/components/ui/kpi-stat-card';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = REPAYMENT_PAGE_SIZE;
@@ -72,18 +74,6 @@ function minimumRepaymentForDue(scheduledDue) {
     return d > 0 ? d : 0.01;
 }
 
-const StatCard = ({ title, value, icon: Icon, color }) => (
-    <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">{title}</CardTitle>
-            <Icon className={`h-4 w-4 text-muted-foreground ${color}`} />
-        </CardHeader>
-        <CardContent>
-            <div className="text-2xl font-bold">{value}</div>
-        </CardContent>
-    </Card>
-);
-
 const RepaymentManagement = () => {
     const { user, session } = useAuth();
     const { toast } = useToast();
@@ -96,7 +86,6 @@ const RepaymentManagement = () => {
     const [centers, setCenters] = useState([]);
     const [loading, setLoading] = useState(true);
     const [listLoading, setListLoading] = useState(false);
-    const [loadAllHistory, setLoadAllHistory] = useState(false);
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [currency, setCurrency] = useState('TZS');
@@ -146,7 +135,6 @@ const RepaymentManagement = () => {
         setCenterFilter('all');
         setBorrowerStatusFilter('all');
         setDateRangeFilter(defaultRepaymentDateRange());
-        setLoadAllHistory(false);
         setSearchTerm('');
         setSelectedRepayments([]);
         setPage(1);
@@ -215,7 +203,6 @@ const RepaymentManagement = () => {
         () => ({
             singleOfficerId: user?.id,
             dateRange: dateRangeFilter,
-            loadAllHistory,
             centerFilter,
             groupFilter,
             borrowerStatusFilter,
@@ -224,7 +211,6 @@ const RepaymentManagement = () => {
         [
             user?.id,
             dateRangeFilter,
-            loadAllHistory,
             centerFilter,
             groupFilter,
             borrowerStatusFilter,
@@ -326,7 +312,7 @@ const RepaymentManagement = () => {
 
     useEffect(() => {
         setPage(1);
-    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, loadAllHistory, debouncedSearchTerm]);
+    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, debouncedSearchTerm]);
 
     useEffect(() => {
         const id = repaymentFormData.loanId;
@@ -1576,13 +1562,25 @@ const RepaymentManagement = () => {
                         <CardDescription>Summary of repayments based on selected filters.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-                            <StatCard title="Total Repayments (Filtered)" value={`${currency} ${stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={ArrowRightLeft} color="text-blue-500" />
-                            <StatCard title="Scheduled collection" value={`${currency} ${stats.totalScheduledCollection.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={Layers} color="text-cyan-600" />
-                            <StatCard title="Prepayment" value={`${currency} ${stats.totalPrepayment.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={ArrowUpCircle} color="text-emerald-600" />
-                            <StatCard title="Interest Collected" value={`${currency} ${stats.totalInterest.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingUp} color="text-green-500" />
-                            <StatCard title="Principal Repayments" value={`${currency} ${stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingDown} color="text-orange-500" />
-                            <StatCard title="Outstanding Principal" value={`${currency} ${stats.totalOutstandingPrincipal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={Scale} color="text-red-500" />
+                        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6 [&>*]:min-w-0">
+                            <KpiStatCard title="Total Repayments (Filtered)" icon={ArrowRightLeft} iconClassName="text-blue-500">
+                                <KpiMoneyValue currency={currency} amount={stats.totalPaid} />
+                            </KpiStatCard>
+                            <KpiStatCard title="Scheduled collection" icon={Layers} iconClassName="text-cyan-600">
+                                <KpiMoneyValue currency={currency} amount={stats.totalScheduledCollection} />
+                            </KpiStatCard>
+                            <KpiStatCard title="Prepayment" icon={ArrowUpCircle} iconClassName="text-emerald-600">
+                                <KpiMoneyValue currency={currency} amount={stats.totalPrepayment} />
+                            </KpiStatCard>
+                            <KpiStatCard title="Interest Collected" icon={TrendingUp} iconClassName="text-green-500">
+                                <KpiMoneyValue currency={currency} amount={stats.totalInterest} />
+                            </KpiStatCard>
+                            <KpiStatCard title="Principal Repayments" icon={TrendingDown} iconClassName="text-orange-500">
+                                <KpiMoneyValue currency={currency} amount={stats.totalPrincipalPaid} />
+                            </KpiStatCard>
+                            <KpiStatCard title="Outstanding Principal" icon={Scale} iconClassName="text-red-500">
+                                <KpiMoneyValue currency={currency} amount={stats.totalOutstandingPrincipal} />
+                            </KpiStatCard>
                         </div>
                     </CardContent>
                 </Card>
@@ -1648,47 +1646,26 @@ const RepaymentManagement = () => {
                         </select>
                         <Popover>
                             <PopoverTrigger asChild>
-                                <Button
-                                    variant="outline"
-                                    className="w-[280px] justify-start text-left font-normal"
-                                    disabled={loadAllHistory}
-                                >
+                                <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
                                     <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {loadAllHistory
-                                        ? 'All history'
-                                        : dateRangeFilter?.from
-                                          ? dateRangeFilter.to
-                                              ? `${formatTZ(dateRangeFilter.from, 'LLL dd, y')} - ${formatTZ(dateRangeFilter.to, 'LLL dd, y')}`
-                                              : formatTZ(dateRangeFilter.from, 'LLL dd, y')
-                                          : 'Pick a date range'}
+                                    {dateRangeFilter?.from
+                                        ? dateRangeFilter.to &&
+                                          formatTZ(dateRangeFilter.from, 'yyyy-MM-dd') !==
+                                              formatTZ(dateRangeFilter.to, 'yyyy-MM-dd')
+                                            ? `${formatTZ(dateRangeFilter.from, 'LLL dd, y')} - ${formatTZ(dateRangeFilter.to, 'LLL dd, y')}`
+                                            : formatTZ(dateRangeFilter.from, 'LLL dd, y')
+                                        : 'Pick a date range'}
                                 </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0" align="start">
                                 <Calendar
                                     mode="range"
                                     selected={dateRangeFilter}
-                                    onSelect={(range) => {
-                                        setLoadAllHistory(false);
-                                        setDateRangeFilter(range);
-                                    }}
+                                    onSelect={setDateRangeFilter}
                                     numberOfMonths={2}
                                 />
                             </PopoverContent>
                         </Popover>
-                        <Button
-                            type="button"
-                            variant={loadAllHistory ? 'secondary' : 'outline'}
-                            onClick={() => {
-                                setLoadAllHistory((v) => !v);
-                                if (!loadAllHistory) {
-                                    setDateRangeFilter(null);
-                                } else {
-                                    setDateRangeFilter(defaultRepaymentDateRange());
-                                }
-                            }}
-                        >
-                            {loadAllHistory ? 'Last 90 days' : 'Load all history'}
-                        </Button>
                         <Button onClick={resetFilters} variant="ghost">Reset</Button>
                     </CardContent>
                 </Card>
@@ -1833,7 +1810,7 @@ const RepaymentManagement = () => {
                             <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t pt-4">
                                 <p className="text-sm text-muted-foreground">
                                     Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalRepaymentCount)} of {totalRepaymentCount}
-                                    {!loadAllHistory && ' (last 90 days by default)'}
+                                    {isTodayRepaymentDateRange(dateRangeFilter) ? ' (today by default)' : ''}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button

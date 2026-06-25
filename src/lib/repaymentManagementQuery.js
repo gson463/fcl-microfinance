@@ -1,4 +1,4 @@
-import { startOfDay, endOfDay, subDays } from 'date-fns';
+import { startOfDay, endOfDay } from 'date-fns';
 import { formatInTimeZone } from 'date-fns-tz';
 import { prepaymentAmount, scheduledCollectionAmount } from '@/lib/repaymentPrepayment';
 import { fetchAllSupabaseRows } from '@/lib/supabaseFetchAllRows';
@@ -6,7 +6,14 @@ import { fetchAllSupabaseRows } from '@/lib/supabaseFetchAllRows';
 const EAT_TIMEZONE = 'Africa/Nairobi';
 
 export const REPAYMENT_PAGE_SIZE = 25;
-export const REPAYMENT_DEFAULT_LOOKBACK_DAYS = 90;
+
+/** Default list filter: actual payment date = today (EAT). Use date picker for history. */
+export function defaultRepaymentDateRange() {
+    const s = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+    const [y, m, d] = s.split('-').map(Number);
+    const today = new Date(y, m - 1, d);
+    return { from: today, to: today };
+}
 
 /** Columns needed for the repayment table (avoids nested groups when not filtering). */
 export const REPAYMENT_LIST_SELECT =
@@ -19,17 +26,19 @@ export const REPAYMENT_STATS_SELECT =
 export const LOAN_PICKER_SELECT =
     'id, loan_id, status, principal, balance, total_payable, borrower_id, officer_id, borrowers(*, groups(*))';
 
-export function defaultRepaymentDateRange() {
-    const to = new Date();
-    const from = subDays(to, REPAYMENT_DEFAULT_LOOKBACK_DAYS);
-    return { from, to };
-}
-
 export function dateRangeToQueryBounds(dateRange) {
     if (!dateRange?.from) return { from: null, to: null };
     const from = formatInTimeZone(startOfDay(dateRange.from), EAT_TIMEZONE, 'yyyy-MM-dd');
     const to = formatInTimeZone(endOfDay(dateRange.to || dateRange.from), EAT_TIMEZONE, 'yyyy-MM-dd');
     return { from, to };
+}
+
+/** True when filter is a single calendar day matching today in EAT. */
+export function isTodayRepaymentDateRange(dateRange) {
+    if (!dateRange?.from) return false;
+    const todayStr = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
+    const { from, to } = dateRangeToQueryBounds(dateRange);
+    return from === todayStr && to === todayStr;
 }
 
 const EMPTY_UUID = '00000000-0000-0000-0000-000000000000';
@@ -60,7 +69,6 @@ export function buildRepaymentListQuery(supabase, filters, { countOnly = false, 
         officerIds,
         officerFilter,
         dateRange,
-        loadAllHistory,
         centerFilter = 'all',
         groupFilter = 'all',
         borrowerStatusFilter = 'all',
@@ -87,7 +95,7 @@ export function buildRepaymentListQuery(supabase, filters, { countOnly = false, 
         }
     }
 
-    if (!loadAllHistory) {
+    if (dateRange?.from) {
         const { from, to } = dateRangeToQueryBounds(dateRange);
         if (from) query = query.gte('actual_payment_date', from);
         if (to) query = query.lte('actual_payment_date', to);

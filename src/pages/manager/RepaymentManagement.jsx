@@ -35,22 +35,12 @@ import {
     fetchRepaymentStatsRows,
     aggregateRepaymentStats,
     fetchAllFilteredRepayments,
+    isTodayRepaymentDateRange,
 } from '@/lib/repaymentManagementQuery';
+import { KpiStatCard, KpiMoneyValue } from '@/components/ui/kpi-stat-card';
 
 const EAT_TIMEZONE = 'Africa/Nairobi';
 const PAGE_SIZE = REPAYMENT_PAGE_SIZE;
-
-const StatCard = ({ title, value, icon: Icon, color }) => (
-    <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">{title}</CardTitle>
-            <Icon className={`h-4 w-4 text-muted-foreground ${color}`} />
-        </CardHeader>
-        <CardContent>
-            <div className="text-2xl font-bold">{value}</div>
-        </CardContent>
-    </Card>
-);
 
 const ManagerRepaymentManagement = () => {
     const { user } = useAuth();
@@ -65,7 +55,6 @@ const ManagerRepaymentManagement = () => {
     const [centers, setCenters] = useState([]);
     const [loading, setLoading] = useState(true);
     const [listLoading, setListLoading] = useState(false);
-    const [loadAllHistory, setLoadAllHistory] = useState(false);
     const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
     const [currency, setCurrency] = useState('TZS');
 
@@ -89,7 +78,6 @@ const ManagerRepaymentManagement = () => {
             officerFilter: officerFilter !== 'all' ? officerFilter : undefined,
             officerIds: officerFilter === 'all' ? branchOfficerIds : undefined,
             dateRange: dateRangeFilter,
-            loadAllHistory,
             centerFilter,
             groupFilter,
             borrowerStatusFilter,
@@ -99,7 +87,6 @@ const ManagerRepaymentManagement = () => {
             officerFilter,
             branchOfficerIds,
             dateRangeFilter,
-            loadAllHistory,
             centerFilter,
             groupFilter,
             borrowerStatusFilter,
@@ -114,7 +101,6 @@ const ManagerRepaymentManagement = () => {
         setBorrowerStatusFilter('all');
         setSearchTerm('');
         setDateRangeFilter(defaultRepaymentDateRange());
-        setLoadAllHistory(false);
         setPage(1);
     };
 
@@ -236,7 +222,7 @@ const ManagerRepaymentManagement = () => {
 
     useEffect(() => {
         setPage(1);
-    }, [officerFilter, centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, loadAllHistory, debouncedSearchTerm]);
+    }, [officerFilter, centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, debouncedSearchTerm]);
 
     useEffect(() => {
         if (centerFilter === 'all') {
@@ -527,9 +513,13 @@ const ManagerRepaymentManagement = () => {
                         <CardDescription>Summary of repayments for your branch based on selected filters.</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid gap-4 md:grid-cols-2">
-                            <StatCard title="Total Repayments (Filtered)" value={`${currency} ${stats.totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={ArrowRightLeft} color="text-blue-500" />
-                            <StatCard title="Principal Repaid" value={`${currency} ${stats.totalPrincipalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} icon={TrendingDown} color="text-orange-500" />
+                        <div className="grid gap-4 md:grid-cols-2 [&>*]:min-w-0">
+                            <KpiStatCard title="Total Repayments (Filtered)" icon={ArrowRightLeft} iconClassName="text-blue-500">
+                                <KpiMoneyValue currency={currency} amount={stats.totalPaid} />
+                            </KpiStatCard>
+                            <KpiStatCard title="Principal Repaid" icon={TrendingDown} iconClassName="text-orange-500">
+                                <KpiMoneyValue currency={currency} amount={stats.totalPrincipalPaid} />
+                            </KpiStatCard>
                         </div>
                     </CardContent>
                 </Card>
@@ -598,47 +588,26 @@ const ManagerRepaymentManagement = () => {
                         />
                         <Popover>
                             <PopoverTrigger asChild>
-                                <Button
-                                    variant="outline"
-                                    className="w-[280px] justify-start text-left font-normal"
-                                    disabled={loadAllHistory}
-                                >
+                                <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
                                     <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {loadAllHistory
-                                        ? 'All history'
-                                        : dateRangeFilter?.from
-                                          ? dateRangeFilter.to
-                                              ? `${format(dateRangeFilter.from, 'LLL dd, y')} - ${format(dateRangeFilter.to, 'LLL dd, y')}`
-                                              : format(dateRangeFilter.from, 'LLL dd, y')
-                                          : 'Pick a date range'}
+                                    {dateRangeFilter?.from
+                                        ? dateRangeFilter.to &&
+                                          format(dateRangeFilter.from, 'yyyy-MM-dd') !==
+                                              format(dateRangeFilter.to, 'yyyy-MM-dd')
+                                            ? `${format(dateRangeFilter.from, 'LLL dd, y')} - ${format(dateRangeFilter.to, 'LLL dd, y')}`
+                                            : format(dateRangeFilter.from, 'LLL dd, y')
+                                        : 'Pick a date range'}
                                 </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-auto p-0" align="start">
                                 <Calendar
                                     mode="range"
                                     selected={dateRangeFilter}
-                                    onSelect={(range) => {
-                                        setLoadAllHistory(false);
-                                        setDateRangeFilter(range);
-                                    }}
+                                    onSelect={setDateRangeFilter}
                                     numberOfMonths={2}
                                 />
                             </PopoverContent>
                         </Popover>
-                        <Button
-                            type="button"
-                            variant={loadAllHistory ? 'secondary' : 'outline'}
-                            onClick={() => {
-                                setLoadAllHistory((v) => !v);
-                                if (!loadAllHistory) {
-                                    setDateRangeFilter(null);
-                                } else {
-                                    setDateRangeFilter(defaultRepaymentDateRange());
-                                }
-                            }}
-                        >
-                            {loadAllHistory ? 'Last 90 days' : 'Load all history'}
-                        </Button>
                         <Button onClick={resetFilters} variant="ghost">Reset</Button>
                     </CardContent>
                 </Card>
@@ -728,7 +697,7 @@ const ManagerRepaymentManagement = () => {
                             <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t pt-4">
                                 <p className="text-sm text-muted-foreground">
                                     Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalRepaymentCount)} of {totalRepaymentCount}
-                                    {!loadAllHistory && ' (last 90 days by default)'}
+                                    {isTodayRepaymentDateRange(dateRangeFilter) ? ' (today by default)' : ''}
                                 </p>
                                 <div className="flex items-center gap-2">
                                     <Button
