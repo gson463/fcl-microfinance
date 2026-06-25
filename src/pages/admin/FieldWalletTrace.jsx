@@ -194,7 +194,28 @@ const FieldWalletTrace = () => {
 		() =>
 			blocks.reduce((s, block) => {
 				const w = withdrawByOfficer.get(block.officer.id);
+				if (!w) return s;
+				const planned = Number(w.planned_next_day_taken);
+				if (planned > 0) return s + planned;
+				return s + (Number(w.carried_to_next_day) || 0);
+			}, 0),
+		[blocks, withdrawByOfficer]
+	);
+
+	const totalCarryForward = useMemo(
+		() =>
+			blocks.reduce((s, block) => {
+				const w = withdrawByOfficer.get(block.officer.id);
 				return s + (w ? Number(w.carried_to_next_day) || 0 : 0);
+			}, 0),
+		[blocks, withdrawByOfficer]
+	);
+
+	const totalTopUpFromOffice = useMemo(
+		() =>
+			blocks.reduce((s, block) => {
+				const w = withdrawByOfficer.get(block.officer.id);
+				return s + (w ? Number(w.top_up_from_office) || 0 : 0);
 			}, 0),
 		[blocks, withdrawByOfficer]
 	);
@@ -407,8 +428,9 @@ const FieldWalletTrace = () => {
 										Amber background means they have not confirmed &quot;withdraw to bank&quot; for that day yet
 									</span>
 									.{' '}
-									<strong className="text-foreground">Next day taken</strong> — float the officer planned to take on
-									the next working day when they chose carry at withdraw. If <strong>Collections</strong> looks like zero
+									<strong className="text-foreground">Next day taken</strong> — total float planned for the next working day.{' '}
+									<strong className="text-foreground">Carry forward</strong> — cash kept overnight.{' '}
+									<strong className="text-foreground">Top-up from office</strong> — extra planned from office when taken exceeds closing deposit. If <strong>Collections</strong> looks like zero
 									here but their own wallet shows they received payments, make sure you selected the{' '}
 									<strong>same date</strong> and the correct <strong>branch or officer</strong> in the filters above — small
 									mismatches there are the usual reason totals don&apos;t match.
@@ -439,6 +461,8 @@ const FieldWalletTrace = () => {
 										<TableHead className="text-right">Disbursed</TableHead>
 										<TableHead className="text-right">Expenses</TableHead>
 										<TableHead className="text-right font-semibold">Deposit</TableHead>
+										<TableHead className="text-right">Carry forward</TableHead>
+										<TableHead className="text-right">Top-up office</TableHead>
 										<TableHead className="text-right">Next day taken</TableHead>
 										<TableHead>Bank withdraw</TableHead>
 									</TableRow>
@@ -455,6 +479,11 @@ const FieldWalletTrace = () => {
 												: rawDep
 											: null;
 										const carried = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
+										const planned =
+											wRow && Number(wRow.planned_next_day_taken) > 0
+												? Number(wRow.planned_next_day_taken)
+												: carried;
+										const topUp = wRow ? Number(wRow.top_up_from_office) || 0 : 0;
 										return (
 											<TableRow
 												key={block.officer.id}
@@ -485,6 +514,23 @@ const FieldWalletTrace = () => {
 													{carried > 0 ? (
 														<div className="inline-block text-right">
 															<span className="font-medium block">{formatMoney(carried)}</span>
+															{wRow?.next_business_date ? (
+																<span className="block text-xs font-normal text-muted-foreground mt-0.5">
+																	Overnight
+																</span>
+															) : null}
+														</div>
+													) : (
+														<span className="text-muted-foreground">—</span>
+													)}
+												</TableCell>
+												<TableCell className="text-right tabular-nums">
+													{topUp > 0 ? formatMoney(topUp) : <span className="text-muted-foreground">—</span>}
+												</TableCell>
+												<TableCell className="text-right align-top tabular-nums">
+													{planned > 0 ? (
+														<div className="inline-block text-right">
+															<span className="font-medium block">{formatMoney(planned)}</span>
 															{wRow?.next_business_date ? (
 																<span className="block text-xs font-normal text-muted-foreground mt-0.5">
 																	For {wRow.next_business_date}
@@ -530,8 +576,10 @@ const FieldWalletTrace = () => {
 								<TableFooter>
 									<TableRow className="border-t-2 bg-muted/30 font-semibold hover:bg-muted/30">
 										<TableCell colSpan={7} className="text-right">
-											Total next day taken
+											Totals
 										</TableCell>
+										<TableCell className="text-right tabular-nums">{formatMoney(totalCarryForward)}</TableCell>
+										<TableCell className="text-right tabular-nums">{formatMoney(totalTopUpFromOffice)}</TableCell>
 										<TableCell className="text-right tabular-nums">{formatMoney(totalNextDayTaken)}</TableCell>
 										<TableCell />
 									</TableRow>

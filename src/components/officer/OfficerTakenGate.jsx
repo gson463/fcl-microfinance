@@ -59,6 +59,8 @@ const OfficerTakenGate = () => {
   const [todayStr, setTodayStr] = useState('');
   /** Row prefilled at withdraw; needs confirm (confirmed_at null). */
   const [prefilledRow, setPrefilledRow] = useState(null);
+  /** From yesterday's withdraw when next_business_date = today (carry breakdown). */
+  const [withdrawPrefillMeta, setWithdrawPrefillMeta] = useState(null);
 
   const [yesterdayDeposit, setYesterdayDeposit] = useState(null);
   const [depositLoading, setDepositLoading] = useState(false);
@@ -145,8 +147,30 @@ const OfficerTakenGate = () => {
       setMode('manual');
       setExtraOnTop('');
       setManualTaken(String(Number(prefilledRow.amount_taken) || 0));
-      return undefined;
+      setWithdrawPrefillMeta(null);
+      (async () => {
+        const { data, error } = await supabase
+          .from('officer_withdraw_to_bank')
+          .select('carried_to_next_day, planned_next_day_taken, top_up_from_office, next_business_date')
+          .eq('officer_id', user.id)
+          .eq('next_business_date', todayStr)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (cancelled) return;
+        if (error) {
+          console.error('OfficerTakenGate: withdraw prefill meta', error);
+          setWithdrawPrefillMeta(null);
+          return;
+        }
+        setWithdrawPrefillMeta(data ?? null);
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
+
+    setWithdrawPrefillMeta(null);
 
     setDepositLoading(true);
     setYesterdayDeposit(null);
@@ -298,6 +322,28 @@ const OfficerTakenGate = () => {
               <p className="mt-1 text-muted-foreground">
                 You entered this amount when you withdrew to bank. Confirm or edit before you continue.
               </p>
+              {withdrawPrefillMeta && (Number(withdrawPrefillMeta.top_up_from_office) || 0) > 0 ? (
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground border-t border-emerald-200/60 dark:border-emerald-800 pt-2">
+                  <p>
+                    <span className="font-medium text-foreground">Carry from last night: </span>
+                    <span className="tabular-nums">
+                      {(Number(withdrawPrefillMeta.carried_to_next_day) || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  </p>
+                  <p>
+                    <span className="font-medium text-foreground">Top-up from office: </span>
+                    <span className="tabular-nums">
+                      {(Number(withdrawPrefillMeta.top_up_from_office) || 0).toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  </p>
+                </div>
+              ) : null}
             </div>
             <div className="mt-4 space-y-2">
               <Label htmlFor="officer-taken-prefilled">Total taken today</Label>

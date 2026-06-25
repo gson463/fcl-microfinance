@@ -225,7 +225,7 @@ const FieldWalletCashFlow = () => {
       const withdrawQuery = () => {
         let q = supabase
           .from('officer_withdraw_to_bank')
-          .select('id, officer_id, business_date, created_at, amount_deposited, closing_deposit, carried_to_next_day, next_business_date')
+          .select('id, officer_id, business_date, created_at, amount_deposited, closing_deposit, carried_to_next_day, planned_next_day_taken, top_up_from_office, next_business_date')
           .gte('business_date', fromStr)
           .lte('business_date', toStr);
         if (officerIdsFilter) q = q.in('officer_id', officerIdsFilter);
@@ -469,6 +469,14 @@ const FieldWalletCashFlow = () => {
     return Math.max(0, closingDeposit - parsedNextDayTaken);
   }, [carryChoice, closingDeposit, parsedNextDayTaken]);
 
+  const carryPreview = useMemo(() => {
+    if (!carryChoice || Number.isNaN(parsedNextDayTaken) || parsedNextDayTaken < 0) return null;
+    const planned = parsedNextDayTaken;
+    const physicalCarry = Math.min(planned, closingDeposit);
+    const topUp = Math.max(0, planned - closingDeposit);
+    return { planned, physicalCarry, topUp, toBank: Math.max(0, closingDeposit - planned) };
+  }, [carryChoice, parsedNextDayTaken, closingDeposit]);
+
   const openWithdrawDialog = useCallback(async () => {
     if (role !== 'officer' || !user?.id || !isSingleWalletDay || officerWithdrawForDay) return;
     if (closingDeposit < 0) {
@@ -498,14 +506,6 @@ const FieldWalletCashFlow = () => {
       toast({ title: 'Invalid amount', description: 'Enter a valid taken amount for the next working day.', variant: 'destructive' });
       return;
     }
-    if (carryChoice && parsedNextDayTaken > closingDeposit + 0.01) {
-      toast({
-        title: 'Amount too high',
-        description: 'Next-day taken cannot exceed today’s closing deposit.',
-        variant: 'destructive',
-      });
-      return;
-    }
     setWithdrawSaving(true);
     try {
       const { data, error } = await supabase.rpc('officer_confirm_withdraw_with_carry', {
@@ -515,12 +515,15 @@ const FieldWalletCashFlow = () => {
       });
       if (error) throw error;
       const banked = Number(data?.amount_deposited ?? withdrawToBankAmount ?? 0);
-      const carried = Number(data?.carried_to_next_day ?? 0);
+      const planned = Number(data?.planned_next_day_taken ?? parsedNextDayTaken ?? 0);
+      const topUp = Number(data?.top_up_from_office ?? 0);
       setWithdrawDialogOpen(false);
       toast({
         title: 'Recorded',
-        description: carryChoice && carried > 0
-          ? `${currency} ${banked.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to bank; ${currency} ${carried.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} planned for ${nextWorkingDayMeta.label || 'next working day'}.`
+        description: carryChoice && planned > 0
+          ? topUp > 0
+            ? `${currency} ${planned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} planned for ${nextWorkingDayMeta.label || 'next working day'} (${currency} ${topUp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} from office); ${currency} ${banked.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to bank.`
+            : `${currency} ${banked.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to bank; ${currency} ${planned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} planned for ${nextWorkingDayMeta.label || 'next working day'}.`
           : closingDeposit <= 0
             ? 'End-of-day confirmed (0 in hand to bank). Excel still shows DEPOSIT for today if any.'
             : 'Full deposit marked as withdrawn to bank.',
@@ -812,9 +815,26 @@ const FieldWalletCashFlow = () => {
                   </p>
                   {officerWithdrawForDay && (
                     <p className="text-sm font-medium text-muted-foreground">
-                      {Number(officerWithdrawRowForDay?.carried_to_next_day) > 0
-                        ? `Withdrawn to bank — ${currency} ${Number(officerWithdrawRowForDay.carried_to_next_day).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} carried to next working day${officerWithdrawRowForDay.next_business_date ? ` (${officerWithdrawRowForDay.next_business_date})` : ''}.`
-                        : 'Withdrawn to bank — cash no longer in hand.'}
+                      {(() => {
+                        const w = officerWithdrawRowForDay;
+                        const banked = Number(w?.amount_deposited) || 0;
+                        const carry = Number(w?.carried_to_next_day) || 0;
+                        const planned = Number(w?.planned_next_day_taken) || carry;
+                        const topUp = Number(w?.top_up_from_office) || 0;
+                        const nextLabel = w?.next_business_date ? ` (${w.next_business_date})` : '';
+                        if (planned > 0) {
+                          const parts = [`Withdrawn to bank — ${currency} ${banked.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} to bank`];
+                          if (carry > 0) {
+                            parts.push(`${currency} ${carry.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} carry overnight`);
+                          }
+                          parts.push(`${currency} ${planned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} planned next day${nextLabel}`);
+                          if (topUp > 0) {
+                            parts.push(`${currency} ${topUp.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} top-up from office`);
+                          }
+                          return `${parts.join('; ')}.`;
+                        }
+                        return 'Withdrawn to bank — cash no longer in hand.';
+                      })()}
                     </p>
                   )}
                   {isSingleWalletDay && !officerWithdrawForDay && totals.net >= 0 && (
@@ -1267,7 +1287,7 @@ const FieldWalletCashFlow = () => {
           {withdrawStep === 'carry' && (
             <div className="space-y-3 py-2">
               <p className="text-sm text-muted-foreground">
-                Enter taken for <strong>{nextWorkingDayMeta.label || 'next working day'}</strong>. The remainder goes to the bank today.
+                Enter taken for <strong>{nextWorkingDayMeta.label || 'next working day'}</strong>. You may enter more than today&apos;s closing deposit — the extra will be recorded as top-up from office next morning; the remainder of closing deposit goes to the bank today.
               </p>
               <div className="space-y-2">
                 <Label htmlFor="next-day-taken">Taken for next working day ({currency})</Label>
@@ -1301,15 +1321,37 @@ const FieldWalletCashFlow = () => {
                 {carryChoice ? (
                   <>
                     <p>
-                      <span className="text-muted-foreground">Carried to {nextWorkingDayMeta.label || 'next working day'}: </span>
+                      <span className="text-muted-foreground">Next day taken (total): </span>
                       <span className="font-semibold tabular-nums">
                         {currency}{' '}
-                        {(Number.isNaN(parsedNextDayTaken) ? 0 : parsedNextDayTaken).toLocaleString(undefined, {
+                        {(carryPreview?.planned ?? 0).toLocaleString(undefined, {
                           minimumFractionDigits: 2,
                           maximumFractionDigits: 2,
                         })}
                       </span>
                     </p>
+                    <p>
+                      <span className="text-muted-foreground">Carry forward (cash overnight): </span>
+                      <span className="font-semibold tabular-nums">
+                        {currency}{' '}
+                        {(carryPreview?.physicalCarry ?? 0).toLocaleString(undefined, {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </span>
+                    </p>
+                    {(carryPreview?.topUp ?? 0) > 0 ? (
+                      <p>
+                        <span className="text-muted-foreground">Top-up from office: </span>
+                        <span className="font-semibold tabular-nums">
+                          {currency}{' '}
+                          {carryPreview.topUp.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </span>
+                      </p>
+                    ) : null}
                     <p>
                       <span className="text-muted-foreground">To bank today: </span>
                       <span className="font-semibold tabular-nums">

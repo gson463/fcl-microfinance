@@ -81,7 +81,7 @@ export async function fetchAdminFieldWalletSnapshot(supabase, dateStr, officersI
 		fetchAllRowsPaged((from, to) =>
 			supabase
 				.from('officer_withdraw_to_bank')
-				.select('officer_id, business_date, created_at, amount_deposited, closing_deposit, carried_to_next_day, next_business_date')
+				.select('officer_id, business_date, created_at, amount_deposited, closing_deposit, carried_to_next_day, planned_next_day_taken, top_up_from_office, next_business_date')
 				.eq('business_date', day)
 				.in('officer_id', ids)
 				.order('id', { ascending: true })
