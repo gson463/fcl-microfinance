@@ -536,8 +536,9 @@ const UserManagement = () => {
                   </DialogDescription>
                   {editingUser && (
                     <CardDescription>
-                      Update name, email, or phone. Portfolio and loans stay on this account (same user ID). To move
-                      portfolio between officers, use Officer transfer or territory swap. Password is optional.
+                      Update name, email, or phone. Portfolio and loans stay on this account (same user ID). Changing
+                      name or email does <strong>not</strong> move centres, groups, or borrowers. To exchange portfolios
+                      between two officers, use Admin → Officer transfer → Territory swap. Password is optional.
                     </CardDescription>
                   )}
                 </DialogHeader>

@@ -572,8 +572,9 @@ const LoanOfficerManagement = () => {
             <DialogTitle>{editingOfficer ? `Edit Officer: ${editingOfficer.full_name}` : 'Register New Loan Officer'}</DialogTitle>
             {editingOfficer && (
               <CardDescription>
-                Update name or email. Their portfolio stays on this account. Password is optional. To swap branches and
-                portfolios with another officer, ask an admin to use Territory swap.
+                Update name or email. Their portfolio stays on this account. Changing name or email does{' '}
+                <strong>not</strong> move centres. To swap branches and full portfolios with another officer, ask an
+                admin to use Admin → Officer transfer → Territory swap. Password is optional.
               </CardDescription>
             )}
           </DialogHeader>
