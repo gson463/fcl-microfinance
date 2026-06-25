@@ -85,7 +85,6 @@ export function FieldWalletTraceSampleContent({ showLoginHint = false }) {
           <FieldWalletTraceSummaryTable
             blocks={blocks}
             withdrawByOfficer={withdrawByOfficer}
-            repaymentTotalsByOfficer={sample.repaymentTotalsByOfficer}
             formatMoney={formatMoney}
           />
         </CardContent>

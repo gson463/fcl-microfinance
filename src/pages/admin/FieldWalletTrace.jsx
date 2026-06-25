@@ -459,7 +459,6 @@ const FieldWalletTrace = () => {
 								<FieldWalletTraceSummaryTable
 									blocks={blocks}
 									withdrawByOfficer={withdrawByOfficer}
-									repaymentTotalsByOfficer={repaymentTotalsByOfficer}
 									formatMoney={formatMoney}
 								/>
 							</CardContent>

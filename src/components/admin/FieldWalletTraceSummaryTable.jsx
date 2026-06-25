@@ -1,13 +1,22 @@
 import React, { useMemo } from 'react';
 import { CheckCircle2, CircleDashed } from 'lucide-react';
-import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { computeFieldWalletSummaryTotals, officerExpensesTotal } from '@/lib/fieldWalletTraceTotals';
+import { computeFieldWalletSummaryTotals, officerExpensesTotal, officerCollectionsTotal } from '@/lib/fieldWalletTraceTotals';
 import { cn } from '@/lib/utils';
 
-export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, repaymentTotalsByOfficer, formatMoney }) {
+const thClass =
+	'border border-border bg-muted/80 px-1.5 py-2 text-left text-[0.62rem] sm:text-[0.68rem] font-semibold uppercase leading-tight break-words whitespace-normal text-muted-foreground';
+const tdClass = 'border border-border px-1.5 py-2 align-top text-[0.72rem] sm:text-xs tabular-nums break-words';
+const tdNumClass = cn(tdClass, 'text-right');
+
+function SubLine({ children }) {
+	return <span className="mt-0.5 block text-[0.68rem] leading-snug text-muted-foreground">{children}</span>;
+}
+
+/** Summary table — matches agreed standalone sample (fixed width, bordered, full footer totals). */
+export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, formatMoney }) {
 	const totals = useMemo(
-		() => computeFieldWalletSummaryTotals(blocks, withdrawByOfficer, repaymentTotalsByOfficer),
-		[blocks, withdrawByOfficer, repaymentTotalsByOfficer]
+		() => computeFieldWalletSummaryTotals(blocks, withdrawByOfficer),
+		[blocks, withdrawByOfficer]
 	);
 
 	if (!blocks?.length) {
@@ -15,151 +24,133 @@ export function FieldWalletTraceSummaryTable({ blocks, withdrawByOfficer, repaym
 	}
 
 	return (
-		<Table variant="default" className="table-fixed w-full">
-			<TableHeader>
-				<TableRow>
-					<TableHead>Officer</TableHead>
-					<TableHead className="text-right">Taken</TableHead>
-					<TableHead className="text-right">Collections</TableHead>
-					<TableHead className="text-right">App fees</TableHead>
-					<TableHead className="text-right">Disbursed</TableHead>
-					<TableHead className="text-right">Expenses</TableHead>
-					<TableHead className="text-right font-semibold">Deposit</TableHead>
-					<TableHead className="text-right">Carry forward</TableHead>
-					<TableHead className="text-right">Office Topup</TableHead>
-					<TableHead className="text-right">Next day taken</TableHead>
-					<TableHead>Bank withdraw</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{blocks.map((block) => {
-					const t = block.totals || {};
-					const oid = block.officer?.id;
-					const totalRep = repaymentTotalsByOfficer?.get?.(oid) ?? 0;
-					const wRow = withdrawByOfficer?.get?.(oid);
-					const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
-					const banked = wRow
-						? wRow.amount_deposited != null
-							? Number(wRow.amount_deposited)
-							: rawDep
-						: null;
-					const carried = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
-					const planned =
-						wRow && Number(wRow.planned_next_day_taken) > 0
-							? Number(wRow.planned_next_day_taken)
-							: carried;
-					const topUp = wRow ? Number(wRow.top_up_from_office) || 0 : 0;
+		<div className="w-full">
+			<table className="w-full table-fixed border-collapse text-[0.72rem] sm:text-sm">
+				<thead>
+					<tr>
+						<th className={thClass}>Officer</th>
+						<th className={cn(thClass, 'text-right')}>Taken</th>
+						<th className={cn(thClass, 'text-right')}>Collections</th>
+						<th className={cn(thClass, 'text-right')}>App fees</th>
+						<th className={cn(thClass, 'text-right')}>Disbursed</th>
+						<th className={cn(thClass, 'text-right')}>Expenses</th>
+						<th className={cn(thClass, 'text-right')}>Deposit</th>
+						<th className={cn(thClass, 'text-right')}>Carry forward</th>
+						<th className={cn(thClass, 'text-right')}>Office Topup</th>
+						<th className={cn(thClass, 'text-right')}>Next day taken</th>
+						<th className={thClass}>Bank withdraw</th>
+					</tr>
+				</thead>
+				<tbody>
+					{blocks.map((block) => {
+						const t = block.totals || {};
+						const oid = block.officer?.id;
+						const totalRep = officerCollectionsTotal(block);
+						const wRow = withdrawByOfficer?.get?.(oid);
+						const rawDep = Number(t.rawDeposit ?? t.deposit) || 0;
+						const banked = wRow
+							? wRow.amount_deposited != null
+								? Number(wRow.amount_deposited)
+								: rawDep
+							: null;
+						const carried = wRow ? Number(wRow.carried_to_next_day) || 0 : 0;
+						const planned =
+							wRow && Number(wRow.planned_next_day_taken) > 0
+								? Number(wRow.planned_next_day_taken)
+								: carried;
+						const topUp = wRow ? Number(wRow.top_up_from_office) || 0 : 0;
 
-					return (
-						<TableRow
-							key={oid ?? block.officer?.full_name}
-							className={cn(
-								!wRow &&
-									'!bg-amber-50/95 hover:!bg-amber-100/90 border-l-4 border-l-amber-400 dark:!bg-amber-950/40 dark:hover:!bg-amber-950/55 dark:border-l-amber-500'
-							)}
-						>
-							<TableCell className="font-medium break-words">{block.officer?.full_name || '—'}</TableCell>
-							<TableCell className="text-right tabular-nums">{formatMoney(t.amountTaken)}</TableCell>
-							<TableCell className="text-right tabular-nums">{formatMoney(totalRep)}</TableCell>
-							<TableCell className="text-right tabular-nums">{formatMoney(t.applicationFee)}</TableCell>
-							<TableCell className="text-right tabular-nums">{formatMoney(t.disbursement)}</TableCell>
-							<TableCell className="text-right tabular-nums">{formatMoney(officerExpensesTotal(t))}</TableCell>
-							<TableCell className="text-right align-top tabular-nums">
-								<div className="inline-block text-right">
-									<span className="font-semibold block">{formatMoney(t.deposit)}</span>
+						return (
+							<tr
+								key={oid ?? block.officer?.full_name}
+								className={cn(
+									!wRow &&
+										'bg-amber-50/95 dark:bg-amber-950/40 [&>td:first-child]:border-l-4 [&>td:first-child]:border-l-amber-400 dark:[&>td:first-child]:border-l-amber-500'
+								)}
+							>
+								<td className={cn(tdClass, 'font-semibold')}>{block.officer?.full_name || '—'}</td>
+								<td className={tdNumClass}>{formatMoney(t.amountTaken)}</td>
+								<td className={tdNumClass}>{formatMoney(totalRep)}</td>
+								<td className={tdNumClass}>{formatMoney(t.applicationFee)}</td>
+								<td className={tdNumClass}>{formatMoney(t.disbursement)}</td>
+								<td className={tdNumClass}>{formatMoney(officerExpensesTotal(t))}</td>
+								<td className={tdNumClass}>
+									<span className="block font-semibold">{formatMoney(t.deposit)}</span>
+									{wRow ? <SubLine>Same day: {formatMoney(rawDep)}</SubLine> : null}
+								</td>
+								<td className={tdNumClass}>
+									{carried > 0 ? (
+										<>
+											<span className="block font-medium">{formatMoney(carried)}</span>
+											{wRow?.next_business_date ? <SubLine>Overnight</SubLine> : null}
+										</>
+									) : (
+										<span className="text-muted-foreground">—</span>
+									)}
+								</td>
+								<td className={tdNumClass}>
+									{topUp > 0 ? formatMoney(topUp) : <span className="text-muted-foreground">—</span>}
+								</td>
+								<td className={tdNumClass}>
+									{planned > 0 ? (
+										<>
+											<span className="block font-medium">{formatMoney(planned)}</span>
+											{wRow?.next_business_date ? <SubLine>For {wRow.next_business_date}</SubLine> : null}
+										</>
+									) : (
+										<span className="text-muted-foreground">—</span>
+									)}
+								</td>
+								<td className={tdClass}>
 									{wRow ? (
-										<span className="block text-xs font-normal text-muted-foreground mt-0.5 max-w-[13rem] ml-auto leading-snug">
-											Same day: {formatMoney(rawDep)}
-										</span>
-									) : null}
-								</div>
-							</TableCell>
-							<TableCell className="text-right align-top tabular-nums">
-								{carried > 0 ? (
-									<div className="inline-block text-right">
-										<span className="font-medium block">{formatMoney(carried)}</span>
-										{wRow?.next_business_date ? (
-											<span className="block text-xs font-normal text-muted-foreground mt-0.5">Overnight</span>
-										) : null}
-									</div>
-								) : (
-									<span className="text-muted-foreground">—</span>
-								)}
-							</TableCell>
-							<TableCell className="text-right tabular-nums">
-								{topUp > 0 ? formatMoney(topUp) : <span className="text-muted-foreground">—</span>}
-							</TableCell>
-							<TableCell className="text-right align-top tabular-nums">
-								{planned > 0 ? (
-									<div className="inline-block text-right">
-										<span className="font-medium block">{formatMoney(planned)}</span>
-										{wRow?.next_business_date ? (
-											<span className="block text-xs font-normal text-muted-foreground mt-0.5">
-												For {wRow.next_business_date}
+										<>
+											<span className="inline-flex flex-wrap items-center gap-1 text-emerald-700 dark:text-emerald-400">
+												<CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+												Withdrawn
 											</span>
-										) : null}
-									</div>
-								) : (
-									<span className="text-muted-foreground">—</span>
-								)}
-							</TableCell>
-							<TableCell>
-								{wRow ? (
-									<div className="space-y-1">
-										<span className="inline-flex flex-wrap items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
-											<CheckCircle2 className="h-4 w-4 shrink-0" />
-											Withdrawn
-											<span className="text-xs text-muted-foreground">
-												({new Date(wRow.created_at).toLocaleString()})
+											<SubLine>{new Date(wRow.created_at).toLocaleString()}</SubLine>
+											<SubLine>
+												To bank: <span className="font-medium text-foreground">{formatMoney(banked)}</span>
+											</SubLine>
+										</>
+									) : (
+										<>
+											<span className="inline-flex items-center gap-1 text-muted-foreground">
+												<CircleDashed className="h-3.5 w-3.5 shrink-0" />
+												Not recorded
 											</span>
-										</span>
-										<p className="text-xs tabular-nums text-muted-foreground">
-											To bank: <span className="font-medium text-foreground">{formatMoney(banked)}</span>
-										</p>
-									</div>
-								) : (
-									<div className="text-sm text-muted-foreground">
-										<span className="inline-flex items-center gap-1.5">
-											<CircleDashed className="h-4 w-4 shrink-0" />
-											Not recorded
-										</span>
-										{rawDep <= 0 && (
-											<p className="mt-1 max-w-[14rem] text-xs text-amber-900/80 dark:text-amber-200/90">
-												Officer must open Field wallet (same day) and tap &quot;Withdraw to bank&quot; — including when
-												deposit is 0.
-											</p>
-										)}
-									</div>
-								)}
-							</TableCell>
-						</TableRow>
-					);
-				})}
-			</TableBody>
-			<TableFooter>
-				<TableRow className="border-t-2 bg-muted/30 font-semibold hover:bg-muted/30">
-					<TableCell className="font-semibold">Totals</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalTaken)}</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalCollections)}</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalAppFees)}</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalDisbursed)}</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalExpenses)}</TableCell>
-					<TableCell className="text-right align-top tabular-nums">
-						<div className="inline-block text-right">
+											{rawDep <= 0 ? (
+												<SubLine>
+													Officer must open Field wallet (same day) and tap &quot;Withdraw to bank&quot; — including when
+													deposit is 0.
+												</SubLine>
+											) : null}
+										</>
+									)}
+								</td>
+							</tr>
+						);
+					})}
+				</tbody>
+				<tfoot>
+					<tr className="border-t-2 border-border bg-muted/40 font-semibold">
+						<td className={cn(tdClass, 'font-semibold')}>Totals</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalTaken)}</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalCollections)}</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalAppFees)}</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalDisbursed)}</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalExpenses)}</td>
+						<td className={tdNumClass}>
 							<span className="block">{formatMoney(totals.totalNet)}</span>
-							{totals.hasWithdrawn ? (
-								<span className="block text-xs font-normal text-muted-foreground mt-0.5">
-									Same day: {formatMoney(totals.totalSameDay)}
-								</span>
-							) : null}
-						</div>
-					</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalCarry)}</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalTopUp)}</TableCell>
-					<TableCell className="text-right tabular-nums">{formatMoney(totals.totalNext)}</TableCell>
-					<TableCell />
-				</TableRow>
-			</TableFooter>
-		</Table>
+							{totals.hasWithdrawn ? <SubLine>Same day: {formatMoney(totals.totalSameDay)}</SubLine> : null}
+						</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalCarry)}</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalTopUp)}</td>
+						<td className={tdNumClass}>{formatMoney(totals.totalNext)}</td>
+						<td className={tdClass} />
+					</tr>
+				</tfoot>
+			</table>
+		</div>
 	);
 }

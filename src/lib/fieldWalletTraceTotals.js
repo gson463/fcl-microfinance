@@ -7,8 +7,14 @@ export function officerExpensesTotal(t) {
 	);
 }
 
+/** Collections total aligned with Excel grid / sample (coll. w/o prepay + prepayment). */
+export function officerCollectionsTotal(block) {
+	const t = block?.totals || {};
+	return Number(t.collectionWithoutPrepayment || 0) + Number(t.prepayment || 0);
+}
+
 /** Summary row totals for the by-officer table footer. */
-export function computeFieldWalletSummaryTotals(blocks, withdrawByOfficer, repaymentTotalsByOfficer) {
+export function computeFieldWalletSummaryTotals(blocks, withdrawByOfficer) {
 	let totalNet = 0;
 	let totalSameDay = 0;
 	let totalTaken = 0;
@@ -27,7 +33,7 @@ export function computeFieldWalletSummaryTotals(blocks, withdrawByOfficer, repay
 		totalNet += Number(t.deposit) || 0;
 		totalSameDay += Number(t.rawDeposit ?? t.deposit) || 0;
 		totalTaken += Number(t.amountTaken) || 0;
-		totalCollections += repaymentTotalsByOfficer?.get?.(oid) ?? 0;
+		totalCollections += officerCollectionsTotal(block);
 		totalAppFees += Number(t.applicationFee) || 0;
 		totalDisbursed += Number(t.disbursement) || 0;
 		totalExpenses += officerExpensesTotal(t);
