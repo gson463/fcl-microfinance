@@ -68,6 +68,7 @@ const managerLinks = [
   { to: '/manager/loans', icon: Briefcase, text: 'Loans & Disbursements' },
   { to: '/manager/loan-requests', icon: FileText, text: 'Requests' },
   { to: '/manager/repayment-management', icon: DollarSign, text: 'Prepayments' },
+  { to: '/manager/field-wallet-trace', icon: Wallet, text: 'Field wallet trace' },
   { to: '/arrears', icon: AlertTriangle, text: 'Arrears' },
   { to: '/defaulters', icon: FileX, text: 'Defaulters' },
   { to: '/manager/settings', icon: Settings, text: 'Settings' },

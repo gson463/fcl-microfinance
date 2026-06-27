@@ -30,6 +30,7 @@ import ExpenseManagement from '@/pages/officer/ExpenseManagement';
 import AttendanceManagement from '@/pages/officer/AttendanceManagement';
 import FieldWalletCashFlow from '@/pages/officer/FieldWalletCashFlow';
 import AdminFieldWalletTrace from '@/pages/admin/FieldWalletTrace';
+import ManagerFieldWalletTrace from '@/pages/manager/FieldWalletTrace';
 import FieldWalletTracePreview from '@/pages/admin/FieldWalletTracePreview';
 import FieldWalletTraceDemoPage from '@/pages/demo/FieldWalletTraceDemo';
 import Reports from '@/pages/shared/Reports';
@@ -131,7 +132,8 @@ function App() {
       {/* Manager Routes */}
       <Route path="/manager/dashboard/metrics/:metricKey" element={<ProtectedRoute allowedRoles={['manager']}><ManagerDashboardDrilldownRoute /></ProtectedRoute>} />
       <Route path="/manager/dashboard" element={<ProtectedRoute allowedRoles={['manager']}><BranchManagerDashboard /></ProtectedRoute>} />
-      <Route path="/manager/field-wallet" element={<ProtectedRoute allowedRoles={['manager']}><Navigate to="/manager/dashboard" replace /></ProtectedRoute>} />
+      <Route path="/manager/field-wallet-trace" element={<ProtectedRoute allowedRoles={['manager']}><ManagerFieldWalletTrace /></ProtectedRoute>} />
+      <Route path="/manager/field-wallet" element={<ProtectedRoute allowedRoles={['manager']}><Navigate to="/manager/field-wallet-trace" replace /></ProtectedRoute>} />
       <Route path="/manager/settings" element={<ProtectedRoute allowedRoles={['manager']}><ManagerSettings /></ProtectedRoute>} />
       <Route path="/manager/loan-officers" element={<ProtectedRoute allowedRoles={['manager']}><LoanOfficerManagement /></ProtectedRoute>} />
       <Route path="/manager/borrowers" element={<ProtectedRoute allowedRoles={['manager']}><ManagerBorrowerManagement /></ProtectedRoute>} />

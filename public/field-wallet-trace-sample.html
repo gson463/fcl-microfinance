@@ -118,13 +118,13 @@
       border-collapse: collapse;
       table-layout: fixed;
       width: 100%;
-      min-width: 0;
+      min-width: 1040px;
       font-size: clamp(0.62rem, 0.72vw, 0.78rem);
     }
     .grid-wrap th,
     .grid-wrap td {
       border: 1px solid #a1a1aa;
-      padding: 0.35rem 0.2rem;
+      padding: 0.35rem 0.3rem;
       vertical-align: middle;
       overflow-wrap: anywhere;
       word-break: break-word;
@@ -144,6 +144,7 @@
       font-variant-numeric: tabular-nums;
       font-size: clamp(0.58rem, 0.68vw, 0.74rem);
       line-height: 1.2;
+      overflow: hidden;
     }
     .grid-wrap td.center { text-align: center; }
     .grid-wrap tr.total td { background: #fef9c3; font-weight: 700; }
@@ -164,9 +165,9 @@
     .grid-wrap col.col-officer { width: 8%; }
     .grid-wrap td.center-name { font-weight: 600; font-size: clamp(0.58rem, 0.68vw, 0.74rem); }
     .grid-wrap col.col-centre { width: 7%; }
-    .grid-wrap col.col-num { width: 6.5%; }
-    .grid-wrap col.col-num-sm { width: 5%; }
-    .grid-wrap col.col-deposit { width: 7.5%; }
+    .grid-wrap col.col-num { width: 7%; }
+    .grid-wrap col.col-num-sm { width: 4%; }
+    .grid-wrap col.col-deposit { width: 8%; }
 
     .meta {
       display: grid;
@@ -310,7 +311,7 @@
     const COLS = [
       'Officer', 'Taken (TZS)', 'Centre', 'Disburse (TZS)',
       'Disb. clients', 'Coll. w/o prepay (TZS)', 'App fee (TZS)',
-      'Prepay (TZS)', 'Prepaid #', 'Penalty (TZS)', 'Transport (TZS)', 'Exp (1) (TZS)', 'Exp (2) (TZS)', 'Deposit (TZS)'
+      'Prepay (TZS)', 'Prepaid #', 'Arrears (TZS)', 'Transport (TZS)', 'Exp (1) (TZS)', 'Exp (2) (TZS)', 'Deposit (TZS)'
     ];
 
     const SAMPLE = {
@@ -329,17 +330,17 @@
         {
           officer: { id: 'sample-juma', full_name: 'Juma Mwangi' },
           centerRows: [
-            { centerName: 'Kivukoni', disbursement: 200000, disbursedClients: 4, collectionWithoutPrepayment: 370000, applicationFee: 20000, prepayment: 80000, prepaidClients: 2, penalty: 0 },
-            { centerName: 'Mbagala', disbursement: 150000, disbursedClients: 3, collectionWithoutPrepayment: 330000, applicationFee: 15000, prepayment: 50000, prepaidClients: 1, penalty: 0 },
+            { centerName: 'Kivukoni', disbursement: 200000, disbursedClients: 4, collectionWithoutPrepayment: 370000, applicationFee: 20000, prepayment: 80000, prepaidClients: 2, arrears: 120000 },
+            { centerName: 'Mbagala', disbursement: 150000, disbursedClients: 3, collectionWithoutPrepayment: 330000, applicationFee: 15000, prepayment: 50000, prepaidClients: 1, arrears: 95000 },
           ],
-          totals: { amountTaken: 500000, disbursement: 350000, disbursedClients: 7, collectionWithoutPrepayment: 700000, applicationFee: 35000, prepayment: 130000, prepaidClients: 3, penalty: 0, transport: 25000, expense1: 10000, expense2: 0, deposit: 0, rawDeposit: 1000000 },
+          totals: { amountTaken: 500000, disbursement: 350000, disbursedClients: 7, collectionWithoutPrepayment: 700000, applicationFee: 35000, prepayment: 130000, prepaidClients: 3, arrears: 215000, transport: 25000, expense1: 10000, expense2: 0, deposit: 0, rawDeposit: 1000000 },
         },
         {
           officer: { id: 'sample-asha', full_name: 'Asha Kimaro' },
           centerRows: [
-            { centerName: 'Tabata', disbursement: 120000, disbursedClients: 2, collectionWithoutPrepayment: 250000, applicationFee: 10000, prepayment: 30000, prepaidClients: 1, penalty: 0 },
+            { centerName: 'Tabata', disbursement: 120000, disbursedClients: 2, collectionWithoutPrepayment: 250000, applicationFee: 10000, prepayment: 30000, prepaidClients: 1, arrears: 40000 },
           ],
-          totals: { amountTaken: 300000, disbursement: 120000, disbursedClients: 2, collectionWithoutPrepayment: 250000, applicationFee: 10000, prepayment: 30000, prepaidClients: 1, penalty: 0, transport: 15000, expense1: 5000, expense2: 0, deposit: 500000, rawDeposit: 500000 },
+          totals: { amountTaken: 300000, disbursement: 120000, disbursedClients: 2, collectionWithoutPrepayment: 250000, applicationFee: 10000, prepayment: 30000, prepaidClients: 1, arrears: 40000, transport: 15000, expense1: 5000, expense2: 0, deposit: 500000, rawDeposit: 500000 },
         },
       ],
       withdrawByOfficer: {
@@ -414,7 +415,7 @@
         tableBody += `<td class="num">${fmtPlain(cr.applicationFee)}</td>`;
         tableBody += `<td class="num">${fmtPlain(cr.prepayment)}</td>`;
         tableBody += `<td class="center">${cr.prepaidClients}</td>`;
-        tableBody += `<td class="num">${fmtPlain(cr.penalty)}</td>`;
+        tableBody += `<td class="num">${fmtPlain(cr.arrears ?? cr.penalty ?? 0)}</td>`;
         tableBody += `<td></td><td></td><td></td><td></td>`;
         tableBody += '</tr>';
       });
@@ -428,7 +429,7 @@
         <td class="num">${fmtPlain(t.applicationFee)}</td>
         <td class="num">${fmtPlain(t.prepayment)}</td>
         <td class="center">${t.prepaidClients}</td>
-        <td class="num">${fmtPlain(t.penalty)}</td>
+        <td class="num">${fmtPlain(t.arrears ?? t.penalty ?? 0)}</td>
         <td class="num">${fmtPlain(t.transport)}</td>
         <td class="num">${fmtPlain(t.expense1)}</td>
         <td class="num">${fmtPlain(t.expense2)}</td>
@@ -459,8 +460,8 @@
                 <col class="col-num-sm" />
                 <col class="col-centre" />
                 <col class="col-num" /><col class="col-num-sm" /><col class="col-num" />
-                <col class="col-num-sm" /><col class="col-num-sm" /><col class="col-num-sm" />
-                <col class="col-num-sm" /><col class="col-num-sm" /><col class="col-num-sm" /><col class="col-num-sm" />
+                <col class="col-num" /><col class="col-num" /><col class="col-num-sm" />
+                <col class="col-num" /><col class="col-num" /><col class="col-num" /><col class="col-num" />
                 <col class="col-deposit" />
               </colgroup>
               <thead><tr>${COLS.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead>

@@ -1,4 +1,4 @@
-import { scheduledCollectionAmount, prepaymentAmount } from '@/lib/repaymentPrepayment';
+import { scheduledCollectionAmount, prepaymentAmount, arrearsCollectionAmount } from '@/lib/repaymentPrepayment';
 
 /** Centre for field-wallet split: borrower’s group (matches disbursement column logic). */
 function repaymentCenterIdFromRow(r) {
@@ -52,11 +52,13 @@ export function buildOfficerCenterBlocks({
 
       let scheduled = 0;
       let prepayment = 0;
+      let arrears = 0;
       const prepaidBorrowers = new Set();
       for (const r of repsHere) {
         scheduled += scheduledCollectionAmount(r);
         const p = prepaymentAmount(r);
         prepayment += p;
+        arrears += arrearsCollectionAmount(r);
         const bid = r.loans?.borrower_id ?? r.loans?.borrowers?.id ?? null;
         if (p > 0.01 && bid) prepaidBorrowers.add(bid);
       }
@@ -72,7 +74,7 @@ export function buildOfficerCenterBlocks({
         applicationFee: appFee,
         prepayment,
         prepaidClients: prepaidBorrowers.size,
-        penalty: 0,
+        arrears,
       };
     });
 
@@ -92,7 +94,7 @@ export function buildOfficerCenterBlocks({
         applicationFee: acc.applicationFee + r.applicationFee,
         prepayment: acc.prepayment + r.prepayment,
         prepaidClients: acc.prepaidClients + r.prepaidClients,
-        penalty: acc.penalty + r.penalty,
+        arrears: acc.arrears + r.arrears,
       }),
       {
         disbursement: 0,
@@ -101,9 +103,19 @@ export function buildOfficerCenterBlocks({
         applicationFee: 0,
         prepayment: 0,
         prepaidClients: 0,
-        penalty: 0,
+        arrears: 0,
       }
     );
+
+    const officerReps = (repayments || []).filter((r) => r.officer_id === officer.id);
+    let repScheduled = 0;
+    let repPrepay = 0;
+    let repArrears = 0;
+    for (const r of officerReps) {
+      repScheduled += scheduledCollectionAmount(r);
+      repPrepay += prepaymentAmount(r);
+      repArrears += arrearsCollectionAmount(r);
+    }
 
     const officerLoans = (loans || []).filter((L) => L.officer_id === officer.id);
     const totalDisb = officerLoans.reduce((s, L) => s + (Number(L.principal) || 0), 0);
@@ -121,6 +133,9 @@ export function buildOfficerCenterBlocks({
       centerRows: rows,
       totals: {
         ...sumRow,
+        collectionWithoutPrepayment: repScheduled,
+        prepayment: repPrepay,
+        arrears: repArrears,
         disbursement: totalDisb,
         disbursedClients: officerLoans.length,
         applicationFee: applicationFeeTotal,

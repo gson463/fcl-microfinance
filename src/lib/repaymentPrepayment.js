@@ -42,3 +42,13 @@ export function scheduledCollectionAmount(repayment) {
   const amt = Number(repayment?.amount ?? 0);
   return Math.max(0, amt - prepaymentAmount(repayment));
 }
+
+/** Cash applied toward overdue / scheduled bucket (replaces legacy “penalty” column in field wallet reports). */
+export function arrearsCollectionAmount(repayment) {
+  const sched = scheduledCollectionAmount(repayment);
+  const snapRaw = repayment?.scheduled_due_snapshot;
+  const snap =
+    snapRaw != null && snapRaw !== '' && Number.isFinite(Number(snapRaw)) ? Number(snapRaw) : null;
+  if (snap == null) return sched;
+  return Math.min(sched, snap);
+}

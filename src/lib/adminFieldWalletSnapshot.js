@@ -7,9 +7,15 @@ const LOAN_SELECT = `id, loan_id, principal, disbursement_date, officer_id, borr
     groups(id, name, center_id, centers(id, name))
   )`;
 
-/** No `loans` embed: totals only need loan_id + wallet fields; embedding can bloat or complicate PostgREST joins. Center splits use the separate loans query (borrower → group → center). */
-const REP_SELECT =
-	'id, amount, prepayment_amount, scheduled_due_snapshot, wallet_split_source, actual_payment_date, officer_id, loan_id';
+/** Loan embed required so repayments split per centre (borrower → group → center_id). */
+const REP_SELECT = `id, amount, prepayment_amount, scheduled_due_snapshot, wallet_split_source, actual_payment_date, officer_id, loan_id,
+  loans(
+    id, borrower_id,
+    borrowers(
+      id,
+      groups(id, center_id)
+    )
+  )`;
 
 /**
  * Field wallet for one calendar day (same formula as officer Field wallet / Excel DEPOSIT).

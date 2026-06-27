@@ -23,7 +23,7 @@ export function TraceMoney({ value, formatMoney, className, amountClassName, bol
 	return (
 		<span
 			className={cn(
-				'inline-block w-full whitespace-nowrap text-right tabular-nums text-[0.68rem] sm:text-xs',
+				'inline-block max-w-full whitespace-nowrap text-right tabular-nums text-[0.68rem] sm:text-xs',
 				bold && 'font-semibold',
 				amountClassName,
 				className

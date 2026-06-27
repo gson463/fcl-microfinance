@@ -93,8 +93,8 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
   const thClass =
     'border border-border bg-muted/80 px-1 py-1.5 text-left text-[0.58rem] sm:text-[0.62rem] font-semibold uppercase leading-tight whitespace-normal';
   const thNumClass = cn(thClass, 'text-right');
-  const tdClass = 'border border-border px-1 py-1.5 align-middle text-[0.65rem] sm:text-xs';
-  const tdNumClass = cn(tdClass, 'text-right');
+  const tdClass = 'border border-border px-1.5 py-1.5 align-middle text-[0.65rem] sm:text-xs';
+  const tdNumClass = cn(tdClass, 'text-right overflow-hidden');
   const totalClass = cn(tdClass, 'bg-amber-100/90 font-semibold dark:bg-amber-950/50');
   const officerCellClass = cn(
     tdClass,
@@ -125,21 +125,21 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
       </div>
 
       <div className="-mx-1 overflow-x-auto sm:mx-0">
-        <table className="w-full min-w-[880px] table-fixed border-collapse">
+        <table className="w-full min-w-[1040px] table-fixed border-collapse">
           <colgroup>
-            <col className="w-[9%]" />
-            <col className="w-[7%]" />
             <col className="w-[8%]" />
             <col className="w-[7%]" />
-            <col className="w-[5%]" />
+            <col className="w-[7%]" />
+            <col className="w-[7%]" />
+            <col className="w-[4%]" />
             <col className="w-[8%]" />
             <col className="w-[6%]" />
             <col className="w-[6%]" />
-            <col className="w-[5%]" />
-            <col className="w-[5%]" />
-            <col className="w-[6%]" />
-            <col className="w-[6%]" />
-            <col className="w-[6%]" />
+            <col className="w-[4%]" />
+            <col className="w-[7%]" />
+            <col className="w-[7%]" />
+            <col className="w-[7%]" />
+            <col className="w-[7%]" />
             <col className="w-[8%]" />
           </colgroup>
           <thead>
@@ -177,7 +177,7 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
                   {numCell(cr.applicationFee)}
                   {numCell(cr.prepayment)}
                   <td className={cn(tdClass, 'text-center tabular-nums')}>{cr.prepaidClients ?? 0}</td>
-                  {numCell(cr.penalty)}
+                  {numCell(cr.arrears ?? cr.penalty)}
                   <td className={tdClass} />
                   <td className={tdClass} />
                   <td className={tdClass} />
@@ -206,7 +206,7 @@ function OfficerBlock({ block, wRow, formatMoney, pendingWithdraw }) {
               </td>
               <td className={cn(totalClass, 'text-center tabular-nums')}>{t.prepaidClients ?? 0}</td>
               <td className={cn(totalClass, 'text-right')}>
-                <TraceMoney value={t.penalty} formatMoney={formatMoney} bold />
+                <TraceMoney value={t.arrears ?? t.penalty} formatMoney={formatMoney} bold />
               </td>
               <td className={cn(totalClass, 'text-right')}>
                 <TraceMoney value={t.transport} formatMoney={formatMoney} bold />
