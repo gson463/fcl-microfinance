@@ -36,6 +36,8 @@ import {
 } from '@/components/dashboard/DashboardMetricShell';
 import { AdminExpandableMetricCard } from '@/components/dashboard/AdminExpandableMetricCard';
 import { useDashboardRealtimeRefresh } from '@/hooks/useDashboardRealtimeRefresh';
+import { fetchPendingRepaymentDeleteCountForBranch } from '@/hooks/useUserProfileScope';
+import { Badge } from '@/components/ui/badge';
 
 const MANAGER_CARD_SHELLS = [
 	'bg-gradient-to-br from-pink-500 via-rose-600 to-red-900 shadow-pink-900/30',
@@ -69,6 +71,7 @@ const BranchManagerDashboard = () => {
 	const [officers, setOfficers] = useState([]);
 	const [officerId, setOfficerId] = useState('');
 	const [expandedCardId, setExpandedCardId] = useState(null);
+	const [pendingRepaymentDeleteCount, setPendingRepaymentDeleteCount] = useState(0);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -108,6 +111,25 @@ const BranchManagerDashboard = () => {
 			cancelled = true;
 		};
 	}, [user?.id]);
+
+	useEffect(() => {
+		let cancelled = false;
+		if (!managerBranchId) {
+			setPendingRepaymentDeleteCount(0);
+			return;
+		}
+		(async () => {
+			try {
+				const count = await fetchPendingRepaymentDeleteCountForBranch(managerBranchId);
+				if (!cancelled) setPendingRepaymentDeleteCount(count);
+			} catch {
+				if (!cancelled) setPendingRepaymentDeleteCount(0);
+			}
+		})();
+		return () => {
+			cancelled = true;
+		};
+	}, [managerBranchId]);
 
 	useEffect(() => {
 		const s = searchParams.get('start');
@@ -247,9 +269,10 @@ const BranchManagerDashboard = () => {
 				icon: Banknote,
 				description: 'Repayment management for your branch',
 				path: '/manager/repayment-management',
+				pendingCount: pendingRepaymentDeleteCount,
 			},
 		],
-		[]
+		[pendingRepaymentDeleteCount]
 	);
 
 	const s = stats || {};
@@ -665,7 +688,14 @@ const BranchManagerDashboard = () => {
 													<div className={quickActionIconWrapClass}>
 														<Icon className="h-7 w-7" />
 													</div>
-													<CardTitle className="text-base">{action.title}</CardTitle>
+													<div className="flex items-center gap-2">
+														<CardTitle className="text-base">{action.title}</CardTitle>
+														{action.pendingCount > 0 ? (
+															<Badge variant="destructive" className="h-5 min-w-5 justify-center px-1.5 text-xs">
+																{action.pendingCount}
+															</Badge>
+														) : null}
+													</div>
 													<CardDescription className="mt-1">{action.description}</CardDescription>
 													<Button variant="outline" size="sm" className="mt-4">
 														Open

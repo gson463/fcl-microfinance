@@ -70,6 +70,7 @@ const ManagerRepaymentManagement = () => {
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
     const [selectedLoanForSchedule, setSelectedLoanForSchedule] = useState(null);
     const [pendingRepaymentDeletes, setPendingRepaymentDeletes] = useState([]);
+    const [branchConfigWarning, setBranchConfigWarning] = useState('');
 
     const branchOfficerIds = useMemo(() => branchOfficers.map((o) => o.id), [branchOfficers]);
 
@@ -111,9 +112,13 @@ const ManagerRepaymentManagement = () => {
             setCenters([]);
             setGroups([]);
             setPendingRepaymentDeletes([]);
+            setBranchConfigWarning(
+                'Your manager account has no branch assigned. Deletion requests from officers will not appear until an admin sets your branch.',
+            );
             setLoading(false);
             return;
         }
+        setBranchConfigWarning('');
         setLoading(true);
         try {
             const [cfgRes, officersRes, pendingReqRes, centersRes] = await Promise.all([
@@ -128,6 +133,7 @@ const ManagerRepaymentManagement = () => {
 
             if (cfgRes.error) throw cfgRes.error;
             if (officersRes.error) throw officersRes.error;
+            if (pendingReqRes.error) throw pendingReqRes.error;
             if (centersRes.error) throw centersRes.error;
 
             const cfg = Object.fromEntries((cfgRes.data || []).map((r) => [r.key, r.value]));
@@ -152,10 +158,11 @@ const ManagerRepaymentManagement = () => {
             const repIds = (pendingReqRes.data || []).map((x) => x.repayment_id);
             let mergedPending = [];
             if (repIds.length > 0) {
-                const { data: repRows } = await supabase
+                const { data: repRows, error: repRowsError } = await supabase
                     .from('repayments')
                     .select('*, loans(loan_id, borrowers(first_name, surname))')
                     .in('id', repIds);
+                if (repRowsError) throw repRowsError;
                 mergedPending = (pendingReqRes.data || [])
                     .map((req) => ({
                         ...req,
@@ -411,6 +418,13 @@ const ManagerRepaymentManagement = () => {
     return (
         <DashboardLayout title="Collections">
             <div className="space-y-6">
+                {branchConfigWarning && (
+                    <Card className="border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+                        <CardContent className="pt-6 text-sm text-amber-900 dark:text-amber-100">
+                            {branchConfigWarning}
+                        </CardContent>
+                    </Card>
+                )}
                 {pendingRepaymentDeletes.length > 0 && (
                     <Card>
                         <CardHeader>

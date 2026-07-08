@@ -57,3 +57,17 @@ export async function fetchOfficerIdsForBranch(branchId) {
   if (error) throw error;
   return (data || []).map((r) => r.id);
 }
+
+/** Pending repayment deletion requests visible to a branch manager. */
+export async function fetchPendingRepaymentDeleteCountForBranch(branchId) {
+  if (!branchId) return 0;
+  const officerIds = await fetchOfficerIdsForBranch(branchId);
+  if (officerIds.length === 0) return 0;
+  const { data, error } = await supabase
+    .from('repayment_delete_requests')
+    .select('id')
+    .eq('status', 'pending')
+    .in('officer_id', officerIds);
+  if (error) throw error;
+  return (data || []).length;
+}

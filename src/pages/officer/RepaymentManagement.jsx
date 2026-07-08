@@ -95,7 +95,11 @@ const RepaymentManagement = () => {
     const [selectedLoanForSchedule, setSelectedLoanForSchedule] = useState(null);
     const [isRefreshingSchedule, setIsRefreshingSchedule] = useState(false);
     const [currentRepayment, setCurrentRepayment] = useState(null);
-    const [editForm, setEditForm] = useState({ amount: '', payment_date: '' });
+    const [editForm, setEditForm] = useState({
+        scheduled_portion: '',
+        prepayment_portion: '',
+        payment_date: '',
+    });
     /** Wizard: scheduled first (clears arrears + due per schedule), then optional prepayment (backward from last installment). */
     const [recordCollectionStep, setRecordCollectionStep] = useState(() => 'scheduled');
     /** Amount saved in step 1 this session (for banner on step 2); null if user skipped step 1. */
@@ -509,9 +513,12 @@ const RepaymentManagement = () => {
             return;
         }
         setCurrentRepayment(repayment);
+        const sched = scheduledCollectionAmount(repayment);
+        const prep = prepaymentAmount(repayment);
         setEditForm({
-            amount: repayment.amount,
-            payment_date: format(parseISO(repayment.actual_payment_date), 'yyyy-MM-dd')
+            scheduled_portion: sched > 0 ? String(sched) : '',
+            prepayment_portion: prep > 0 ? String(prep) : '',
+            payment_date: format(parseISO(repayment.actual_payment_date), 'yyyy-MM-dd'),
         });
         setEditDialogOpen(true);
     };
@@ -526,20 +533,73 @@ const RepaymentManagement = () => {
             });
             return;
         }
+        const schedNum = parseFloat(String(editForm.scheduled_portion ?? '').replace(/,/g, '')) || 0;
+        const prepNum = parseFloat(String(editForm.prepayment_portion ?? '').replace(/,/g, '')) || 0;
+        const totalAmount = schedNum + prepNum;
+        if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+            toast({
+                title: 'Invalid amounts',
+                description: 'Enter scheduled and/or prepayment amounts that add up to a positive total.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (schedNum < 0 || prepNum < 0) {
+            toast({
+                title: 'Invalid amounts',
+                description: 'Scheduled and prepayment amounts cannot be negative.',
+                variant: 'destructive',
+            });
+            return;
+        }
         setIsSubmitting(true);
         try {
-            if (!currentRepayment) throw new Error("No repayment selected for update.");
+            if (!currentRepayment) throw new Error('No repayment selected for update.');
+
+            const { data: loanRow, error: loanFetchErr } = await supabase
+                .from('loans')
+                .select('id, schedule')
+                .eq('id', currentRepayment.loan_id)
+                .single();
+            if (loanFetchErr) throw loanFetchErr;
+
+            const unit = getInstallmentUnitFromSchedule(loanRow?.schedule);
+            const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
+            const payStr = String(editForm.payment_date || '').slice(0, 10);
+            const { data: dueRaw, error: dueErr } = await supabase.rpc(dueRpc, {
+                p_schedule: loanRow?.schedule ?? null,
+                p_payment_date: payStr,
+            });
+            if (dueErr) throw dueErr;
+            const due = Number(dueRaw ?? 0);
+            if (!isValidRepaymentAmount(totalAmount, due, unit)) {
+                toast({
+                    title: 'Invalid amount',
+                    description:
+                        repaymentAmountValidationMessage(totalAmount, due, unit, currency) ||
+                        REPAYMENT_AMOUNT_INVALID_FALLBACK,
+                    variant: 'destructive',
+                });
+                return;
+            }
 
             const { error: updateError } = await supabase
                 .from('repayments')
-                .update({ amount: editForm.amount, actual_payment_date: editForm.payment_date, payment_date: editForm.payment_date })
+                .update({
+                    amount: totalAmount,
+                    actual_payment_date: editForm.payment_date,
+                    payment_date: editForm.payment_date,
+                    prepayment_amount: prepNum,
+                    scheduled_due_snapshot: schedNum,
+                    wallet_split_source: 'explicit',
+                })
                 .eq('id', currentRepayment.id);
             if (updateError) throw updateError;
 
-            const { error: prepErr } = await supabase.rpc('repayment_recompute_prepayment', {
-                p_repayment_id: currentRepayment.id,
+            const { error: schedErr } = await supabase.rpc('recalculate_loan_schedule', {
+                p_loan_id: currentRepayment.loan_id,
             });
-            if (prepErr) throw prepErr;
+            if (schedErr) throw schedErr;
 
             const { error: stErr } = await supabase.rpc('refresh_loan_status_for_id', {
                 p_loan_id: currentRepayment.loan_id,
@@ -822,6 +882,15 @@ const RepaymentManagement = () => {
                 });
                 return;
             }
+            if (!officerProfileBranchId) {
+                toast({
+                    title: 'Branch not set',
+                    description:
+                        'Your account has no branch assigned. Ask an admin to set your branch so your manager can see deletion requests.',
+                    variant: 'destructive',
+                });
+                return;
+            }
 
             const { error } = await supabase.from('repayment_delete_requests').insert({
                 repayment_id: repaymentId,
@@ -843,7 +912,7 @@ const RepaymentManagement = () => {
                 title: 'Requested',
                 description: 'Deletion request sent to your branch manager for approval.',
             });
-            fetchRepaymentList();
+            await refreshAfterMutation();
         } catch (error) {
             toast({ title: 'Request failed', description: error.message, variant: 'destructive' });
         }
@@ -890,7 +959,7 @@ const RepaymentManagement = () => {
                 description: `Deletion requested for ${ok} repayment(s). Manager approval is required before removal.`,
             });
             setSelectedRepayments([]);
-            fetchRepaymentList();
+            await refreshAfterMutation();
         } catch (error) {
             toast({ title: 'Error', description: error.message, variant: 'destructive' });
         } finally {
@@ -1158,6 +1227,13 @@ const RepaymentManagement = () => {
     return (
         <DashboardLayout title="Collections">
             <div className="space-y-6">
+                {!profileLoading && !officerProfileBranchId && (
+                    <Card className="border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
+                        <CardContent className="pt-6 text-sm text-amber-900 dark:text-amber-100">
+                            Your account has no branch assigned. Deletion requests may not reach your branch manager until an admin sets your branch.
+                        </CardContent>
+                    </Card>
+                )}
                  <div className="flex justify-end">
                     <Dialog
                         open={repaymentDialogOpen}
@@ -1845,8 +1921,38 @@ const RepaymentManagement = () => {
                 {currentRepayment && (
                     <form onSubmit={handleUpdateRepayment} className="space-y-4">
                         <div>
-                            <Label htmlFor="amount">Amount</Label>
-                            <Input id="amount" type="number" value={editForm.amount} onChange={e => setEditForm({...editForm, amount: e.target.value})} required />
+                            <Label htmlFor="edit_scheduled_portion">Scheduled collection</Label>
+                            <Input
+                                id="edit_scheduled_portion"
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={editForm.scheduled_portion}
+                                onChange={(e) => setEditForm({ ...editForm, scheduled_portion: e.target.value })}
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">Arrears + installments due on the payment date.</p>
+                        </div>
+                        <div>
+                            <Label htmlFor="edit_prepayment_portion">Prepayment</Label>
+                            <Input
+                                id="edit_prepayment_portion"
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={editForm.prepayment_portion}
+                                onChange={(e) => setEditForm({ ...editForm, prepayment_portion: e.target.value })}
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">Extra amount toward future installments.</p>
+                        </div>
+                        <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                            <span className="text-muted-foreground">Total: </span>
+                            <span className="font-semibold">
+                                {currency}{' '}
+                                {(
+                                    (parseFloat(String(editForm.scheduled_portion ?? '').replace(/,/g, '')) || 0) +
+                                    (parseFloat(String(editForm.prepayment_portion ?? '').replace(/,/g, '')) || 0)
+                                ).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
                         </div>
                         <div>
                             <Label htmlFor="payment_date">Payment Date</Label>
