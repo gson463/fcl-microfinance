@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { validatePasswordStrength, passwordStrengthHint, MIN_PASSWORD_LENGTH } from '@/lib/passwordPolicy';
 import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,8 +37,6 @@ import { downloadLoanOfficersImportTemplate } from '@/lib/excelImportTemplateDow
 import { ImportResultDialog } from '@/components/import/ImportResultDialog';
 
 const PAGE_SIZE = 25;
-
-const MIN_OFFICER_PASSWORD_LEN = 6;
 
 function parseOfficerImportRow(row) {
   const fullName = String(row.full_name ?? row['Full Name'] ?? row.name ?? '').trim();
@@ -308,7 +307,15 @@ const LoanOfficerManagement = () => {
       const body = { userId: editingOfficer.id };
       if (nameChanged) body.full_name = formData.full_name.trim();
       if (emailChanged) body.email = formData.email.trim().toLowerCase();
-      if (hasPassword) body.password = formData.password;
+      if (hasPassword) {
+        const pwdCheck = validatePasswordStrength(formData.password);
+        if (!pwdCheck.ok) {
+          toast({ title: 'Weak password', description: pwdCheck.message, variant: 'destructive' });
+          setSaving(false);
+          return;
+        }
+        body.password = formData.password;
+      }
       const { error: invokeError } = await invokeEdgeFunction(
         'update-user',
         { body },
@@ -318,6 +325,12 @@ const LoanOfficerManagement = () => {
     } else { // Creating a new user
       if (!formData.full_name || !formData.email || !formData.password) {
         toast({ title: 'Error', description: 'Please fill all fields.', variant: 'destructive' });
+        setSaving(false);
+        return;
+      }
+      const pwdCheck = validatePasswordStrength(formData.password);
+      if (!pwdCheck.ok) {
+        toast({ title: 'Weak password', description: pwdCheck.message, variant: 'destructive' });
         setSaving(false);
         return;
       }
@@ -429,11 +442,17 @@ const LoanOfficerManagement = () => {
             detailLines.push(`${rowLabel}: invalid email "${email}"`);
             continue;
           }
-          if (password.length < MIN_OFFICER_PASSWORD_LEN) {
+          if (password.length < MIN_PASSWORD_LENGTH) {
             skippedInvalid += 1;
             detailLines.push(
-              `${rowLabel}: password must be at least ${MIN_OFFICER_PASSWORD_LEN} characters`,
+              `${rowLabel}: password must be at least ${MIN_PASSWORD_LENGTH} characters`,
             );
+            continue;
+          }
+          const importPwdCheck = validatePasswordStrength(password);
+          if (!importPwdCheck.ok) {
+            skippedInvalid += 1;
+            detailLines.push(`${rowLabel}: ${importPwdCheck.message}`);
             continue;
           }
           if (existingEmails.has(email) || batchEmails.has(email)) {
@@ -589,7 +608,8 @@ const LoanOfficerManagement = () => {
             </div>
             <div className="space-y-2">
               <Label htmlFor="officer-password">Password</Label>
-              <Input id="officer-password" type="password" placeholder={editingOfficer ? 'Leave blank to keep current password' : '••••••••'} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} />
+              <Input id="officer-password" type="password" placeholder={editingOfficer ? 'Leave blank to keep current password' : '••••••••'} value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })} minLength={editingOfficer ? undefined : MIN_PASSWORD_LENGTH} />
+              <p className="text-xs text-muted-foreground">{passwordStrengthHint()}</p>
             </div>
             <Button onClick={handleSave} disabled={saving} className="w-full">
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}

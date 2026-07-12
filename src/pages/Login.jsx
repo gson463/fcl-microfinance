@@ -116,7 +116,7 @@ const Login = () => {
 			toast({
 				variant: 'destructive',
 				title: 'Sign in failed',
-				description: 'Invalid credentials. Please check your email and password.',
+				description: error.message || 'Invalid credentials. Please check your email and password.',
 			});
 		}
 		setIsSubmitting(false);
@@ -282,9 +282,17 @@ const Login = () => {
 									</div>
 
 									<div className="space-y-2">
-										<Label htmlFor="password" className="text-neutral-700 dark:text-zinc-300">
-											Password
-										</Label>
+										<div className="flex items-center justify-between">
+											<Label htmlFor="password" className="text-neutral-700 dark:text-zinc-300">
+												Password
+											</Label>
+											<a
+												href="/forgot-password"
+												className="text-xs font-medium text-brand-gold-deep hover:underline dark:text-brand-gold"
+											>
+												Forgot password?
+											</a>
+										</div>
 										<Input
 											id="password"
 											type="password"

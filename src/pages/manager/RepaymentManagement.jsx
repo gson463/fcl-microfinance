@@ -36,6 +36,7 @@ import {
     aggregateRepaymentStats,
     fetchAllFilteredRepayments,
     isTodayRepaymentDateRange,
+    repaymentQueryFriendlyError,
 } from '@/lib/repaymentManagementQuery';
 import { KpiStatCard, KpiMoneyValue } from '@/components/ui/kpi-stat-card';
 
@@ -202,7 +203,11 @@ const ManagerRepaymentManagement = () => {
             setTotalRepaymentCount(pageResult.totalCount);
             setStatsRows(statsData);
         } catch (error) {
-            toast({ title: 'Error fetching repayments', description: error.message, variant: 'destructive' });
+            toast({
+                title: 'Error fetching repayments',
+                description: repaymentQueryFriendlyError(error),
+                variant: 'destructive',
+            });
         } finally {
             setListLoading(false);
         }

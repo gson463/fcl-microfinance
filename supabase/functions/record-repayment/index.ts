@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import { requireJwtUser } from "../_shared/authJwt.ts";
 import { getClientIp, geoLabelFromIp } from "../_shared/audit.ts";
 import {
   installmentUnitFromSchedule,
@@ -92,11 +93,40 @@ Deno.serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
+    const authResult = await requireJwtUser(req, supabaseAdmin);
+    if ("error" in authResult) {
+      return new Response(await authResult.error.text(), {
+        status: authResult.error.status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const authUser = authResult.user;
+    /** Recording actor — never trust officer_id from request body. */
+    const officer_id = authUser.id;
+
+    const { data: callerRow, error: callerErr } = await supabaseAdmin
+      .from("users")
+      .select("role, branch_id, is_active")
+      .eq("id", authUser.id)
+      .maybeSingle();
+    if (callerErr || !callerRow) {
+      return new Response(JSON.stringify({ error: "User profile not found" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (callerRow.is_active === false) {
+      return new Response(JSON.stringify({ error: "Account is deactivated" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const body = await req.json() as Record<string, unknown>;
-    const { loan_id, officer_id, actual_payment_date } = body;
-    if (!loan_id || !officer_id || !actual_payment_date) {
+    const { loan_id, actual_payment_date } = body;
+    if (!loan_id || !actual_payment_date) {
       return new Response(
-        JSON.stringify({ error: "loan_id, officer_id, actual_payment_date required" }),
+        JSON.stringify({ error: "loan_id, actual_payment_date required" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -106,10 +136,39 @@ Deno.serve(async (req: Request) => {
 
     const { data: loan, error: loanErr } = await supabaseAdmin
       .from("loans")
-      .select("borrower_id, schedule")
+      .select("borrower_id, schedule, officer_id")
       .eq("id", loan_id)
       .single();
     if (loanErr || !loan) throw new Error("Loan not found");
+
+    const callerRole = String(callerRow.role ?? "").trim().toLowerCase();
+    if (callerRole === "officer") {
+      if (String(loan.officer_id) !== officer_id) {
+        return new Response(JSON.stringify({ error: "You can only record repayments for your own loans" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    } else if (callerRole === "manager") {
+      const { data: loanOfficer } = await supabaseAdmin
+        .from("users")
+        .select("branch_id")
+        .eq("id", loan.officer_id)
+        .maybeSingle();
+      const mgrBranch = callerRow.branch_id ? String(callerRow.branch_id) : null;
+      const loanBranch = loanOfficer?.branch_id ? String(loanOfficer.branch_id) : null;
+      if (!mgrBranch || !loanBranch || mgrBranch !== loanBranch) {
+        return new Response(JSON.stringify({ error: "Loan is outside your branch" }), {
+          status: 403,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    } else if (callerRole !== "admin") {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const payDate = String(actual_payment_date).slice(0, 10);
 

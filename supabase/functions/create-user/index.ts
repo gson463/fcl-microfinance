@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import { validatePasswordStrength } from "../_shared/passwordPolicy.ts";
 
 function formatErr(e: unknown): string {
   if (e && typeof e === "object") {
@@ -119,6 +120,14 @@ Deno.serve(async (req: Request) => {
 
     if (!mail || !pwd || !role || !name) {
       return new Response(JSON.stringify({ error: "Missing required fields" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const pwdCheck = validatePasswordStrength(pwd);
+    if (!pwdCheck.ok) {
+      return new Response(JSON.stringify({ error: pwdCheck.message }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

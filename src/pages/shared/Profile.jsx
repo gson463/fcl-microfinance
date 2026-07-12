@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase } from '@/lib/customSupabaseClient';
+import { validatePasswordStrength, passwordStrengthHint } from '@/lib/passwordPolicy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -99,6 +100,11 @@ const Profile = () => {
     e.preventDefault();
     if (!passwordData.newPassword) {
       toast({ title: 'Error', description: 'New password cannot be empty.', variant: 'destructive' });
+      return;
+    }
+    const pwdCheck = validatePasswordStrength(passwordData.newPassword);
+    if (!pwdCheck.ok) {
+      toast({ title: 'Weak password', description: pwdCheck.message, variant: 'destructive' });
       return;
     }
     const { error } = await supabase.auth.updateUser({
@@ -298,7 +304,7 @@ const Profile = () => {
           <Card>
             <CardHeader>
               <CardTitle>Change Password</CardTitle>
-              <CardDescription>Enter a new password to update it.</CardDescription>
+              <CardDescription>{passwordStrengthHint()}</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handlePasswordChange} className="space-y-4">
@@ -307,6 +313,7 @@ const Profile = () => {
                   <Input
                     id="newPassword"
                     type="password"
+                    minLength={12}
                     placeholder="Enter new password"
                     value={passwordData.newPassword}
                     onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}

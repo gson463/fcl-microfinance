@@ -3,8 +3,9 @@
 
 [functions.create-admin-user]
 verify_jwt = false
+# Requires ADMIN_SETUP_SECRET; see docs/SECURITY.md
 
-# JWT is validated inside the function (gateway JWT check can false-negative; client uses anon fallback in edge cases).
+# JWT is validated inside the function (gateway JWT check can false-negative).
 [functions.create-user]
 verify_jwt = false
 
@@ -19,7 +20,7 @@ verify_jwt = false
 [functions.delete-all-other-users]
 verify_jwt = false
 
-# Gateway JWT check can false-negative (valid session still 401); function uses service role for DB.
+# JWT validated inside function; officer_id is always auth.uid(), never from body.
 [functions.record-repayment]
 verify_jwt = false
 

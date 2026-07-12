@@ -47,6 +47,7 @@ import {
     aggregateRepaymentStats,
     fetchAllFilteredRepayments,
     isTodayRepaymentDateRange,
+    repaymentQueryFriendlyError,
 } from '@/lib/repaymentManagementQuery';
 import { installmentPrincipalInterestPaidDisplay } from '@/lib/installmentScheduleDisplay';
 import { KpiStatCard, KpiMoneyValue } from '@/components/ui/kpi-stat-card';
@@ -161,13 +162,7 @@ const RepaymentManagement = () => {
         prevPickerDueKeyRef.current = '';
     };
 
-    const repaymentFetchFriendlyError = useCallback((error) => {
-        const msg = String(error?.message ?? '');
-        if (/statement timeout|canceling statement|cancelling statement|timeout expired|query canceled/i.test(msg)) {
-            return 'Loading took longer than usual. Try again in a moment.';
-        }
-        return 'Could not load collections. Check your connection and try again.';
-    }, []);
+    const repaymentFetchFriendlyError = useCallback((error) => repaymentQueryFriendlyError(error), []);
 
     /**
      * Recompute loan statuses after save/delete — not on every page load.

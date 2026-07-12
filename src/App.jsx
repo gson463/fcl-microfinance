@@ -2,7 +2,10 @@ import React from 'react';
 import { Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import Login from '@/pages/Login';
+import ForgotPassword from '@/pages/ForgotPassword';
+import ResetPassword from '@/pages/ResetPassword';
 import AdminSignup from '@/pages/AdminSignup';
+import { ALLOW_ADMIN_SIGNUP } from '@/lib/customSupabaseClient';
 import AdminDashboard from '@/pages/admin/Dashboard';
 import DashboardMetricDrilldown from '@/pages/admin/DashboardMetricDrilldown';
 import BranchManagerDashboard from '@/pages/manager/Dashboard';
@@ -105,8 +108,14 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/demo/field-wallet-trace" element={<FieldWalletTraceDemoPage />} />
-      <Route path="/admin-signup" element={<AdminSignup />} />
+      {ALLOW_ADMIN_SIGNUP ? (
+        <Route path="/admin-signup" element={<AdminSignup />} />
+      ) : (
+        <Route path="/admin-signup" element={<Navigate to="/login" replace />} />
+      )}
       <Route path="/" element={<DashboardRedirect />} />
       
       {/* Admin Routes */}

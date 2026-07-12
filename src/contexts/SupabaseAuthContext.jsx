@@ -23,6 +23,28 @@ export const AuthProvider = ({ children }) => {
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
 
+  const validateSignedInUser = useCallback(async (authUser) => {
+    if (!authUser) {
+      return { ok: false, message: 'Not authenticated' };
+    }
+    const confirmed = authUser.email_confirmed_at ?? authUser.confirmed_at;
+    if (!confirmed) {
+      return { ok: false, message: 'Please verify your email before signing in.' };
+    }
+    const { data: row, error } = await supabase
+      .from('users')
+      .select('is_active')
+      .eq('id', authUser.id)
+      .maybeSingle();
+    if (error) {
+      console.error('Auth eligibility check failed:', error.message);
+    }
+    if (row?.is_active === false) {
+      return { ok: false, message: 'Your account has been deactivated. Contact an administrator.' };
+    }
+    return { ok: true };
+  }, []);
+
   // Centralized session handler to ensure state consistency
   const handleSession = useCallback((currentSession) => {
     if (currentSession) {
@@ -35,6 +57,12 @@ export const AuthProvider = ({ children }) => {
     }
     setLoading(false);
   }, []);
+
+  const rejectIneligibleSession = useCallback(async (message) => {
+    await supabase.auth.signOut();
+    handleSession(null);
+    return { error: new Error(message) };
+  }, [handleSession]);
 
   // Function to clear auth state completely
   const clearAuthState = useCallback(async () => {
@@ -65,6 +93,13 @@ export const AuthProvider = ({ children }) => {
           }
         } else {
           if (mounted) {
+            if (initialSession?.user) {
+              const eligible = await validateSignedInUser(initialSession.user);
+              if (!eligible.ok) {
+                await clearAuthState();
+                return;
+              }
+            }
             handleSession(initialSession);
           }
         }
@@ -92,6 +127,16 @@ export const AuthProvider = ({ children }) => {
           console.log('Token refreshed successfully');
           handleSession(newSession);
         } else if (event === 'SIGNED_IN') {
+          const eligible = await validateSignedInUser(newSession?.user);
+          if (!eligible.ok) {
+            toast({
+              variant: 'destructive',
+              title: 'Sign in blocked',
+              description: eligible.message,
+            });
+            await clearAuthState();
+            return;
+          }
           handleSession(newSession);
           void logAudit(
             {
@@ -114,7 +159,7 @@ export const AuthProvider = ({ children }) => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [handleSession, clearAuthState]);
+  }, [handleSession, clearAuthState, validateSignedInUser, toast]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -127,13 +172,21 @@ export const AuthProvider = ({ children }) => {
     void (async () => {
       const { data, error } = await supabase
         .from('users')
-        .select('role, branch_id, full_name')
+        .select('role, branch_id, full_name, is_active')
         .eq('id', user.id)
         .maybeSingle();
       if (cancelled) return;
       if (error) {
         console.error('Auth profile fetch failed:', error.message);
         setProfile(null);
+      } else if (data?.is_active === false) {
+        toast({
+          variant: 'destructive',
+          title: 'Account deactivated',
+          description: 'Your session was ended because this account is inactive.',
+        });
+        await clearAuthState();
+        navigate('/login', { replace: true });
       } else {
         setProfile(data ?? null);
       }
@@ -142,7 +195,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       cancelled = true;
     };
-  }, [user?.id]);
+  }, [user?.id, clearAuthState, navigate, toast]);
 
   const effectiveRole = useMemo(() => {
     const r = profile?.role ?? user?.user_metadata?.role;
@@ -193,6 +246,16 @@ export const AuthProvider = ({ children }) => {
         return { error };
       }
 
+      const eligible = await validateSignedInUser(data.user);
+      if (!eligible.ok) {
+        toast({
+          variant: 'destructive',
+          title: 'Sign in blocked',
+          description: eligible.message,
+        });
+        return rejectIneligibleSession(eligible.message);
+      }
+
       return { data, error: null };
     } catch (error) {
       toast({
@@ -202,7 +265,7 @@ export const AuthProvider = ({ children }) => {
       });
       return { error };
     }
-  }, [toast]);
+  }, [toast, validateSignedInUser, rejectIneligibleSession]);
 
   const signOut = useCallback(async (options = {}) => {
     const reason = options?.reason ?? 'manual';

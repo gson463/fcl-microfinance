@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import { validatePasswordStrength } from "../_shared/passwordPolicy.ts";
 
 /** Only this account may start impersonation (same as app + impersonate-start function). */
 const SUPER_ADMIN_IMPERSONATION_EMAIL = "admin@faharicredits.co.tz";
@@ -230,6 +231,16 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({ error: "Provide at least one of: password, full_name, email, phone_number" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    }
+
+    if (passwordStr) {
+      const pwdCheck = validatePasswordStrength(passwordStr);
+      if (!pwdCheck.ok) {
+        return new Response(JSON.stringify({ error: pwdCheck.message }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     const { data: targetRow, error: targetErr } = await supabaseAdmin

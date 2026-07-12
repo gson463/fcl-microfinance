@@ -5,16 +5,12 @@ import { formatApiErrorValue } from './formatApiError.js';
  * Point to any Supabase project via .env (VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY).
  * The other project must expose the same tables, RPCs, RLS, Storage buckets (logos, profile-photos), and Edge Functions this app expects.
  */
-/** Default: Fahari Credits (rlksathvyaxamwctkdhv). Override via .env for another project. */
-const supabaseUrl =
-	import.meta.env.VITE_SUPABASE_URL || 'https://rlksathvyaxamwctkdhv.supabase.co';
-const supabaseAnonKey =
-	import.meta.env.VITE_SUPABASE_ANON_KEY ||
-	'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJsa3NhdGh2eWF4YW13Y3RrZGh2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ3MzY4NDksImV4cCI6MjA5MDMxMjg0OX0._IKlpPBvEozIG28hZlWQfdNto86l6FojHPXSW4Pks1A';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-	console.error(
-		'[Supabase] Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env (see .env.example).',
+	throw new Error(
+		'Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY. Copy .env.example to .env and set both values.',
 	);
 }
 
@@ -92,11 +88,6 @@ function accessTokenBelongsToClient(accessToken) {
 	return iss.includes(ref);
 }
 
-/** Anon key is a JWT; gateway accepts it when the function has verify_jwt disabled. */
-function isInvalidJwtMessage(msg) {
-	return /invalid jwt/i.test(String(msg || ''));
-}
-
 /**
  * Resolve a usable access token: refresh if missing expiry or expiring soon (avoids gateway 401).
  */
@@ -121,10 +112,7 @@ async function resolveAccessToken(fallbackAccessToken) {
 }
 
 /**
- * Invoke a Supabase Edge Function with the user's access token (preferred).
- * If the gateway returns 401 Invalid JWT, retries once with the anon key JWT (valid for this
- * project; works when the function has verify_jwt disabled).
- *
+ * Invoke a Supabase Edge Function with the user's access token.
  * On non-2xx JSON responses, maps `{ error }` / `{ message }` into `error.message`.
  */
 async function parseFunctionsInvokeError(err) {
@@ -181,19 +169,10 @@ export async function invokeEdgeFunction(name, options = {}, accessToken) {
 		}
 	}
 
-	// Gateway rejects user access_token but anon JWT matches this client (works when verify_jwt is false on the function).
-	if (status === 401 && isInvalidJwtMessage(msg)) {
-		({ data, error } = await invokeOnce(supabaseAnonKey));
-		if (!error) {
-			return { data, error: null };
-		}
-		({ status, parsed, msg } = await parseFunctionsInvokeError(error));
-	}
-
 	if (msg) {
 		const hint =
-			status === 401 && isInvalidJwtMessage(msg)
-				? ' If this continues, redeploy record-repayment with verify_jwt=false or sign out and sign in again.'
+			status === 401
+				? ' Sign out and sign in again if your session expired.'
 				: '';
 		return {
 			data: parsed,
@@ -209,3 +188,6 @@ export {
 	customSupabaseClient,
 	customSupabaseClient as supabase,
 };
+
+/** Web admin bootstrap — off in production unless explicitly enabled. */
+export const ALLOW_ADMIN_SIGNUP = import.meta.env.VITE_ALLOW_ADMIN_SIGNUP === 'true';

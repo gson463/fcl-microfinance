@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { validatePasswordStrength, passwordStrengthHint } from '@/lib/passwordPolicy';
 import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { ALL } from '@/lib/hierarchyFilterUtils';
@@ -294,7 +295,15 @@ const UserManagement = () => {
         if (nameChanged) body.full_name = formData.full_name.trim();
         if (emailChanged) body.email = formData.email.trim().toLowerCase();
         if (phoneChanged) body.phone_number = formData.phone_number.trim();
-        if (hasPassword) body.password = formData.password;
+        if (hasPassword) {
+          const pwdCheck = validatePasswordStrength(formData.password);
+          if (!pwdCheck.ok) {
+            toast({ title: 'Weak password', description: pwdCheck.message, variant: 'destructive' });
+            setIsSaving(false);
+            return;
+          }
+          body.password = formData.password;
+        }
         const { error: invokeError } = await invokeEdgeFunction(
           'update-user',
           { body },
@@ -317,6 +326,12 @@ const UserManagement = () => {
             toast({ title: 'Error', description: 'Password is required for new users.', variant: 'destructive' });
              setIsSaving(false);
             return;
+        }
+        const pwdCheck = validatePasswordStrength(formData.password);
+        if (!pwdCheck.ok) {
+          toast({ title: 'Weak password', description: pwdCheck.message, variant: 'destructive' });
+          setIsSaving(false);
+          return;
         }
        const { error: invokeError } = await invokeEdgeFunction(
         'create-user',
@@ -563,7 +578,8 @@ const UserManagement = () => {
                   )}
                   <div className="space-y-2">
                     <Label htmlFor="password">Password</Label>
-                    <Input id="password" type="password" placeholder={editingUser ? 'Leave blank to keep current password' : ''} value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} />
+                    <Input id="password" type="password" placeholder={editingUser ? 'Leave blank to keep current password' : ''} value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} minLength={editingUser ? undefined : 12} />
+                    <p className="text-xs text-muted-foreground">{passwordStrengthHint()}</p>
                   </div>
                   {!isCreateFlow && editingUser ? (
                     <>

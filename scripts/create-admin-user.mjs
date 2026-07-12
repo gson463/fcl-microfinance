@@ -21,6 +21,18 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 
+const MIN_PASSWORD_LENGTH = 12;
+
+function validatePasswordStrength(password) {
+	if (String(password ?? '').length < MIN_PASSWORD_LENGTH) {
+		return {
+			ok: false,
+			message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+		};
+	}
+	return { ok: true, message: '' };
+}
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function loadDotenv() {
@@ -61,6 +73,12 @@ if (!url || !serviceKey) {
 if (!password) {
 	password = crypto.randomBytes(16).toString('base64url');
 	console.error('[bootstrap] No password argument — generated a temporary password (shown below).');
+}
+
+const pwdCheck = validatePasswordStrength(password);
+if (!pwdCheck.ok) {
+	console.error(pwdCheck.message);
+	process.exit(1);
 }
 
 const supabaseAdmin = createClient(url, serviceKey, {
