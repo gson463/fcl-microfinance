@@ -577,7 +577,7 @@ const LoanManagement = () => {
             await supabase.from('borrowers').update({ status: 'active_loan' }).eq('id', borrowerId);
 
             if (insertedLoan?.id) {
-                void logAudit({
+                await logAudit({
                     action: 'loan.disburse',
                     entityType: 'loan',
                     entityId: insertedLoan.id,
@@ -670,11 +670,11 @@ const LoanManagement = () => {
         if (error) {
             toast({ title: 'Failed', description: error.message, variant: 'destructive' });
         } else {
-            await supabase.rpc('log_audit_event', {
-                p_action: 'loan.delete.requested',
-                p_entity_type: 'loan',
-                p_entity_id: String(row.loan_id),
-                p_metadata: { loan_uuid: loanId },
+            await logAudit({
+                action: 'loan.delete.requested',
+                entityType: 'loan',
+                entityId: String(row.loan_id),
+                metadata: { loan_uuid: loanId },
             });
             fetchData();
             toast({ title: 'Success', description: 'Deletion request sent to your branch manager for approval.' });
@@ -866,7 +866,7 @@ const LoanManagement = () => {
                     const borrowerIdsToUpdate = newLoans.map(l => l.borrower_id);
                     await supabase.from('borrowers').update({ status: 'active_loan' }).in('id', borrowerIdsToUpdate);
                     if (insertedRows?.length) {
-                        void logAudit({
+                        await logAudit({
                             action: 'loan.disburse_bulk',
                             entityType: 'batch',
                             entityId: insertedRows[0].id,
@@ -1012,6 +1012,15 @@ const LoanManagement = () => {
                 title: 'Request submitted',
                 description: 'Your branch manager will review the loan increase approval.',
             });
+            await logAudit({
+                action: 'loan_increase_approval.submitted',
+                entityType: 'loan_increase_exception_request',
+                entityId: data?.id != null ? String(data.id) : null,
+                metadata: {
+                    borrower_id: formData.borrowerId,
+                    officer_notes_length: attendanceExceptionNotes.trim().length,
+                },
+            }).catch((e) => console.warn('[audit]', e));
             setAttendanceExceptionNotes('');
             setIncreaseEligibilityLoading(true);
             const proposed = parseProposedPrincipal(formData.principal);

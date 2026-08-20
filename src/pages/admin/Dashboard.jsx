@@ -26,6 +26,7 @@ import {
 	Users2,
 	Target,
 	Sunrise,
+	MapPin,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -303,6 +304,7 @@ const AdminDashboard = () => {
 		{ title: 'Manage Users', icon: Users, description: 'Add or manage system users', path: '/admin/users' },
 		{ title: 'Data history & audit', icon: FileQuestion, description: 'Deleted loans/repayments and activity log', path: '/admin/data-history' },
 		{ title: 'Activity log', icon: ScrollText, description: 'User actions, IP and device (admin only)', path: '/admin/audit-logs' },
+		{ title: 'Trace locations', icon: MapPin, description: 'Staff login GPS map and history', path: '/admin/trace-locations' },
 	];
 
 	const s = stats || {};

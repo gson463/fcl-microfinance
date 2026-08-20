@@ -550,14 +550,14 @@ const BorrowerManagement = () => {
             }
         } else {
             if (editingBorrower) {
-                void logAudit({
+                await logAudit({
                     action: 'borrower.update',
                     entityType: 'borrower',
                     entityId: editingBorrower.id,
                     metadata: { borrower_public_id: editingBorrower.borrower_id },
                 });
             } else if (result.data?.id) {
-                void logAudit({
+                await logAudit({
                     action: 'borrower.create',
                     entityType: 'borrower',
                     entityId: result.data.id,
@@ -580,7 +580,7 @@ const BorrowerManagement = () => {
         if (error) {
             toast({ title: 'Error deleting borrower', description: error.message, variant: 'destructive' });
         } else {
-            void logAudit({
+            await logAudit({
                 action: 'borrower.delete',
                 entityType: 'borrower',
                 entityId: borrowerId,
@@ -911,7 +911,7 @@ const BorrowerManagement = () => {
                 .eq('id', transferBorrower.id)
                 .eq('loan_officer_id', user.id);
             if (error) throw error;
-            void logAudit({
+            await logAudit({
                 action: 'borrower.update',
                 entityType: 'borrower',
                 entityId: transferBorrower.id,
@@ -991,7 +991,7 @@ const BorrowerManagement = () => {
                 .in('id', bulkTransferIds)
                 .eq('loan_officer_id', user.id);
             if (error) throw error;
-            void logAudit({
+            await logAudit({
                 action: 'borrower.update',
                 entityType: 'borrower',
                 entityId: bulkTransferIds[0],

@@ -1,10 +1,19 @@
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import {
+	isGpsExemptEmail,
+	getSessionLocation,
+	isSessionLocationReady,
+	sessionLocationPayload,
+	formatGpsLabel,
+	SessionLocationRequiredError,
+	SESSION_LOCATION_MESSAGES,
+} from '@/lib/geolocation';
 
 /** Must match supabase/migrations/*_audit_exempt_emails.sql and functions/_shared/auditExempt.ts */
 const AUDIT_EXEMPT_EMAILS = new Set(['admin@faharicredits.co.tz', 'sflaws.g@gmail.com']);
 
-/** Skip ipapi.co for high-frequency auth events (reduces external HTTP). */
-const SKIP_GEO_ACTIONS = new Set(['login', 'logout', 'session_refresh', 'signed_in', 'signed_out', 'auth.login', 'auth.logout']);
+/** Logout does not require session GPS. */
+const SKIP_GEO_ACTIONS = new Set(['auth.logout', 'logout']);
 
 /**
  * Retention: archive or delete audit_logs older than ~6 months via Supabase scheduled job (manual follow-up).
@@ -15,7 +24,9 @@ function isAuditExemptSession(session) {
 	return Boolean(e && AUDIT_EXEMPT_EMAILS.has(e));
 }
 
-function shortDeviceSummary(ua) {
+export { isGpsExemptEmail, SessionLocationRequiredError, SESSION_LOCATION_MESSAGES };
+
+export function shortDeviceSummary(ua) {
 	if (!ua) return null;
 	let browser = 'Browser';
 	if (ua.includes('Chrome') && !ua.includes('Edg')) browser = 'Chrome';
@@ -31,31 +42,77 @@ function shortDeviceSummary(ua) {
 	return `${browser} / ${os}`;
 }
 
-/**
- * Client-side context (IP + rough location from ipapi.co). Best-effort; may fail on ad blockers.
- */
-async function fetchClientNetworkContext() {
-	try {
-		const r = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(5000) });
-		const j = await r.json();
-		if (j.error) return { ip: null, locationLabel: null };
-		const parts = [j.city, j.region, j.country_name].filter(Boolean);
-		return {
-			ip: j.ip ?? null,
-			locationLabel: parts.length ? parts.join(', ') : null,
-		};
-	} catch {
-		return { ip: null, locationLabel: null };
+function resolveLocationForAudit({ location, session, action }) {
+	if (SKIP_GEO_ACTIONS.has(String(action ?? '').toLowerCase())) {
+		return null;
 	}
+	if (isAuditExemptSession(session)) {
+		return null;
+	}
+	if (location?.latitude != null && location?.longitude != null) {
+		return {
+			latitude: location.latitude,
+			longitude: location.longitude,
+			accuracyM: location.accuracyM ?? location.location_accuracy_m ?? null,
+			source: location.location_source ?? 'gps_session',
+		};
+	}
+	if (isSessionLocationReady()) {
+		const loc = getSessionLocation();
+		return {
+			latitude: loc.latitude,
+			longitude: loc.longitude,
+			accuracyM: loc.accuracyM,
+			source: 'gps_session',
+		};
+	}
+	throw new SessionLocationRequiredError('NOT_READY', SESSION_LOCATION_MESSAGES.NOT_READY);
+}
+
+async function insertAuditRow(body, sessionToUse) {
+	const { error } = await invokeEdgeFunction('log-audit', { body }, sessionToUse.access_token);
+	if (!error) return true;
+
+	const gps = body.client_latitude != null
+		? {
+				latitude: body.client_latitude,
+				longitude: body.client_longitude,
+				accuracyM: body.client_location_accuracy_m,
+				source: body.client_location_source,
+			}
+		: null;
+
+	const { error: rpcErr } = await supabase.rpc('log_audit_event', {
+		p_action: body.action,
+		p_entity_type: body.entity_type ?? null,
+		p_entity_id: body.entity_id ?? null,
+		p_metadata: body.metadata ?? {},
+		p_ip_address: body.client_ip ?? null,
+		p_user_agent: body.user_agent ?? null,
+		p_device_summary: body.device_summary ?? null,
+		p_location_label: body.client_location_label ?? null,
+		p_latitude: gps?.latitude ?? null,
+		p_longitude: gps?.longitude ?? null,
+		p_location_accuracy_m: gps?.accuracyM ?? null,
+		p_location_source: gps?.source ?? null,
+	});
+	if (rpcErr) {
+		console.warn('[audit]', rpcErr.message);
+		return false;
+	}
+	return true;
 }
 
 /**
- * Records one audit row for the current session. Prefers Edge Function (server IP when behind Supabase proxy);
- * falls back to RPC with browser-estimated IP/geo.
+ * Records one audit row for the current session. Uses session GPS cache (captured at login).
  *
- * @param sessionFromEvent - Optional session from `onAuthStateChange` (e.g. SIGNED_IN) so the Edge gateway gets a user JWT before `getSession()` persists (avoids anon-key Bearer → 401).
+ * @param {{ action, entityType?, entityId?, metadata?, location? }} params
+ * @param sessionFromEvent - Optional session from onAuthStateChange
  */
-export async function logAudit({ action, entityType, entityId, metadata }, sessionFromEvent = null) {
+export async function logAudit(
+	{ action, entityType, entityId, metadata, location },
+	sessionFromEvent = null,
+) {
 	const { data: { session } } = await supabase.auth.getSession();
 	const sessionToUse = sessionFromEvent ?? session;
 	if (!sessionToUse?.access_token) return;
@@ -63,40 +120,52 @@ export async function logAudit({ action, entityType, entityId, metadata }, sessi
 
 	const ua = typeof navigator !== 'undefined' ? navigator.userAgent : null;
 	const device = shortDeviceSummary(ua);
-	const skipGeo = SKIP_GEO_ACTIONS.has(String(action ?? '').toLowerCase());
-	const net = skipGeo ? { ip: null, locationLabel: null } : await fetchClientNetworkContext();
+
+	let gps = null;
+	try {
+		gps = resolveLocationForAudit({ location, session: sessionToUse, action });
+	} catch (e) {
+		if (!SKIP_GEO_ACTIONS.has(String(action ?? '').toLowerCase())) {
+			throw e;
+		}
+	}
+
+	const locationLabel =
+		gps != null ? formatGpsLabel(gps.latitude, gps.longitude, gps.accuracyM) : null;
 
 	const body = {
 		action,
 		entity_type: entityType ?? null,
-		entity_id: entityId ?? null,
+		entity_id: entityId != null ? String(entityId) : null,
 		metadata: metadata ?? {},
 		user_agent: ua,
 		device_summary: device,
-		client_ip: net.ip,
-		client_location_label: net.locationLabel,
+		client_ip: null,
+		client_location_label: locationLabel,
+		client_latitude: gps?.latitude ?? null,
+		client_longitude: gps?.longitude ?? null,
+		client_location_accuracy_m: gps?.accuracyM ?? null,
+		client_location_source: gps?.source ?? null,
 	};
 
 	try {
-		const { error } = await invokeEdgeFunction('log-audit', { body }, sessionToUse.access_token);
-		if (!error) return;
-	} catch {
-		/* fall through to RPC */
-	}
-
-	try {
-		const { error: rpcErr } = await supabase.rpc('log_audit_event', {
-			p_action: action,
-			p_entity_type: entityType ?? null,
-			p_entity_id: entityId != null ? String(entityId) : null,
-			p_metadata: metadata ?? {},
-			p_ip_address: net.ip,
-			p_user_agent: ua,
-			p_device_summary: device,
-			p_location_label: net.locationLabel,
-		});
-		if (rpcErr) console.warn('[audit]', rpcErr.message);
+		const ok = await insertAuditRow(body, sessionToUse);
+		if (!ok && action === 'auth.login') {
+			await insertAuditRow(body, sessionToUse);
+		}
 	} catch (e) {
 		console.warn('[audit]', e);
+		if (action === 'auth.login') {
+			throw e;
+		}
 	}
+}
+
+/** Attach session GPS to edge function bodies (e.g. record-repayment). */
+export function requireSessionLocationForRequest() {
+	const payload = sessionLocationPayload();
+	if (!payload) {
+		throw new SessionLocationRequiredError('NOT_READY', SESSION_LOCATION_MESSAGES.NOT_READY);
+	}
+	return payload;
 }

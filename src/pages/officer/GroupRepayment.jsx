@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { requireSessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
 import { formatApiErrorValue } from '@/lib/formatApiError';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -332,6 +333,19 @@ const GroupRepayment = () => {
         setIsSaving(true);
         const actualPaymentDate = formatTZ(selectedDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
 
+        let sessionGps;
+        try {
+            sessionGps = requireSessionLocationForRequest();
+        } catch (err) {
+            setIsSaving(false);
+            toast({
+                variant: 'destructive',
+                title: 'Huwezi kuendelea',
+                description: err instanceof SessionLocationRequiredError ? err.message : String(err?.message ?? err),
+            });
+            return;
+        }
+
         const validationErrors = [];
         for (const member of groupMembers) {
             const amount = parseFloat(repaymentAmounts[member.borrowerId]);
@@ -378,6 +392,7 @@ const GroupRepayment = () => {
                         amount: amount,
                         officer_id: user.id,
                         actual_payment_date: actualPaymentDate,
+                        ...sessionGps,
                     },
                 },
                 session?.access_token,

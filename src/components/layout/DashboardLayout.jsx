@@ -3,7 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { 
   Home, Users, Briefcase, DollarSign, Settings, LogOut, Building, UserPlus, 
   BookOpen, GitBranch, ArrowLeftRight, Calendar, Users2, Receipt,
-  FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText, Archive, ClipboardList, Wallet
+  FileText, UserCog, AlertTriangle, FileX, BarChart3, Menu, ChevronLeft, ChevronRight, X, ScrollText, Archive, ClipboardList, Wallet, MapPin
 } from 'lucide-react';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { Button } from '@/components/ui/button';
@@ -59,6 +59,7 @@ const adminMainLinks = [
 const adminSystemLinks = [
   { to: '/admin/settings', icon: Settings, text: 'System Settings' },
   { to: '/admin/audit-logs', icon: ScrollText, text: 'Activity log' },
+  { to: '/admin/trace-locations', icon: MapPin, text: 'Trace locations' },
 ];
 
 const managerLinks = [

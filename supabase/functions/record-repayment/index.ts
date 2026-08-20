@@ -9,7 +9,7 @@ import {
 import { isAuditExemptEmail } from "../_shared/auditExempt.ts";
 import { messageFromUnknown } from "../_shared/formatApiError.ts";
 
-/** Fire-and-forget audit so the client gets a fast response (geo lookup can be slow). */
+/** Fire-and-forget audit so the client gets a fast response. */
 function scheduleRepaymentAudit(
   supabaseAdmin: ReturnType<typeof createClient>,
   req: Request,
@@ -21,6 +21,9 @@ function scheduleRepaymentAudit(
     prepayment: number;
     due: number;
     wallet_split_explicit?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
+    location_accuracy_m?: number | null;
   },
 ) {
   const run = async () => {
@@ -34,11 +37,24 @@ function scheduleRepaymentAudit(
         return;
       }
       const ip = getClientIp(req);
+      const hasGps =
+        params.latitude != null &&
+        params.longitude != null &&
+        Number.isFinite(params.latitude) &&
+        Number.isFinite(params.longitude);
       let location_label: string | null = null;
-      try {
-        location_label = await geoLabelFromIp(ip);
-      } catch {
-        /* geo optional */
+      if (hasGps) {
+        const acc =
+          params.location_accuracy_m != null && Number.isFinite(params.location_accuracy_m)
+            ? ` (±${Math.round(params.location_accuracy_m)}m)`
+            : "";
+        location_label = `${params.latitude!.toFixed(6)}, ${params.longitude!.toFixed(6)}${acc}`;
+      } else {
+        try {
+          location_label = await geoLabelFromIp(ip);
+        } catch {
+          /* geo optional */
+        }
       }
       const base = {
         action: "repayment.record" as const,
@@ -55,6 +71,11 @@ function scheduleRepaymentAudit(
         user_agent: req.headers.get("user-agent"),
         device_summary: null as string | null,
         location_label,
+        latitude: hasGps ? params.latitude : null,
+        longitude: hasGps ? params.longitude : null,
+        location_accuracy_m:
+          hasGps && params.location_accuracy_m != null ? params.location_accuracy_m : null,
+        location_source: hasGps ? "gps_session" : null,
       };
       const { error: e1 } = await supabaseAdmin.from("audit_logs").insert({
         ...base,
@@ -133,6 +154,34 @@ Deno.serve(async (req: Request) => {
         },
       );
     }
+
+    const { data: callerEmailRow } = await supabaseAdmin
+      .from("users")
+      .select("email")
+      .eq("id", authUser.id)
+      .maybeSingle();
+    const callerExempt = isAuditExemptEmail(callerEmailRow?.email);
+    const latRaw = body.latitude;
+    const lngRaw = body.longitude;
+    const accRaw = body.location_accuracy_m;
+    const hasGps =
+      latRaw != null &&
+      lngRaw != null &&
+      Number.isFinite(Number(latRaw)) &&
+      Number.isFinite(Number(lngRaw));
+    if (!callerExempt && !hasGps) {
+      return new Response(
+        JSON.stringify({ error: "Session verification required. Sign in again and accept to continue." }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        },
+      );
+    }
+    const sessionLatitude = hasGps ? Number(latRaw) : null;
+    const sessionLongitude = hasGps ? Number(lngRaw) : null;
+    const sessionAccuracy =
+      accRaw != null && Number.isFinite(Number(accRaw)) ? Number(accRaw) : null;
 
     const { data: loan, error: loanErr } = await supabaseAdmin
       .from("loans")
@@ -367,6 +416,9 @@ Deno.serve(async (req: Request) => {
       prepayment: prepSafe,
       due: snapSafe,
       wallet_split_explicit: walletSplitExplicit,
+      latitude: sessionLatitude,
+      longitude: sessionLongitude,
+      location_accuracy_m: sessionAccuracy,
     });
 
     return new Response(

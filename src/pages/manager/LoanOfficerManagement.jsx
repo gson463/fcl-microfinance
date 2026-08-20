@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { logAudit } from '@/lib/auditLog';
 import { validatePasswordStrength, passwordStrengthHint, MIN_PASSWORD_LENGTH } from '@/lib/passwordPolicy';
 import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { Button } from '@/components/ui/button';
@@ -516,13 +517,12 @@ const LoanOfficerManagement = () => {
     const result = await invokeEdgeFunction('delete-user', { body: { userId: officerId } }, session?.access_token);
     const fail = await getEdgeInvokeFailure(result);
     if (fail) {
-      const { error: auditErr } = await supabase.rpc('log_audit_event', {
-        p_action: 'loan_officer.delete.failed',
-        p_entity_type: 'user',
-        p_entity_id: String(officerId),
-        p_metadata: { stage: fail.stage || null, error: fail.message },
-      });
-      if (auditErr) console.debug('[audit]', auditErr.message);
+      await logAudit({
+        action: 'loan_officer.delete.failed',
+        entityType: 'user',
+        entityId: String(officerId),
+        metadata: { stage: fail.stage || null, error: fail.message },
+      }).catch((e) => console.debug('[audit]', e?.message));
       toast({
         title: 'Could not delete loan officer',
         description: fail.message,
@@ -530,13 +530,12 @@ const LoanOfficerManagement = () => {
       });
       return;
     }
-    const { error: auditOkErr } = await supabase.rpc('log_audit_event', {
-      p_action: 'loan_officer.delete.success',
-      p_entity_type: 'user',
-      p_entity_id: String(officerId),
-      p_metadata: {},
-    });
-    if (auditOkErr) console.debug('[audit]', auditOkErr.message);
+    await logAudit({
+      action: 'loan_officer.delete.success',
+      entityType: 'user',
+      entityId: String(officerId),
+      metadata: {},
+    }).catch((e) => console.debug('[audit]', e?.message));
     toast({ title: 'Success', description: 'Loan Officer deleted successfully.' });
     fetchOfficers();
   };

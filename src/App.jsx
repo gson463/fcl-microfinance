@@ -20,6 +20,7 @@ import AdminRepaymentManagement from '@/pages/admin/RepaymentManagement';
 import OfficerReassignment from '@/pages/admin/OfficerReassignment';
 import AdminExpenseTransfer from '@/pages/admin/AdminExpenseTransfer';
 import AuditLogs from '@/pages/admin/AuditLogs';
+import TraceLogLocations from '@/pages/admin/TraceLogLocations';
 import AdminBorrowerManagement from '@/pages/admin/BorrowerManagement';
 import AdminLoanManagement from '@/pages/admin/LoanManagement';
 import CenterGroupManagement from '@/pages/officer/CenterGroupManagement';
@@ -137,6 +138,7 @@ function App() {
       <Route path="/admin/reassignment" element={<ProtectedRoute allowedRoles={['admin']}><OfficerReassignment /></ProtectedRoute>} />
       <Route path="/admin/expense-transfer" element={<ProtectedRoute allowedRoles={['admin']}><AdminExpenseTransfer /></ProtectedRoute>} />
       <Route path="/admin/audit-logs" element={<ProtectedRoute allowedRoles={['admin']}><AuditLogs /></ProtectedRoute>} />
+      <Route path="/admin/trace-locations" element={<ProtectedRoute allowedRoles={['admin']}><TraceLogLocations /></ProtectedRoute>} />
 
       {/* Manager Routes */}
       <Route path="/manager/dashboard/metrics/:metricKey" element={<ProtectedRoute allowedRoles={['manager']}><ManagerDashboardDrilldownRoute /></ProtectedRoute>} />

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { requireSessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useHierarchyFilters } from '@/hooks/useHierarchyFilters';
 import { filterLoanByHierarchy } from '@/lib/hierarchyFilterUtils';
@@ -221,6 +222,7 @@ const ArrearsManagement = () => {
 
         setClearingLoanId(loan.id);
         try {
+            const gps = requireSessionLocationForRequest();
             const { error } = await invokeEdgeFunction(
                 'record-repayment',
                 {
@@ -229,6 +231,7 @@ const ArrearsManagement = () => {
                         amount: payAmount,
                         officer_id: user.id,
                         actual_payment_date: payStr,
+                        ...gps,
                     },
                 },
                 session?.access_token,
@@ -238,6 +241,10 @@ const ArrearsManagement = () => {
             toast({ title: 'Success', description: `Arrears for loan ${loan.loan_id} cleared.` });
             return true;
         } catch (error) {
+            if (error instanceof SessionLocationRequiredError) {
+                toast({ title: 'Huwezi kuendelea', description: error.message, variant: 'destructive' });
+                return false;
+            }
             toast({ title: `Failed to clear arrears for ${loan.loan_id}`, description: error.message, variant: 'destructive' });
             return false;
         } finally {

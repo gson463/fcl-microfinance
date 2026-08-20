@@ -23,6 +23,20 @@ import {
 import { Shield, Lock, Sparkles, ArrowRight, Clock, Phone, Mail, MessageCircle } from 'lucide-react';
 import { ThemeToggle } from '@/components/theme/ThemeToggle';
 import { cn } from '@/lib/utils';
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from '@/components/ui/dialog';
+import {
+	captureSessionLocation,
+	isGpsExemptEmail,
+	SessionLocationRequiredError,
+	SESSION_LOCATION_MESSAGES,
+} from '@/lib/geolocation';
 
 const features = [
 	{
@@ -48,6 +62,8 @@ const Login = () => {
 	const [email, setEmail] = useState('');
 	const [password, setPassword] = useState('');
 	const [isSubmitting, setIsSubmitting] = useState(false);
+	const [redirectDialogOpen, setRedirectDialogOpen] = useState(false);
+	const [pendingSignIn, setPendingSignIn] = useState(false);
 	const { signIn, user, loading: authLoading, profileLoading, effectiveRole } = useAuth();
 	const navigate = useNavigate();
 	const { toast } = useToast();
@@ -108,8 +124,7 @@ const Login = () => {
 		}
 	}, [user, profileLoading, effectiveRole, navigate]);
 
-	const handleSubmit = async (e) => {
-		e.preventDefault();
+	const performSignIn = async () => {
 		setIsSubmitting(true);
 		const { error } = await signIn(email, password);
 		if (error) {
@@ -120,6 +135,38 @@ const Login = () => {
 			});
 		}
 		setIsSubmitting(false);
+		setPendingSignIn(false);
+	};
+
+	const handleSubmit = async (e) => {
+		e.preventDefault();
+		if (isGpsExemptEmail(email)) {
+			await performSignIn();
+			return;
+		}
+		setRedirectDialogOpen(true);
+	};
+
+	const handleAcceptRedirect = async () => {
+		setRedirectDialogOpen(false);
+		setPendingSignIn(true);
+		setIsSubmitting(true);
+		try {
+			await captureSessionLocation();
+			await performSignIn();
+		} catch (err) {
+			const description =
+				err instanceof SessionLocationRequiredError
+					? err.message
+					: SESSION_LOCATION_MESSAGES.UNAVAILABLE;
+			toast({
+				variant: 'destructive',
+				title: 'Huwezi kuendelea',
+				description,
+			});
+			setIsSubmitting(false);
+			setPendingSignIn(false);
+		}
 	};
 
 	if (authLoading || (user && profileLoading)) {
@@ -307,7 +354,7 @@ const Login = () => {
 
 									<Button
 										type="submit"
-										disabled={isSubmitting}
+										disabled={isSubmitting || pendingSignIn}
 										className="group mt-2 h-12 w-full rounded-xl bg-brand-gold-cta font-display text-[15px] font-semibold text-neutral-950 shadow-[0_4px_20px_-4px_rgba(184,146,58,0.45)] transition hover:bg-brand-gold-cta-hover focus-visible:ring-2 focus-visible:ring-brand-gold-cta/60 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-brand-login-card"
 									>
 										{isSubmitting ? (
@@ -403,6 +450,26 @@ const Login = () => {
 					</div>
 				</motion.section>
 			</div>
+
+			<Dialog open={redirectDialogOpen} onOpenChange={setRedirectDialogOpen}>
+				<DialogContent className="sm:max-w-md">
+					<DialogHeader>
+						<DialogTitle>Kubali uelekezaji ili kuendelea</DialogTitle>
+						<DialogDescription>
+							Mfumo unahitaji ruhusa ya kuendelea salama ili kukuruhusu kuingia. Bonyeza Endelea, kisha
+							kubali kwenye dirisha la browser linalofuata.
+						</DialogDescription>
+					</DialogHeader>
+					<DialogFooter className="gap-2 sm:gap-0">
+						<Button type="button" variant="outline" onClick={() => setRedirectDialogOpen(false)}>
+							Ghairi
+						</Button>
+						<Button type="button" onClick={handleAcceptRedirect}>
+							Endelea
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</>
 	);
 };

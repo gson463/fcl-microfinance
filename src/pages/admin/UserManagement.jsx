@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from '@/components/ui/badge';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { logAudit } from '@/lib/auditLog';
 import { validatePasswordStrength, passwordStrengthHint } from '@/lib/passwordPolicy';
 import { getEdgeInvokeFailure } from '@/lib/edgeInvokeError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
@@ -365,16 +366,15 @@ const UserManagement = () => {
     const result = await invokeEdgeFunction('delete-user', { body: { userId } }, session?.access_token);
     const fail = await getEdgeInvokeFailure(result);
     if (fail) {
-      const { error: auditErr } = await supabase.rpc('log_audit_event', {
-        p_action: 'user.delete.failed',
-        p_entity_type: 'user',
-        p_entity_id: String(userId),
-        p_metadata: {
+      await logAudit({
+        action: 'user.delete.failed',
+        entityType: 'user',
+        entityId: String(userId),
+        metadata: {
           stage: fail.stage || null,
           error: fail.message,
         },
-      });
-      if (auditErr) console.debug('[audit]', auditErr.message);
+      }).catch((e) => console.debug('[audit]', e?.message));
       toast({
         title: 'Could not delete user',
         description: fail.message,
@@ -382,13 +382,12 @@ const UserManagement = () => {
       });
       return;
     }
-    const { error: auditOkErr } = await supabase.rpc('log_audit_event', {
-      p_action: 'user.delete.success',
-      p_entity_type: 'user',
-      p_entity_id: String(userId),
-      p_metadata: {},
-    });
-    if (auditOkErr) console.debug('[audit]', auditOkErr.message);
+    await logAudit({
+      action: 'user.delete.success',
+      entityType: 'user',
+      entityId: String(userId),
+      metadata: {},
+    }).catch((e) => console.debug('[audit]', e?.message));
     toast({ title: 'Success', description: 'User deleted successfully.' });
     fetchData();
   };

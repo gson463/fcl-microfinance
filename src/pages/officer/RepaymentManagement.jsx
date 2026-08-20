@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format, parseISO, subDays } from 'date-fns';
 import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
+import { logAudit, requireSessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
 import { formatApiErrorValue } from '@/lib/formatApiError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
@@ -769,6 +770,7 @@ const RepaymentManagement = () => {
 
         setIsSubmitting(true);
         try {
+            const gps = requireSessionLocationForRequest();
             const { data, error } = await invokeEdgeFunction(
                 'record-repayment',
                 {
@@ -780,6 +782,7 @@ const RepaymentManagement = () => {
                         wallet_split_explicit: true,
                         officer_id: user.id,
                         actual_payment_date: formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
+                        ...gps,
                     },
                 },
                 session?.access_token,
@@ -806,6 +809,10 @@ const RepaymentManagement = () => {
             }
             return true;
         } catch (e) {
+            if (e instanceof SessionLocationRequiredError) {
+                toast({ title: 'Huwezi kuendelea', description: e.message, variant: 'destructive' });
+                return false;
+            }
             toast({
                 title: 'Repayment failed',
                 description: formatApiErrorValue(e) || 'Unexpected error. Check your connection and try again.',
@@ -903,11 +910,11 @@ const RepaymentManagement = () => {
             });
             if (error) throw error;
 
-            await supabase.rpc('log_audit_event', {
-                p_action: 'repayment.delete.requested',
-                p_entity_type: 'repayment',
-                p_entity_id: String(repaymentId),
-                p_metadata: { loan_public_id: repayment.loans?.loan_id },
+            await logAudit({
+                action: 'repayment.delete.requested',
+                entityType: 'repayment',
+                entityId: String(repaymentId),
+                metadata: { loan_public_id: repayment.loans?.loan_id },
             });
 
             toast({
@@ -916,6 +923,10 @@ const RepaymentManagement = () => {
             });
             await refreshAfterMutation();
         } catch (error) {
+            if (error instanceof SessionLocationRequiredError) {
+                toast({ title: 'Huwezi kuendelea', description: error.message, variant: 'destructive' });
+                return;
+            }
             toast({ title: 'Request failed', description: error.message, variant: 'destructive' });
         }
     };
@@ -947,11 +958,11 @@ const RepaymentManagement = () => {
                     if (error.code !== '23505') throw error;
                     continue;
                 }
-                await supabase.rpc('log_audit_event', {
-                    p_action: 'repayment.delete.requested',
-                    p_entity_type: 'repayment',
-                    p_entity_id: String(repayment.id),
-                    p_metadata: { loan_public_id: repayment.loans?.loan_id },
+                await logAudit({
+                    action: 'repayment.delete.requested',
+                    entityType: 'repayment',
+                    entityId: String(repayment.id),
+                    metadata: { loan_public_id: repayment.loans?.loan_id },
                 });
                 ok += 1;
             }
@@ -963,6 +974,10 @@ const RepaymentManagement = () => {
             setSelectedRepayments([]);
             await refreshAfterMutation();
         } catch (error) {
+            if (error instanceof SessionLocationRequiredError) {
+                toast({ title: 'Huwezi kuendelea', description: error.message, variant: 'destructive' });
+                return;
+            }
             toast({ title: 'Error', description: error.message, variant: 'destructive' });
         } finally {
             setIsSubmitting(false);

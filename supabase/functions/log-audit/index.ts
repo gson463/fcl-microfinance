@@ -10,10 +10,26 @@ type Body = {
   metadata?: Record<string, unknown>;
   user_agent?: string | null;
   device_summary?: string | null;
-  /** Fallback when no proxy header (e.g. local dev). */
   client_ip?: string | null;
   client_location_label?: string | null;
+  client_latitude?: number | null;
+  client_longitude?: number | null;
+  client_location_accuracy_m?: number | null;
+  client_location_source?: string | null;
 };
+
+function formatGpsLabel(
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  acc: number | null | undefined,
+): string | null {
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+  const accStr =
+    acc != null && Number.isFinite(acc) ? ` (±${Math.round(acc)}m)` : "";
+  return `${lat.toFixed(6)}, ${lng.toFixed(6)}${accStr}`;
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -52,7 +68,20 @@ Deno.serve(async (req: Request) => {
       });
     }
     const body = (await req.json()) as Body;
-    const { action, entity_type, entity_id, metadata, user_agent, device_summary, client_ip, client_location_label } = body;
+    const {
+      action,
+      entity_type,
+      entity_id,
+      metadata,
+      user_agent,
+      device_summary,
+      client_ip,
+      client_location_label,
+      client_latitude,
+      client_longitude,
+      client_location_accuracy_m,
+      client_location_source,
+    } = body;
     if (!action || typeof action !== "string") {
       return new Response(JSON.stringify({ error: "action required" }), {
         status: 400,
@@ -62,12 +91,23 @@ Deno.serve(async (req: Request) => {
 
     const headerIp = getClientIp(req);
     const ip = headerIp || client_ip || null;
-    let location_label: string | null = null;
-    if (ip) {
-      location_label = await geoLabelFromIp(ip);
+
+    const hasGps =
+      client_latitude != null &&
+      client_longitude != null &&
+      Number.isFinite(Number(client_latitude)) &&
+      Number.isFinite(Number(client_longitude));
+
+    let location_label: string | null = client_location_label ?? null;
+    if (!location_label && hasGps) {
+      location_label = formatGpsLabel(
+        Number(client_latitude),
+        Number(client_longitude),
+        client_location_accuracy_m != null ? Number(client_location_accuracy_m) : null,
+      );
     }
-    if (!location_label && client_location_label) {
-      location_label = client_location_label;
+    if (!location_label && ip) {
+      location_label = await geoLabelFromIp(ip);
     }
 
     const ua = user_agent ?? req.headers.get("user-agent") ?? null;
@@ -82,6 +122,15 @@ Deno.serve(async (req: Request) => {
       user_agent: ua,
       device_summary: device_summary ?? null,
       location_label,
+      latitude: hasGps ? Number(client_latitude) : null,
+      longitude: hasGps ? Number(client_longitude) : null,
+      location_accuracy_m:
+        client_location_accuracy_m != null && Number.isFinite(Number(client_location_accuracy_m))
+          ? Number(client_location_accuracy_m)
+          : null,
+      location_source: hasGps
+        ? (client_location_source ?? "gps_session")
+        : null,
     });
     if (insErr) throw insErr;
 

@@ -5,6 +5,13 @@ import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { logAudit } from '@/lib/auditLog';
 import { clearAdminImpersonationBackup } from '@/lib/adminImpersonation';
+import {
+	clearSessionLocation,
+	isGpsExemptEmail,
+	isSessionLocationReady,
+	getSessionLocation,
+	SESSION_LOCATION_MESSAGES,
+} from '@/lib/geolocation';
 
 /** Sign out after this long with no user input (mouse, keyboard, scroll, touch, wheel, focus). */
 const IDLE_SESSION_MS = 5 * 60 * 1000;
@@ -67,6 +74,7 @@ export const AuthProvider = ({ children }) => {
   // Function to clear auth state completely
   const clearAuthState = useCallback(async () => {
     try {
+      clearSessionLocation();
       // Attempt to sign out from Supabase to clear local storage tokens
       await supabase.auth.signOut();
     } catch (error) {
@@ -76,6 +84,26 @@ export const AuthProvider = ({ children }) => {
       handleSession(null);
     }
   }, [handleSession]);
+
+  const requireSessionGpsOrSignOut = useCallback(async (authSession, reason) => {
+    const email = authSession?.user?.email;
+    if (!authSession?.user || isGpsExemptEmail(email)) {
+      return true;
+    }
+    if (!isSessionLocationReady()) {
+      toast({
+        variant: 'destructive',
+        title: 'Session ended',
+        description: SESSION_LOCATION_MESSAGES.NOT_READY,
+      });
+      await clearAuthState();
+      if (reason !== 'init') {
+        navigate('/login', { replace: true });
+      }
+      return false;
+    }
+    return true;
+  }, [clearAuthState, navigate, toast]);
 
   useEffect(() => {
     let mounted = true;
@@ -97,6 +125,10 @@ export const AuthProvider = ({ children }) => {
               const eligible = await validateSignedInUser(initialSession.user);
               if (!eligible.ok) {
                 await clearAuthState();
+                return;
+              }
+              const gpsOk = await requireSessionGpsOrSignOut(initialSession, 'init');
+              if (!gpsOk) {
                 return;
               }
             }
@@ -138,18 +170,29 @@ export const AuthProvider = ({ children }) => {
             return;
           }
           handleSession(newSession);
-          void logAudit(
-            {
-              action: 'auth.login',
-              metadata: {
-                email: newSession?.user?.email ?? null,
+          try {
+            const loc = isGpsExemptEmail(newSession?.user?.email) ? null : getSessionLocation();
+            await logAudit(
+              {
+                action: 'auth.login',
+                metadata: {
+                  email: newSession?.user?.email ?? null,
+                  gps_captured_at: loc?.capturedAt ?? null,
+                },
+                location: loc ?? undefined,
               },
-            },
-            newSession,
-          );
+              newSession,
+            );
+          } catch (e) {
+            console.warn('[audit login]', e);
+          }
         } else if (event === 'USER_UPDATED') {
           handleSession(newSession);
         } else if (event === 'INITIAL_SESSION') {
+          if (newSession?.user) {
+            const gpsOk = await requireSessionGpsOrSignOut(newSession, 'init');
+            if (!gpsOk) return;
+          }
            handleSession(newSession);
         }
       }
@@ -159,7 +202,7 @@ export const AuthProvider = ({ children }) => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [handleSession, clearAuthState, validateSignedInUser, toast]);
+  }, [handleSession, clearAuthState, validateSignedInUser, toast, requireSessionGpsOrSignOut]);
 
   useEffect(() => {
     if (!user?.id) {
@@ -277,6 +320,7 @@ export const AuthProvider = ({ children }) => {
     } catch {
       /* still sign out */
     }
+    clearSessionLocation();
     await clearAuthState();
   }, [clearAuthState]);
 

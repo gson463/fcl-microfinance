@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase } from '@/lib/customSupabaseClient';
+import { logAudit } from '@/lib/auditLog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -347,11 +348,11 @@ const LoanRequests = () => {
       });
       if (insErr) throw insErr;
 
-      await supabase.rpc('log_audit_event', {
-        p_action: 'loan.delete.finalized',
-        p_entity_type: 'loan',
-        p_entity_id: String(loan.loan_id),
-        p_metadata: {
+      await logAudit({
+        action: 'loan.delete.finalized',
+        entityType: 'loan',
+        entityId: String(loan.loan_id),
+        metadata: {
           original_loan_id: loanId,
           borrower_name: borrowerName,
         },
@@ -494,11 +495,11 @@ const LoanRequests = () => {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     } else {
       if (loan.status === 'delete_requested') {
-        await supabase.rpc('log_audit_event', {
-          p_action: 'loan.delete.rejected',
-          p_entity_type: 'loan',
-          p_entity_id: String(loan.loan_id),
-          p_metadata: { original_loan_id: loanId },
+        await logAudit({
+          action: 'loan.delete.rejected',
+          entityType: 'loan',
+          entityId: String(loan.loan_id),
+          metadata: { original_loan_id: loanId },
         });
       }
       fetchData();

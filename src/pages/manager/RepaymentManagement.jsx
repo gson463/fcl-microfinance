@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { format } from 'date-fns';
 import { format as formatTZ, toZonedTime } from 'date-fns-tz';
 import { supabase } from '@/lib/customSupabaseClient';
+import { logAudit, SessionLocationRequiredError } from '@/lib/auditLog';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
 import DashboardLayout from '@/components/layout/DashboardLayout';
@@ -352,11 +353,11 @@ const ManagerRepaymentManagement = () => {
             });
             if (insErr) throw insErr;
 
-            await supabase.rpc('log_audit_event', {
-                p_action: 'repayment.delete.finalized',
-                p_entity_type: 'repayment',
-                p_entity_id: String(r.id),
-                p_metadata: { loan_public_id: loanPublicId, borrower_name: borrowerName },
+            await logAudit({
+                action: 'repayment.delete.finalized',
+                entityType: 'repayment',
+                entityId: String(r.id),
+                metadata: { loan_public_id: loanPublicId, borrower_name: borrowerName },
             });
 
             const { error: delErr } = await supabase.from('repayments').delete().eq('id', r.id);
@@ -384,11 +385,11 @@ const ManagerRepaymentManagement = () => {
                 .eq('id', req.id);
             if (error) throw error;
 
-            await supabase.rpc('log_audit_event', {
-                p_action: 'repayment.delete.rejected',
-                p_entity_type: 'repayment_delete_request',
-                p_entity_id: String(req.id),
-                p_metadata: { repayment_id: req.repayment_id },
+            await logAudit({
+                action: 'repayment.delete.rejected',
+                entityType: 'repayment_delete_request',
+                entityId: String(req.id),
+                metadata: { repayment_id: req.repayment_id },
             });
 
             toast({ title: 'Rejected', description: 'The officer can keep or adjust the repayment.' });

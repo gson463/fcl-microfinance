@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Loader2, ChevronLeft, ChevronRight, ScrollText, Filter, RotateCcw } from 'lucide-react';
+import { googleMapsUrl, formatGpsLabel } from '@/lib/geolocation';
 import { formatAuditEventSummary, auditMetadataJsonString } from '@/lib/auditEventDisplay';
 
 const PAGE_SIZE = 50;
@@ -228,6 +229,9 @@ const AuditLogs = () => {
 			{ header: 'Entity ID', accessor: (r) => String(r.entity_id ?? '') },
 			{ header: 'IP', accessor: (r) => String(r.ip_address ?? '') },
 			{ header: 'Location', accessor: (r) => String(r.location_label ?? '') },
+			{ header: 'Latitude', accessor: (r) => String(r.latitude ?? '') },
+			{ header: 'Longitude', accessor: (r) => String(r.longitude ?? '') },
+			{ header: 'Accuracy (m)', accessor: (r) => String(r.location_accuracy_m ?? '') },
 			{ header: 'Device', accessor: (r) => String(r.device_summary ?? (r.user_agent ? String(r.user_agent).slice(0, 120) : '') ?? '') },
 			{ header: 'Metadata (JSON)', accessor: (r) => fmtMeta(r.metadata) },
 		], selected);
@@ -451,7 +455,7 @@ const AuditLogs = () => {
 				<Card>
 					<CardHeader>
 						<CardTitle>Audit log</CardTitle>
-						<CardDescription>Newest first. Location is derived from IP when available.</CardDescription>
+						<CardDescription>Newest first. GPS coordinates when captured at login; legacy rows may show IP label only.</CardDescription>
 					</CardHeader>
 					<CardContent>
 						{loading ? (
@@ -520,7 +524,31 @@ const AuditLogs = () => {
 																) : null}
 															</TableCell>
 															<TableCell className="font-mono text-xs">{row.ip_address ?? '—'}</TableCell>
-															<TableCell className="text-xs max-w-[160px]">{row.location_label ?? '—'}</TableCell>
+															<TableCell className="text-xs max-w-[180px]">
+																{Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude)) ? (
+																	<>
+																		<span className="font-mono block">
+																			{formatGpsLabel(
+																				Number(row.latitude),
+																				Number(row.longitude),
+																				row.location_accuracy_m,
+																			)}
+																		</span>
+																		{googleMapsUrl(Number(row.latitude), Number(row.longitude)) ? (
+																			<a
+																				href={googleMapsUrl(Number(row.latitude), Number(row.longitude))}
+																				target="_blank"
+																				rel="noopener noreferrer"
+																				className="text-brand-blue hover:underline"
+																			>
+																				Maps
+																			</a>
+																		) : null}
+																	</>
+																) : (
+																	row.location_label ?? '—'
+																)}
+															</TableCell>
 															<TableCell className="text-xs max-w-[140px]">
 																{row.device_summary ?? (row.user_agent ? String(row.user_agent).slice(0, 48) : null) ?? '—'}
 															</TableCell>
