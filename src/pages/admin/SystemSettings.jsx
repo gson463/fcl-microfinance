@@ -20,6 +20,8 @@ import { Upload, Save, RotateCw, Trash2 } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { supabase } from '@/lib/customSupabaseClient';
 import { DEFAULT_SYSTEM_NAME, resolveLogoUrl } from '@/lib/brand';
+import { DEFAULT_POLICY_CONFIG, POLICY_CONFIG_KEYS } from '@/lib/policyConsent';
+import { Textarea } from '@/components/ui/textarea';
 
 const PURGE_CONFIRM_PHRASE = 'DELETE ALL DATA';
 
@@ -34,6 +36,7 @@ const SystemSettings = () => {
     officerLockAfterWithdraw: 'true',
     attendanceMinMeetingsForIncreaseEligibility: '6',
     attendanceRequireNoDefaultForAutoIncrease: 'true',
+    ...DEFAULT_POLICY_CONFIG,
   });
   const [logoPreview, setLogoPreview] = useState('');
   const [newLogoFile, setNewLogoFile] = useState(null);
@@ -71,6 +74,15 @@ const SystemSettings = () => {
           dbConfig.walletPrepaymentSplitMode === 'standard' ? 'standard' : 'arrears_only',
         officerLockAfterWithdraw:
           dbConfig.officerLockAfterWithdraw === 'false' ? 'false' : 'true',
+        privacyPolicyVersion: dbConfig.privacyPolicyVersion || DEFAULT_POLICY_CONFIG.privacyPolicyVersion,
+        securityConsentTitleSw: dbConfig.securityConsentTitleSw || DEFAULT_POLICY_CONFIG.securityConsentTitleSw,
+        securityConsentTitleEn: dbConfig.securityConsentTitleEn || DEFAULT_POLICY_CONFIG.securityConsentTitleEn,
+        securityConsentSummarySw:
+          dbConfig.securityConsentSummarySw || DEFAULT_POLICY_CONFIG.securityConsentSummarySw,
+        securityConsentSummaryEn:
+          dbConfig.securityConsentSummaryEn || DEFAULT_POLICY_CONFIG.securityConsentSummaryEn,
+        securityConsentBodySw: dbConfig.securityConsentBodySw || DEFAULT_POLICY_CONFIG.securityConsentBodySw,
+        securityConsentBodyEn: dbConfig.securityConsentBodyEn || DEFAULT_POLICY_CONFIG.securityConsentBodyEn,
       };
       setConfig(fetchedConfig);
       setLogoPreview(fetchedConfig.logoUrl || resolveLogoUrl(''));
@@ -141,11 +153,21 @@ const SystemSettings = () => {
         ...config,
         logoUrl: newLogoUrl,
       };
-      
-      const updates = Object.entries(updatedConfig).map(([key, value]) => ({
-        key,
-        value,
-      }));
+
+      const brandingKeys = [
+        'systemName',
+        'logoUrl',
+        'currency',
+        'applicationFeePerDisbursement',
+        'walletPrepaymentSplitMode',
+        'officerLockAfterWithdraw',
+        'attendanceMinMeetingsForIncreaseEligibility',
+        'attendanceRequireNoDefaultForAutoIncrease',
+      ];
+      const updates = [
+        ...brandingKeys.map((key) => ({ key, value: String(updatedConfig[key] ?? '') })),
+        ...POLICY_CONFIG_KEYS.map((key) => ({ key, value: String(updatedConfig[key] ?? '') })),
+      ];
 
       for (const item of updates) {
         const { error } = await supabase.from('system_config').upsert(item, { onConflict: 'key' });
@@ -396,6 +418,91 @@ const SystemSettings = () => {
                           still need manager approval.
                         </p>
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 rounded-lg border border-dashed border-muted-foreground/25 p-4">
+                    <div>
+                      <p className="text-sm font-medium">Security &amp; consent</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Masharti ya usalama yanayoonyeshwa kwa watumiaji baada ya kuingia. Ongeza{' '}
+                        <strong>Policy version</strong> ili kulazimisha kukubali tena (isipokuwa akaunti
+                        exempt). Usitumie maneno ya eneo/GPS kwenye maandishi.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="privacyPolicyVersion">Policy version</Label>
+                      <Input
+                        id="privacyPolicyVersion"
+                        name="privacyPolicyVersion"
+                        value={config.privacyPolicyVersion}
+                        onChange={handleInputChange}
+                        placeholder="1"
+                      />
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="securityConsentTitleSw">Title (Kiswahili)</Label>
+                        <Input
+                          id="securityConsentTitleSw"
+                          name="securityConsentTitleSw"
+                          value={config.securityConsentTitleSw}
+                          onChange={handleInputChange}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="securityConsentTitleEn">Title (English)</Label>
+                        <Input
+                          id="securityConsentTitleEn"
+                          name="securityConsentTitleEn"
+                          value={config.securityConsentTitleEn}
+                          onChange={handleInputChange}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="securityConsentSummarySw">Summary (Kiswahili)</Label>
+                        <Textarea
+                          id="securityConsentSummarySw"
+                          name="securityConsentSummarySw"
+                          rows={3}
+                          value={config.securityConsentSummarySw}
+                          onChange={handleInputChange}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="securityConsentSummaryEn">Summary (English)</Label>
+                        <Textarea
+                          id="securityConsentSummaryEn"
+                          name="securityConsentSummaryEn"
+                          rows={3}
+                          value={config.securityConsentSummaryEn}
+                          onChange={handleInputChange}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="securityConsentBodySw">Full text (Kiswahili)</Label>
+                      <Textarea
+                        id="securityConsentBodySw"
+                        name="securityConsentBodySw"
+                        rows={10}
+                        value={config.securityConsentBodySw}
+                        onChange={handleInputChange}
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="securityConsentBodyEn">Full text (English)</Label>
+                      <Textarea
+                        id="securityConsentBodyEn"
+                        name="securityConsentBodyEn"
+                        rows={10}
+                        value={config.securityConsentBodyEn}
+                        onChange={handleInputChange}
+                        className="font-mono text-xs"
+                      />
                     </div>
                   </div>
                 </>

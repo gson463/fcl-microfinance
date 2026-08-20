@@ -39,6 +39,10 @@ export function formatAuditEventSummary(row) {
 		if (m.reason === 'idle_timeout') return 'Signed out automatically (inactivity timeout)';
 		return 'Signed out';
 	}
+	if (action === 'policy.consent.accepted') {
+		const v = m.policy_version != null ? String(m.policy_version) : '';
+		return v ? `Security terms accepted (v${v})` : 'Security terms accepted';
+	}
 	if (action === 'repayment.record') {
 		const bits = [];
 		const amt = fmtNum(m.amount);

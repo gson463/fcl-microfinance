@@ -12,8 +12,8 @@ import {
 /** Must match supabase/migrations/*_audit_exempt_emails.sql and functions/_shared/auditExempt.ts */
 const AUDIT_EXEMPT_EMAILS = new Set(['admin@faharicredits.co.tz', 'sflaws.g@gmail.com']);
 
-/** Logout does not require session GPS. */
-const SKIP_GEO_ACTIONS = new Set(['auth.logout', 'logout']);
+/** Actions that do not require session GPS. */
+const SKIP_GEO_ACTIONS = new Set(['auth.logout', 'logout', 'policy.consent.accepted']);
 
 /**
  * Retention: archive or delete audit_logs older than ~6 months via Supabase scheduled job (manual follow-up).

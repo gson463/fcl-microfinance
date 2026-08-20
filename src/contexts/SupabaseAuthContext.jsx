@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
@@ -29,6 +29,7 @@ export const AuthProvider = ({ children }) => {
   /** Row in public.users — source of truth for role when JWT user_metadata is missing/stale. */
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const pendingLoginAuditRef = useRef(false);
 
   const validateSignedInUser = useCallback(async (authUser) => {
     if (!authUser) {
@@ -91,19 +92,45 @@ export const AuthProvider = ({ children }) => {
       return true;
     }
     if (!isSessionLocationReady()) {
+      // ConsentGate captures session verification after sign-in; do not sign out on init.
+      if (reason === 'init') {
+        return true;
+      }
       toast({
         variant: 'destructive',
         title: 'Session ended',
         description: SESSION_LOCATION_MESSAGES.NOT_READY,
       });
       await clearAuthState();
-      if (reason !== 'init') {
-        navigate('/login', { replace: true });
-      }
+      navigate('/login', { replace: true });
       return false;
     }
     return true;
   }, [clearAuthState, navigate, toast]);
+
+  const completeLoginAudit = useCallback(async () => {
+    if (!pendingLoginAuditRef.current) return;
+    const { data: { session: currentSession } } = await supabase.auth.getSession();
+    if (!currentSession?.access_token) return;
+    pendingLoginAuditRef.current = false;
+    try {
+      const loc = getSessionLocation();
+      await logAudit(
+        {
+          action: 'auth.login',
+          metadata: {
+            email: currentSession?.user?.email ?? null,
+            gps_captured_at: loc?.capturedAt ?? null,
+          },
+          location: loc,
+        },
+        currentSession,
+      );
+    } catch (e) {
+      console.warn('[audit login]', e);
+      throw e;
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -153,7 +180,7 @@ export const AuthProvider = ({ children }) => {
         if (!mounted) return;
 
         if (event === 'SIGNED_OUT') {
-          // Clear state immediately
+          pendingLoginAuditRef.current = false;
           handleSession(null);
         } else if (event === 'TOKEN_REFRESHED') {
           console.log('Token refreshed successfully');
@@ -170,21 +197,20 @@ export const AuthProvider = ({ children }) => {
             return;
           }
           handleSession(newSession);
-          try {
-            const loc = isGpsExemptEmail(newSession?.user?.email) ? null : getSessionLocation();
-            await logAudit(
-              {
-                action: 'auth.login',
-                metadata: {
-                  email: newSession?.user?.email ?? null,
-                  gps_captured_at: loc?.capturedAt ?? null,
+          if (isGpsExemptEmail(newSession?.user?.email)) {
+            try {
+              await logAudit(
+                {
+                  action: 'auth.login',
+                  metadata: { email: newSession?.user?.email ?? null },
                 },
-                location: loc ?? undefined,
-              },
-              newSession,
-            );
-          } catch (e) {
-            console.warn('[audit login]', e);
+                newSession,
+              );
+            } catch (e) {
+              console.warn('[audit login]', e);
+            }
+          } else {
+            pendingLoginAuditRef.current = true;
           }
         } else if (event === 'USER_UPDATED') {
           handleSession(newSession);
@@ -375,8 +401,9 @@ export const AuthProvider = ({ children }) => {
       signUp,
       signIn,
       signOut,
+      completeLoginAudit,
     }),
-    [user, session, loading, profile, profileLoading, effectiveRole, signUp, signIn, signOut],
+    [user, session, loading, profile, profileLoading, effectiveRole, signUp, signIn, signOut, completeLoginAudit],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

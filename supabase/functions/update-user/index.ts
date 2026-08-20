@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
 import { validatePasswordStrength } from "../_shared/passwordPolicy.ts";
+import { requireJwtUser } from "../_shared/authJwt.ts";
 
 /** Only this account may start impersonation (same as app + impersonate-start function). */
 const SUPER_ADMIN_IMPERSONATION_EMAIL = "admin@faharicredits.co.tz";
@@ -47,14 +48,12 @@ Deno.serve(async (req: Request) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    const jwt = authHeader.replace("Bearer ", "");
-    const { data: jwtUser, error: jwtErr } = await supabaseAdmin.auth.getUser(jwt);
-    if (jwtErr || !jwtUser.user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired session" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+
+    const authResult = await requireJwtUser(req, supabaseAdmin);
+    if ("error" in authResult) {
+      return authResult.error;
     }
+    const jwtUser = { user: authResult.user };
 
     const { data: callerRow } = await supabaseAdmin
       .from("users")

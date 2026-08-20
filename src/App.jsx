@@ -48,6 +48,9 @@ import ManagerBorrowerManagement from '@/pages/manager/BorrowerManagement';
 import { DateProvider } from '@/contexts/DateContext';
 import ArrearsManagement from '@/pages/shared/ArrearsManagement';
 import DefaultersManagement from '@/pages/shared/DefaultersManagement';
+import ConsentGate from '@/components/consent/ConsentGate';
+import Terms from '@/pages/legal/Terms';
+import Privacy from '@/pages/legal/Privacy';
 
 const AdminDashboardDrilldownRoute = () => {
   const { metricKey } = useParams();
@@ -79,7 +82,11 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/" replace />;
   }
 
-  return children;
+  return (
+    <ConsentGate>
+      {children}
+    </ConsentGate>
+  );
 };
 
 const DashboardRedirect = () => {
@@ -109,6 +116,8 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/demo/field-wallet-trace" element={<FieldWalletTraceDemoPage />} />

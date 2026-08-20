@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { corsHeaders } from "../_shared/cors.ts";
+import { requireJwtUser } from "../_shared/authJwt.ts";
 
 const SUPER_ADMIN_EMAIL = "admin@faharicredits.co.tz";
 
@@ -29,12 +30,12 @@ Deno.serve(async (req: Request) => {
 		if (!authHeader?.startsWith("Bearer ")) {
 			return json(401, { error: "Unauthorized" });
 		}
-		const jwt = authHeader.replace("Bearer ", "");
 
-		const { data: jwtData, error: jwtErr } = await supabaseAdmin.auth.getUser(jwt);
-		if (jwtErr || !jwtData.user?.id) {
-			return json(401, { error: "Invalid or expired session" });
+		const authResult = await requireJwtUser(req, supabaseAdmin);
+		if ("error" in authResult) {
+			return authResult.error;
 		}
+		const jwtData = { user: authResult.user };
 
 		const callerEmail = String(jwtData.user.email ?? "").trim().toLowerCase();
 		if (callerEmail !== SUPER_ADMIN_EMAIL) {
