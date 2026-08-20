@@ -128,7 +128,7 @@ const DashboardLayoutInner = ({ children, title, description = "Microfinance Man
 
   useEffect(() => {
     const fetchSystemConfig = async () => {
-      const { data } = await supabase.from('system_config').select('*');
+      const { data } = await supabase.from('system_config').select('key, value').in('key', ['systemName', 'logoUrl']);
       if (data) {
         const config = data.reduce((acc, item) => {
           acc[item.key] = item.value;

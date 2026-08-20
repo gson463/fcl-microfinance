@@ -43,7 +43,7 @@ import {
     LOAN_PICKER_SELECT,
     defaultRepaymentDateRange,
     fetchRepaymentPage,
-    fetchRepaymentStatsRows,
+    fetchRepaymentStats,
     aggregateRepaymentStats,
     fetchAllFilteredRepayments,
     isTodayRepaymentDateRange,
@@ -81,7 +81,7 @@ const RepaymentManagement = () => {
     const { loading: profileLoading, branchId: officerProfileBranchId } = useUserProfileScope(user?.id);
     const [repayments, setRepayments] = useState([]);
     const [totalRepaymentCount, setTotalRepaymentCount] = useState(0);
-    const [statsRows, setStatsRows] = useState([]);
+    const [statsBase, setStatsBase] = useState(null);
     const [loans, setLoans] = useState([]);
     const [groups, setGroups] = useState([]);
     const [centers, setCenters] = useState([]);
@@ -132,6 +132,7 @@ const RepaymentManagement = () => {
     const [centerFilter, setCenterFilter] = useState('all');
     const [borrowerStatusFilter, setBorrowerStatusFilter] = useState('all');
     const [dateRangeFilter, setDateRangeFilter] = useState(() => defaultRepaymentDateRange());
+    const [includeClosedLoans, setIncludeClosedLoans] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [page, setPage] = useState(1);
 
@@ -140,6 +141,7 @@ const RepaymentManagement = () => {
         setCenterFilter('all');
         setBorrowerStatusFilter('all');
         setDateRangeFilter(defaultRepaymentDateRange());
+        setIncludeClosedLoans(false);
         setSearchTerm('');
         setSelectedRepayments([]);
         setPage(1);
@@ -206,6 +208,7 @@ const RepaymentManagement = () => {
             groupFilter,
             borrowerStatusFilter,
             searchTerm: debouncedSearchTerm,
+            activePortfolioOnly: !includeClosedLoans && !isTodayRepaymentDateRange(dateRangeFilter),
         }),
         [
             user?.id,
@@ -214,8 +217,12 @@ const RepaymentManagement = () => {
             groupFilter,
             borrowerStatusFilter,
             debouncedSearchTerm,
+            includeClosedLoans,
         ],
     );
+
+    const showActivePortfolioBanner =
+        !includeClosedLoans && !isTodayRepaymentDateRange(dateRangeFilter);
 
     const fetchMetadata = useCallback(async () => {
         if (!user || profileLoading) return;
@@ -236,7 +243,7 @@ const RepaymentManagement = () => {
                         .select('repayment_id')
                         .eq('officer_id', user.id)
                         .eq('status', 'pending'),
-                    supabase.from('groups').select('*').eq('loan_officer_id', user.id),
+                    supabase.from('groups').select('id, name, center_id').eq('loan_officer_id', user.id),
                     supabase.from('holidays').select('date'),
                     supabase.from('system_config').select('value').eq('key', 'walletPrepaymentSplitMode').maybeSingle(),
                     centersQuery,
@@ -272,11 +279,11 @@ const RepaymentManagement = () => {
         try {
             const [pageResult, statsData] = await Promise.all([
                 fetchRepaymentPage({ supabase, filters: listFilters, page }),
-                fetchRepaymentStatsRows({ supabase, filters: listFilters }),
+                fetchRepaymentStats({ supabase, filters: listFilters }),
             ]);
             setRepayments(pageResult.rows);
             setTotalRepaymentCount(pageResult.totalCount);
-            setStatsRows(statsData);
+            setStatsBase(statsData);
             setSelectedRepayments([]);
         } catch (error) {
             console.error(error);
@@ -311,7 +318,7 @@ const RepaymentManagement = () => {
 
     useEffect(() => {
         setPage(1);
-    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, debouncedSearchTerm]);
+    }, [centerFilter, groupFilter, borrowerStatusFilter, dateRangeFilter, debouncedSearchTerm, includeClosedLoans]);
 
     useEffect(() => {
         const id = repaymentFormData.loanId;
@@ -457,7 +464,7 @@ const RepaymentManagement = () => {
     const totalPages = Math.max(1, Math.ceil(totalRepaymentCount / PAGE_SIZE));
 
     const stats = useMemo(() => {
-        const base = aggregateRepaymentStats(statsRows);
+        const base = aggregateRepaymentStats(statsBase);
         const relevantLoans = loans.filter((l) => {
             const b = l.borrowers;
             const centerMatch = borrowerMatchesCenter(b, centerFilter);
@@ -490,7 +497,7 @@ const RepaymentManagement = () => {
 
         return { ...base, totalOutstandingPrincipal };
     }, [
-        statsRows,
+        statsBase,
         loans,
         centerFilter,
         groupFilter,
@@ -1737,9 +1744,22 @@ const RepaymentManagement = () => {
                                 />
                             </PopoverContent>
                         </Popover>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                                checked={includeClosedLoans}
+                                onCheckedChange={(v) => setIncludeClosedLoans(Boolean(v))}
+                            />
+                            Include closed loans
+                        </label>
                         <Button onClick={resetFilters} variant="ghost">Reset</Button>
                     </CardContent>
                 </Card>
+
+                {showActivePortfolioBanner && (
+                    <p className="text-sm text-muted-foreground rounded-md border border-dashed px-4 py-2">
+                        Showing active portfolio only. Toggle &quot;Include closed loans&quot; to include fully paid loans.
+                    </p>
+                )}
 
                 <Card>
                     <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">

@@ -8,6 +8,10 @@ const EAT_TIMEZONE = 'Africa/Nairobi';
 
 export const REPAYMENT_PAGE_SIZE = 25;
 
+/** Closed loans — exclude repayment history unless today view or explicit toggle. */
+export const CLOSED_LOAN_STATUSES = ['paid', 'written_off'];
+export const OPEN_LOAN_STATUSES = ['active', 'delinquent', 'defaulted', 'edit_requested', 'delete_requested'];
+
 /** PostgREST URL limits — chunk large `.in()` lists to avoid 400 / URI too long. */
 const LOAN_ID_IN_CHUNK = 80;
 const OFFICER_ID_IN_CHUNK = 40;
@@ -44,6 +48,15 @@ export function isTodayRepaymentDateRange(dateRange) {
     const todayStr = formatInTimeZone(new Date(), EAT_TIMEZONE, 'yyyy-MM-dd');
     const { from, to } = dateRangeToQueryBounds(dateRange);
     return from === todayStr && to === todayStr;
+}
+
+export function isClosedLoanStatus(status) {
+    return CLOSED_LOAN_STATUSES.includes(status);
+}
+
+/** Default ON for history views; OFF for today (operational) or when user toggles closed loans in. */
+export function shouldExcludeClosedLoans(filters) {
+    return filters.activePortfolioOnly !== false && !isTodayRepaymentDateRange(filters.dateRange);
 }
 
 /** User-facing message for repayment list/stats fetch failures. */
@@ -120,6 +133,43 @@ function filterLoanRowsByLocation(rows, filters) {
     });
 }
 
+/** Open-portfolio loan IDs within officer scope (for activePortfolioOnly filter). */
+async function resolveOpenLoanIds(supabase, scope) {
+    const select = 'id';
+    const statusFilter = (q) => q.in('status', OPEN_LOAN_STATUSES);
+
+    if (scope.singleOfficerId) {
+        const { data, error } = await statusFilter(
+            supabase.from('loans').select(select).eq('officer_id', scope.singleOfficerId),
+        );
+        if (error) throw error;
+        return (data ?? []).map((row) => row.id);
+    }
+
+    if (scope.officerIds?.length) {
+        if (scope.officerIds.length <= OFFICER_ID_IN_CHUNK) {
+            const { data, error } = await statusFilter(
+                supabase.from('loans').select(select).in('officer_id', scope.officerIds),
+            );
+            if (error) throw error;
+            return (data ?? []).map((row) => row.id);
+        }
+        const merged = [];
+        for (const chunk of chunkArray(scope.officerIds, OFFICER_ID_IN_CHUNK)) {
+            const { data, error } = await statusFilter(
+                supabase.from('loans').select(select).in('officer_id', chunk),
+            );
+            if (error) throw error;
+            merged.push(...(data ?? []));
+        }
+        return merged.map((row) => row.id);
+    }
+
+    const { data, error } = await statusFilter(supabase.from('loans').select(select));
+    if (error) throw error;
+    return (data ?? []).map((row) => row.id);
+}
+
 async function fetchScopedLoanRows(supabase, scope) {
     const select = 'id, borrowers!inner(id, center_id, group_id, status, groups(center_id))';
 
@@ -162,13 +212,19 @@ export async function resolveLocationLoanIds(supabase, filters, scope = {}) {
 
 async function resolveEffectiveLoanIds(supabase, filters) {
     const scope = officerScopeFromFilters(filters);
-    const [searchLoanIds, locationLoanIds] = await Promise.all([
+    const excludeClosed = shouldExcludeClosedLoans(filters);
+    const [searchLoanIds, locationLoanIds, openLoanIds] = await Promise.all([
         filters.searchTerm != null && String(filters.searchTerm).trim()
             ? resolveSearchLoanIds(supabase, filters.searchTerm, scope)
             : null,
         hasLocationFilter(filters) ? resolveLocationLoanIds(supabase, filters, scope) : null,
+        excludeClosed ? resolveOpenLoanIds(supabase, scope) : null,
     ]);
-    return intersectLoanIds(searchLoanIds, locationLoanIds);
+    let result = intersectLoanIds(searchLoanIds, locationLoanIds);
+    if (excludeClosed) {
+        result = intersectLoanIds(result, openLoanIds);
+    }
+    return result;
 }
 
 /**
@@ -258,28 +314,6 @@ async function fetchRepaymentKeysChunked(supabase, queryFilters, { loanIds, offi
     }
     deduped.sort(compareRepaymentKeysDesc);
     return deduped;
-}
-
-async function fetchStatsRowsChunked(supabase, queryFilters, { loanIds, officerIds }) {
-    const allRows = [];
-    const loanChunks = loanIds?.length ? chunkArray(loanIds, LOAN_ID_IN_CHUNK) : [null];
-    const officerChunks = officerIds?.length ? chunkArray(officerIds, OFFICER_ID_IN_CHUNK) : [null];
-
-    for (const officerChunk of officerChunks) {
-        for (const loanChunk of loanChunks) {
-            const chunkFilters = {
-                ...queryFilters,
-                effectiveLoanIds: loanIds?.length ? loanChunk : queryFilters.effectiveLoanIds,
-                officerIds: officerIds?.length ? officerChunk : queryFilters.officerIds,
-                officerFilter: officerIds?.length ? undefined : queryFilters.officerFilter,
-            };
-            const rows = await fetchAllSupabaseRows(() =>
-                buildRepaymentListQuery(supabase, chunkFilters, { statsOnly: true }).order('id', { ascending: true }),
-            );
-            allRows.push(...rows);
-        }
-    }
-    return allRows;
 }
 
 async function fetchRepaymentRowsByIds(supabase, ids) {
@@ -376,26 +410,107 @@ export async function fetchRepaymentPage({ supabase, filters, page, pageSize = R
     return { rows: data ?? [], totalCount: count ?? 0 };
 }
 
-/** Slim rows for stats aggregation within the active filter window. */
-export async function fetchRepaymentStatsRows({ supabase, filters }) {
-    const effectiveLoanIds = await resolveEffectiveLoanIds(supabase, filters);
-    const queryFilters = { ...filters, effectiveLoanIds };
-    const useChunked =
-        needsLoanIdChunking(effectiveLoanIds) || officerIdsNeedChunking(queryFilters);
+function emptyRepaymentStats() {
+    return {
+        totalPaid: 0,
+        totalPrepayment: 0,
+        totalScheduledCollection: 0,
+        totalInterest: 0,
+        totalPrincipalPaid: 0,
+        rowCount: 0,
+    };
+}
 
-    if (useChunked) {
-        return fetchStatsRowsChunked(supabase, queryFilters, {
-            loanIds: needsLoanIdChunking(effectiveLoanIds) ? effectiveLoanIds : null,
-            officerIds: officerIdsNeedChunking(queryFilters) ? queryFilters.officerIds : null,
-        });
+function mergeRepaymentStats(a, b) {
+    return {
+        totalPaid: a.totalPaid + b.totalPaid,
+        totalPrepayment: a.totalPrepayment + b.totalPrepayment,
+        totalScheduledCollection: a.totalScheduledCollection + b.totalScheduledCollection,
+        totalInterest: a.totalInterest + b.totalInterest,
+        totalPrincipalPaid: a.totalPrincipalPaid + b.totalPrincipalPaid,
+        rowCount: a.rowCount + b.rowCount,
+    };
+}
+
+function mapRpcStatsRow(row) {
+    const totalPaid = Number(row?.total_paid ?? 0);
+    const totalPrepayment = Number(row?.total_prepayment ?? 0);
+    return {
+        totalPaid,
+        totalPrepayment,
+        totalScheduledCollection: Number(row?.total_scheduled ?? 0),
+        totalInterest: Number(row?.total_interest ?? 0),
+        totalPrincipalPaid: Number(row?.total_principal ?? 0),
+        rowCount: Number(row?.row_count ?? 0),
+    };
+}
+
+function buildStatsRpcParams(filters, effectiveLoanIds) {
+    const { singleOfficerId, officerIds, officerFilter, dateRange } = filters;
+    const { from, to } = dateRangeToQueryBounds(dateRange);
+
+    let p_officer_id = null;
+    let p_officer_ids = null;
+
+    if (singleOfficerId) {
+        p_officer_id = singleOfficerId;
+    } else if (officerFilter && officerFilter !== 'all') {
+        p_officer_id = officerFilter;
+    } else if (officerIds) {
+        p_officer_ids = officerIds.length ? officerIds : [EMPTY_UUID];
     }
 
-    return fetchAllSupabaseRows(() =>
-        buildRepaymentListQuery(supabase, queryFilters, { statsOnly: true }).order('id', { ascending: true }),
-    );
+    return {
+        p_officer_id,
+        p_officer_ids,
+        p_date_from: from,
+        p_date_to: to,
+        p_loan_ids: effectiveLoanIds,
+        p_exclude_closed: shouldExcludeClosedLoans(filters),
+    };
+}
+
+async function callAggregateRepaymentStatsRpc(supabase, rpcParams) {
+    const { p_loan_ids: loanIds, ...rest } = rpcParams;
+
+    if (Array.isArray(loanIds) && loanIds.length > LOAN_ID_IN_CHUNK) {
+        let merged = emptyRepaymentStats();
+        for (const chunk of chunkArray(loanIds, LOAN_ID_IN_CHUNK)) {
+            const part = await callAggregateRepaymentStatsRpc(supabase, { ...rest, p_loan_ids: chunk });
+            merged = mergeRepaymentStats(merged, part);
+        }
+        return merged;
+    }
+
+    const { data, error } = await supabase.rpc('aggregate_repayment_stats', {
+        ...rest,
+        p_loan_ids: loanIds?.length ? loanIds : null,
+    });
+    if (error) throw error;
+
+    const row = Array.isArray(data) ? data[0] : data;
+    return mapRpcStatsRow(row);
+}
+
+/** Aggregated KPI stats via SQL SUM (1 RPC instead of paginated row fetch). */
+export async function fetchRepaymentStats({ supabase, filters }) {
+    const effectiveLoanIds = await resolveEffectiveLoanIds(supabase, filters);
+    if (Array.isArray(effectiveLoanIds) && effectiveLoanIds.length === 0) {
+        return emptyRepaymentStats();
+    }
+    return callAggregateRepaymentStatsRpc(supabase, buildStatsRpcParams(filters, effectiveLoanIds));
+}
+
+/** @deprecated Prefer fetchRepaymentStats — kept for callers migrating from row-based stats. */
+export async function fetchRepaymentStatsRows(params) {
+    return fetchRepaymentStats(params);
 }
 
 export function aggregateRepaymentStats(rows) {
+    if (rows && typeof rows === 'object' && !Array.isArray(rows) && 'totalPaid' in rows) {
+        const { totalPaid, totalPrepayment, totalScheduledCollection, totalInterest, totalPrincipalPaid } = rows;
+        return { totalPaid, totalPrepayment, totalScheduledCollection, totalInterest, totalPrincipalPaid };
+    }
     const list = rows ?? [];
     return {
         totalPaid: list.reduce((sum, r) => sum + Number(r.amount ?? 0), 0),

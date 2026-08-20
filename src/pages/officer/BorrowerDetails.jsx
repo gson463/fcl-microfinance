@@ -21,6 +21,21 @@ import { DEFAULT_SYSTEM_NAME } from '@/lib/brand';
 import { borrowerPublicId } from '@/lib/borrowerPublicId';
 import { borrowerStatusLabel, borrowerStatusBadgeVariant } from '@/lib/borrowerStatusDisplay';
 import { loanStatusBadgeVariant } from '@/lib/domainStatuses';
+import { CLOSED_LOAN_STATUSES, OPEN_LOAN_STATUSES } from '@/lib/repaymentManagementQuery';
+
+const LOAN_SUMMARY_SELECT =
+  'id, loan_id, status, principal, balance, total_payable, disbursement_date, schedule, loan_products(name)';
+const REPAYMENT_SUMMARY_SELECT = 'id, loan_id, amount, payment_date, actual_payment_date';
+
+function closedLoanTotalPaid(loan) {
+  const payable = Number(loan.total_payable ?? 0);
+  const balance = Number(loan.balance ?? 0);
+  return Math.max(0, payable - balance);
+}
+
+function isClosedLoan(loan) {
+  return CLOSED_LOAN_STATUSES.includes(loan?.status);
+}
 
 const DetailItem = ({ label, value, isBadge = false, badgeVariant = 'default' }) => (
     <div className="flex justify-between py-2 border-b">
@@ -61,14 +76,23 @@ const BorrowerDetails = () => {
         setBorrower(borrowerData);
 
         const { data: loansData, error: loansError } = await supabase
-            .from('loans').select('*, loan_products(name)').eq('borrower_id', borrowerId);
+            .from('loans').select(LOAN_SUMMARY_SELECT).eq('borrower_id', borrowerId);
         if (loansError) throw loansError;
-        setLoans(loansData || []);
+        const loansList = loansData || [];
+        setLoans(loansList);
 
-        const { data: repaymentsData, error: repaymentsError } = await supabase
-            .from('repayments').select('*').eq('borrower_id', borrowerId);
-        if (repaymentsError) throw repaymentsError;
-        setRepayments(repaymentsData || []);
+        const openLoanIds = loansList.filter((l) => OPEN_LOAN_STATUSES.includes(l.status)).map((l) => l.id);
+        let repaymentsData = [];
+        if (openLoanIds.length > 0) {
+            const { data, error: repaymentsError } = await supabase
+                .from('repayments')
+                .select(REPAYMENT_SUMMARY_SELECT)
+                .eq('borrower_id', borrowerId)
+                .in('loan_id', openLoanIds);
+            if (repaymentsError) throw repaymentsError;
+            repaymentsData = data || [];
+        }
+        setRepayments(repaymentsData);
 
         if (borrowerData.group_id) {
             const { data: groupData, error: groupError } = await supabase
@@ -78,7 +102,7 @@ const BorrowerDetails = () => {
         }
         
         const { data: configData, error: configError } = await supabase
-            .from('system_config').select('*');
+            .from('system_config').select('key, value').in('key', ['currency', 'systemName']);
         if (!configError && configData) {
             const config = configData.reduce((acc, item) => ({...acc, [item.key]: item.value}), {});
             setCurrency(config.currency || 'TZS');
@@ -140,8 +164,9 @@ const BorrowerDetails = () => {
     let finalY = doc.lastAutoTable.finalY || 60;
 
     loans.forEach((loan, index) => {
-        const loanRepayments = repayments.filter(r => r.loan_id === loan.id);
-        const totalPaid = loanRepayments.reduce((sum, r) => sum + Number(r.amount), 0);
+        const closed = isClosedLoan(loan);
+        const loanRepayments = closed ? [] : repayments.filter(r => r.loan_id === loan.id);
+        const totalPaid = closed ? closedLoanTotalPaid(loan) : loanRepayments.reduce((sum, r) => sum + Number(r.amount), 0);
         
         doc.autoTable({
             startY: finalY + 10,
@@ -169,6 +194,9 @@ const BorrowerDetails = () => {
                 theme: 'striped',
             });
             finalY = doc.lastAutoTable.finalY;
+        } else if (closed) {
+            doc.text("Loan fully paid — repayment ledger omitted.", 14, finalY + 8);
+            finalY += 8;
         } else {
              doc.text("No repayments made for this loan.", 14, finalY + 8);
              finalY += 8;
@@ -203,8 +231,9 @@ const BorrowerDetails = () => {
 
     // Loans and Repayments
     loans.forEach((loan, index) => {
-        const loanRepayments = repayments.filter(r => r.loan_id === loan.id);
-        const totalPaid = loanRepayments.reduce((sum, r) => sum + Number(r.amount), 0);
+        const closed = isClosedLoan(loan);
+        const loanRepayments = closed ? [] : repayments.filter(r => r.loan_id === loan.id);
+        const totalPaid = closed ? closedLoanTotalPaid(loan) : loanRepayments.reduce((sum, r) => sum + Number(r.amount), 0);
         
         const loanData = [
             [`Loan #${index + 1}: ${loan.loan_products.name} (${loan.loan_id})`],
@@ -216,13 +245,16 @@ const BorrowerDetails = () => {
             ["Balance", `${currency} ${Number(loan.balance).toLocaleString()}`],
             ["Disbursed Date", new Date(loan.disbursement_date).toLocaleDateString()],
             [],
-            ["Repayment History"],
-            ["Payment Date", "Amount Paid"]
         ];
 
-        loanRepayments.forEach(r => {
-            loanData.push([new Date(r.payment_date).toLocaleDateString(), `${currency} ${Number(r.amount).toLocaleString()}`]);
-        });
+        if (closed) {
+            loanData.push(["Note", "Loan fully paid — repayment ledger omitted."]);
+        } else {
+            loanData.push(["Repayment History"], ["Payment Date", "Amount Paid"]);
+            loanRepayments.forEach(r => {
+                loanData.push([new Date(r.payment_date).toLocaleDateString(), `${currency} ${Number(r.amount).toLocaleString()}`]);
+            });
+        }
         
         const wsLoan = XLSX.utils.aoa_to_sheet(loanData);
         XLSX.utils.book_append_sheet(wb, wsLoan, `Loan ${index + 1}`);
@@ -342,6 +374,11 @@ const BorrowerDetails = () => {
                                     <div><p className="text-muted-foreground">Principal</p><p className="font-semibold">{currency} {Number(loan.principal).toLocaleString()}</p></div>
                                     <div><p className="text-muted-foreground">Balance</p><p className="font-semibold text-red-600">{currency} {Number(loan.balance).toLocaleString()}</p></div>
                                     <div><p className="text-muted-foreground">Disbursed</p><p className="font-semibold">{new Date(loan.disbursement_date).toLocaleDateString()}</p></div>
+                                    {isClosedLoan(loan) && (
+                                        <div className="col-span-full text-muted-foreground text-xs">
+                                            Fully paid — summary only (repayment history not loaded).
+                                        </div>
+                                    )}
                                 </div>
                                 <Button variant="outline" size="sm" onClick={() => viewSchedule(loan)}><Eye className="mr-2 h-4 w-4" /> View Schedule</Button>
                             </CardContent>

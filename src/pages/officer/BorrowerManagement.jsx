@@ -828,7 +828,6 @@ const BorrowerManagement = () => {
         'pending': 'secondary',
         'active_loan': 'warning',
         'defaulted': 'destructive',
-        'paid_up': 'default',
       };
       return statusMap[status] || 'default';
     };
@@ -839,7 +838,6 @@ const BorrowerManagement = () => {
             'pending': 'Pending — re-loan approval',
             'active_loan': 'Active Loan',
             'defaulted': 'Defaulted',
-            'paid_up': 'Paid',
         };
         return statusTextMap[status] || status;
     };

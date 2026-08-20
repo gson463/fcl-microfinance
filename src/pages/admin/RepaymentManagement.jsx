@@ -29,7 +29,7 @@ import {
     REPAYMENT_PAGE_SIZE,
     defaultRepaymentDateRange,
     fetchRepaymentPage,
-    fetchRepaymentStatsRows,
+    fetchRepaymentStats,
     aggregateRepaymentStats,
     fetchAllFilteredRepayments,
     isTodayRepaymentDateRange,
@@ -43,7 +43,7 @@ const AdminRepaymentManagement = () => {
     const { toast } = useToast();
     const [repayments, setRepayments] = useState([]);
     const [totalRepaymentCount, setTotalRepaymentCount] = useState(0);
-    const [statsRows, setStatsRows] = useState([]);
+    const [statsBase, setStatsBase] = useState(null);
     const [branches, setBranches] = useState([]);
     const [centers, setCenters] = useState([]);
     const [users, setUsers] = useState([]);
@@ -59,6 +59,7 @@ const AdminRepaymentManagement = () => {
     const [borrowerStatusFilter, setBorrowerStatusFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [dateRangeFilter, setDateRangeFilter] = useState(() => defaultRepaymentDateRange());
+    const [includeClosedLoans, setIncludeClosedLoans] = useState(false);
     const [page, setPage] = useState(1);
 
     const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
@@ -71,6 +72,7 @@ const AdminRepaymentManagement = () => {
         setBorrowerStatusFilter('all');
         setSearchTerm('');
         setDateRangeFilter(defaultRepaymentDateRange());
+        setIncludeClosedLoans(false);
         setPage(1);
     };
 
@@ -90,6 +92,7 @@ const AdminRepaymentManagement = () => {
             centerFilter,
             borrowerStatusFilter,
             searchTerm: debouncedSearchTerm,
+            activePortfolioOnly: !includeClosedLoans && !isTodayRepaymentDateRange(dateRangeFilter),
         }),
         [
             officerFilter,
@@ -98,8 +101,12 @@ const AdminRepaymentManagement = () => {
             centerFilter,
             borrowerStatusFilter,
             debouncedSearchTerm,
+            includeClosedLoans,
         ],
     );
+
+    const showActivePortfolioBanner =
+        !includeClosedLoans && !isTodayRepaymentDateRange(dateRangeFilter);
 
     const fetchMetadata = useCallback(async () => {
         setLoading(true);
@@ -139,11 +146,11 @@ const AdminRepaymentManagement = () => {
             const filtersWithScope = { ...listFilters, ...searchScope };
             const [pageResult, statsData] = await Promise.all([
                 fetchRepaymentPage({ supabase, filters: filtersWithScope, page }),
-                fetchRepaymentStatsRows({ supabase, filters: filtersWithScope }),
+                fetchRepaymentStats({ supabase, filters: filtersWithScope }),
             ]);
             setRepayments(pageResult.rows);
             setTotalRepaymentCount(pageResult.totalCount);
-            setStatsRows(statsData);
+            setStatsBase(statsData);
         } catch (error) {
             toast({ title: 'Error fetching repayments', description: error.message, variant: 'destructive' });
         } finally {
@@ -167,7 +174,7 @@ const AdminRepaymentManagement = () => {
 
     useEffect(() => {
         setPage(1);
-    }, [branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, debouncedSearchTerm]);
+    }, [branchFilter, officerFilter, centerFilter, borrowerStatusFilter, dateRangeFilter, debouncedSearchTerm, includeClosedLoans]);
 
     const filteredOfficers = useMemo(() => {
         const officers = users.filter(u => u.role === 'officer');
@@ -197,7 +204,7 @@ const AdminRepaymentManagement = () => {
     const pagedRepayments = repayments;
     const totalPages = Math.max(1, Math.ceil(totalRepaymentCount / PAGE_SIZE));
 
-    const stats = useMemo(() => aggregateRepaymentStats(statsRows), [statsRows]);
+    const stats = useMemo(() => aggregateRepaymentStats(statsBase), [statsBase]);
 
     const pageRepaymentIds = useMemo(() => repayments.map((r) => r.id), [repayments]);
     const bulk = useBulkSelection(pageRepaymentIds);
@@ -399,9 +406,22 @@ const AdminRepaymentManagement = () => {
                                 />
                             </PopoverContent>
                         </Popover>
+                        <label className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                                checked={includeClosedLoans}
+                                onCheckedChange={(v) => setIncludeClosedLoans(Boolean(v))}
+                            />
+                            Include closed loans
+                        </label>
                         <Button onClick={resetFilters} variant="ghost">Reset</Button>
                     </CardContent>
                 </Card>
+
+                {showActivePortfolioBanner && (
+                    <p className="text-sm text-muted-foreground rounded-md border border-dashed px-4 py-2">
+                        Showing active portfolio only. Toggle &quot;Include closed loans&quot; to include fully paid loans.
+                    </p>
+                )}
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between">

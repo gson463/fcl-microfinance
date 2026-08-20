@@ -3,6 +3,13 @@ import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
 /** Must match supabase/migrations/*_audit_exempt_emails.sql and functions/_shared/auditExempt.ts */
 const AUDIT_EXEMPT_EMAILS = new Set(['admin@faharicredits.co.tz', 'sflaws.g@gmail.com']);
 
+/** Skip ipapi.co for high-frequency auth events (reduces external HTTP). */
+const SKIP_GEO_ACTIONS = new Set(['login', 'logout', 'session_refresh', 'signed_in', 'signed_out', 'auth.login', 'auth.logout']);
+
+/**
+ * Retention: archive or delete audit_logs older than ~6 months via Supabase scheduled job (manual follow-up).
+ */
+
 function isAuditExemptSession(session) {
 	const e = session?.user?.email?.toLowerCase()?.trim();
 	return Boolean(e && AUDIT_EXEMPT_EMAILS.has(e));
@@ -56,7 +63,8 @@ export async function logAudit({ action, entityType, entityId, metadata }, sessi
 
 	const ua = typeof navigator !== 'undefined' ? navigator.userAgent : null;
 	const device = shortDeviceSummary(ua);
-	const net = await fetchClientNetworkContext();
+	const skipGeo = SKIP_GEO_ACTIONS.has(String(action ?? '').toLowerCase());
+	const net = skipGeo ? { ip: null, locationLabel: null } : await fetchClientNetworkContext();
 
 	const body = {
 		action,

@@ -3,7 +3,7 @@
  * PostgreSQL does not enforce CHECK constraints on these columns; the application and SQL
  * functions (e.g. update_all_loan_statuses, disbursement flows) define the live set.
  *
- * Borrowers: eligible | pending | active_loan | defaulted | paid_up
+ * Borrowers: eligible | pending | active_loan | defaulted
  * Loans: active | paid | delinquent | defaulted | written_off | edit_requested | delete_requested
  *
  * Single source for filters and labels across pages.
@@ -17,7 +17,6 @@ export const BORROWER_STATUS_FILTER_OPTIONS = [
 	{ value: 'pending', label: 'Pending — re-loan approval' },
 	{ value: 'active_loan', label: 'Active loan' },
 	{ value: 'defaulted', label: 'Defaulted' },
-	{ value: 'paid_up', label: 'Paid' },
 ];
 
 /** @type {StatusOption[]} */
@@ -52,7 +51,6 @@ export function borrowerStatusBadgeVariant(status) {
 		pending: 'secondary',
 		active_loan: 'warning',
 		defaulted: 'destructive',
-		paid_up: 'default',
 		active: 'outline',
 	};
 	return map[status] || 'secondary';

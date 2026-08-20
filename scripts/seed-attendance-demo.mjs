@@ -164,7 +164,7 @@ async function main() {
   const gBeta = groups.find((g) => g.name === 'Demo Group Beta');
 
   const borrowerRows = [
-    { borrower_id: 'DEMO-ATT-001', first_name: 'Asha', surname: 'Eligible', group_id: gAlpha.id, status: 'paid_up' },
+    { borrower_id: 'DEMO-ATT-001', first_name: 'Asha', surname: 'Eligible', group_id: gAlpha.id, status: 'eligible' },
     { borrower_id: 'DEMO-ATT-002', first_name: 'Baraka', surname: 'Defaulted', group_id: gAlpha.id, status: 'eligible' },
     { borrower_id: 'DEMO-ATT-003', first_name: 'Chausiku', surname: 'NoPriorLoan', group_id: gAlpha.id, status: 'eligible' },
     { borrower_id: 'DEMO-ATT-004', first_name: 'David', surname: 'LowAttendance', group_id: gBeta.id, status: 'eligible' },

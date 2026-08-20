@@ -90,7 +90,7 @@ BEGIN
 
   INSERT INTO public.borrowers (borrower_id, first_name, surname, gender, phone_number, loan_officer_id, branch_id, group_id, status)
   VALUES
-    ('DEMO-ATT-001', 'Asha', 'Eligible', 'female', '+255700000001', v_officer, v_branch, v_ga, 'paid_up'),
+    ('DEMO-ATT-001', 'Asha', 'Eligible', 'female', '+255700000001', v_officer, v_branch, v_ga, 'eligible'),
     ('DEMO-ATT-002', 'Baraka', 'Defaulted', 'female', '+255700000002', v_officer, v_branch, v_ga, 'eligible'),
     ('DEMO-ATT-003', 'Chausiku', 'NoPriorLoan', 'female', '+255700000003', v_officer, v_branch, v_ga, 'eligible'),
     ('DEMO-ATT-004', 'David', 'LowAttendance', 'female', '+255700000004', v_officer, v_branch, v_gb, 'eligible'),

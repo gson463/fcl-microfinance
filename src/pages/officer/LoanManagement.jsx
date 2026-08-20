@@ -181,8 +181,6 @@ const LoanManagement = () => {
         if (!user) return;
         setLoading(true);
 
-        await supabase.rpc('update_all_loan_statuses');
-
         const { data: cfgRows } = await supabase.from('system_config').select('key, value').in('key', ['currency', 'systemName']);
         const cfg = Object.fromEntries((cfgRows || []).map((r) => [r.key, r.value]));
         if (cfg.currency) setCurrency(cfg.currency);
@@ -271,7 +269,7 @@ const LoanManagement = () => {
         () =>
             borrowers.filter(
                 (b) =>
-                    (b.status === 'eligible' || b.status === 'paid_up') &&
+                    b.status === 'eligible' &&
                     !borrowerHasOutstandingLoan(loans, b.id),
             ),
         [borrowers, loans],
@@ -936,12 +934,12 @@ const LoanManagement = () => {
         }
     };
 
-    // Disbursement: only borrowers marked eligible/paid_up and with no unsettled loan (active/delinquent/etc.)
+    // Disbursement: only borrowers marked eligible and with no unsettled loan (active/delinquent/etc.)
     const eligibleBorrowers = useMemo(
         () =>
             borrowers.filter(
                 (b) =>
-                    (b.status === 'eligible' || b.status === 'paid_up') &&
+                    b.status === 'eligible' &&
                     !borrowerHasOutstandingLoan(loans, b.id),
             ),
         [borrowers, loans],

@@ -148,21 +148,31 @@ const GroupRepayment = () => {
         const payStr = formatTZ(selectedDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
 
         const dueRpc = scheduledDueRpcName(walletPrepaymentSplitMode);
+        const loanIds = loansInGroup.map((l) => l.id);
 
-        const memberPromises = loansInGroup
-            .map(async (loan) => {
+        const dueByLoanId = new Map();
+        if (loanIds.length > 0) {
+            const { data: dueRows, error: dueBatchErr } = await supabase.rpc('scheduled_due_for_loan_ids', {
+                p_loan_ids: loanIds,
+                p_payment_date: payStr,
+                p_mode: dueRpc,
+            });
+            if (dueBatchErr) {
+                console.error(dueBatchErr);
+            } else {
+                for (const row of dueRows ?? []) {
+                    dueByLoanId.set(row.loan_id, Number(row.scheduled_due ?? 0));
+                }
+            }
+        }
+
+        const membersWithDueInstallments = loansInGroup
+            .map((loan) => {
                 let pastDueAmount = 0;
                 let amountDueToday = 0;
                 let hasAnyDueInstallment = false;
 
-                const { data: dueRaw, error: dueRpcErr } = await supabase.rpc(dueRpc, {
-                    p_schedule: loan.schedule ?? null,
-                    p_payment_date: payStr,
-                });
-                if (dueRpcErr) {
-                    console.error(dueRpcErr);
-                }
-                const scheduledDue = Number(dueRaw ?? 0);
+                const scheduledDue = dueByLoanId.get(loan.id) ?? 0;
                 const installmentUnit = getInstallmentUnitFromSchedule(loan.schedule);
 
                 loan.schedule?.forEach(inst => {
@@ -195,9 +205,8 @@ const GroupRepayment = () => {
                     scheduledDue,
                     installmentUnit,
                 };
-            });
-            
-        let membersWithDueInstallments = (await Promise.all(memberPromises)).filter(m => m && m.totalDue > 0);
+            })
+            .filter((m) => m && m.totalDue > 0);
 
         setGroupMembers(membersWithDueInstallments);
         

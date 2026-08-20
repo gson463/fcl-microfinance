@@ -9,7 +9,7 @@ import { supabase } from '@/lib/customSupabaseClient';
  * @param {{ enabled?: boolean, officerIdEq?: string | null, debounceMs?: number }} [options]
  */
 export function useDashboardRealtimeRefresh(onRefresh, options = {}) {
-	const { enabled = true, officerIdEq = null, debounceMs = 400 } = options;
+	const { enabled = true, officerIdEq = null, debounceMs = 4000 } = options;
 
 	const onRefreshRef = useRef(onRefresh);
 	onRefreshRef.current = onRefresh;

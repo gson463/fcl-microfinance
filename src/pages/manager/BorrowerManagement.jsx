@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { Button } from '@/components/ui/button';
-import { Edit, Loader2, ChevronLeft, ChevronRight, CheckCircle } from 'lucide-react';
+import { Edit, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useUserProfileScope } from '@/hooks/useUserProfileScope';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -118,26 +118,6 @@ const ManagerBorrowerManagement = () => {
   const pagedBorrowerIds = useMemo(() => borrowers.map((b) => b.id), [borrowers]);
   const bulk = useBulkSelection(pagedBorrowerIds);
 
-  const handleMarkAsEligible = async () => {
-    const selectedIds = borrowers.filter((b) => bulk.isSelected(b.id) && b.status === 'paid_up').map((b) => b.id);
-    if (selectedIds.length === 0) {
-      toast({
-        title: 'No eligible selection',
-        description: 'Select borrowers whose status is “Paid” only — they can be marked Eligible.',
-        variant: 'destructive',
-      });
-      return;
-    }
-    const { error } = await supabase.from('borrowers').update({ status: 'eligible' }).in('id', selectedIds);
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Success', description: `${selectedIds.length} borrower(s) marked as eligible.` });
-      fetchData();
-      bulk.clear();
-    }
-  };
-
   const getLoanStatusBadge = (status) => {
     const statusMap = {
       eligible: 'success',
@@ -145,7 +125,6 @@ const ManagerBorrowerManagement = () => {
       active: 'default',
       active_loan: 'warning',
       defaulted: 'destructive',
-      paid_up: 'default',
     };
     return statusMap[status] || 'secondary';
   };
@@ -157,7 +136,6 @@ const ManagerBorrowerManagement = () => {
       active: 'Active',
       active_loan: 'Active Loan',
       defaulted: 'Defaulted',
-      paid_up: 'Paid',
     };
     return statusTextMap[status] || status;
   };
@@ -242,14 +220,6 @@ const ManagerBorrowerManagement = () => {
             </div>
           )}
           <BulkDataTableToolbar selectedCount={bulk.count} onClear={bulk.clear} onExportCsv={exportBorrowersCsv} />
-          {bulk.count > 0 && (
-            <div className="mb-4 flex flex-wrap gap-2">
-              <Button type="button" variant="secondary" onClick={handleMarkAsEligible}>
-                <CheckCircle className="mr-2 h-4 w-4" />
-                Mark selected as Eligible (Paid only)
-              </Button>
-            </div>
-          )}
           <Table>
             <TableHeader>
               <TableRow>
