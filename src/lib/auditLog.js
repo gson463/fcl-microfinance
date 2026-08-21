@@ -66,7 +66,7 @@ function resolveLocationForAudit({ location, session, action }) {
 			source: 'gps_session',
 		};
 	}
-	throw new SessionLocationRequiredError('NOT_READY', SESSION_LOCATION_MESSAGES.NOT_READY);
+	return null;
 }
 
 async function insertAuditRow(body, sessionToUse) {
@@ -121,14 +121,7 @@ export async function logAudit(
 	const ua = typeof navigator !== 'undefined' ? navigator.userAgent : null;
 	const device = shortDeviceSummary(ua);
 
-	let gps = null;
-	try {
-		gps = resolveLocationForAudit({ location, session: sessionToUse, action });
-	} catch (e) {
-		if (!SKIP_GEO_ACTIONS.has(String(action ?? '').toLowerCase())) {
-			throw e;
-		}
-	}
+	const gps = resolveLocationForAudit({ location, session: sessionToUse, action });
 
 	const locationLabel =
 		gps != null ? formatGpsLabel(gps.latitude, gps.longitude, gps.accuracyM) : null;
@@ -161,11 +154,12 @@ export async function logAudit(
 	}
 }
 
-/** Attach session GPS to edge function bodies (e.g. record-repayment). */
+/** Login-session GPS for request bodies. Null if not captured — callers must not block work. */
+export function sessionLocationForRequest() {
+	return sessionLocationPayload();
+}
+
+/** @deprecated Use sessionLocationForRequest; do not throw on missing GPS during internal work. */
 export function requireSessionLocationForRequest() {
-	const payload = sessionLocationPayload();
-	if (!payload) {
-		throw new SessionLocationRequiredError('NOT_READY', SESSION_LOCATION_MESSAGES.NOT_READY);
-	}
-	return payload;
+	return sessionLocationForRequest();
 }

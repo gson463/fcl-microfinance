@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { format, parseISO, subDays } from 'date-fns';
 import { format as formatTZ, toZonedTime, formatInTimeZone } from 'date-fns-tz';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
-import { logAudit, requireSessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
+import { logAudit, sessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
 import { formatApiErrorValue } from '@/lib/formatApiError';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useToast } from '@/components/ui/use-toast';
@@ -770,7 +770,7 @@ const RepaymentManagement = () => {
 
         setIsSubmitting(true);
         try {
-            const gps = requireSessionLocationForRequest();
+            const gps = sessionLocationForRequest();
             const { data, error } = await invokeEdgeFunction(
                 'record-repayment',
                 {
@@ -782,7 +782,7 @@ const RepaymentManagement = () => {
                         wallet_split_explicit: true,
                         officer_id: user.id,
                         actual_payment_date: formatTZ(payment_date, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE }),
-                        ...gps,
+                        ...(gps || {}),
                     },
                 },
                 session?.access_token,

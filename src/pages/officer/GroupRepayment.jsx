@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
-import { requireSessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
+import { sessionLocationForRequest } from '@/lib/auditLog';
+import { sessionLocationPayload } from '@/lib/geolocation';
 import { formatApiErrorValue } from '@/lib/formatApiError';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,6 +39,71 @@ import { isWorkingDayEAT, latestWorkingDayOnOrBeforeEAT } from '@/lib/workingDay
 
 const PAGE_SIZE = 25;
 const PAYMENT_ACTUAL_DATE_LOOKBACK_DAYS = 90;
+const SAVE_CONCURRENCY = 3;
+const SESSION_VERIFICATION_RE = /session verification required/i;
+
+async function mapWithConcurrency(items, limit, fn) {
+    if (!items.length) return [];
+    const results = new Array(items.length);
+    let next = 0;
+    const workerCount = Math.max(1, Math.min(limit, items.length));
+    const workers = Array.from({ length: workerCount }, async () => {
+        while (next < items.length) {
+            const i = next;
+            next += 1;
+            results[i] = await fn(items[i], i);
+        }
+    });
+    await Promise.all(workers);
+    return results;
+}
+
+function parseRecordRepaymentError(data, error) {
+    const bodyError =
+        data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
+            ? formatApiErrorValue(data.error)
+            : null;
+    const httpMsg =
+        error?.context && typeof error.context === 'object' && error.context.body
+            ? (() => {
+                  try {
+                      const j = JSON.parse(String(error.context.body));
+                      return j?.error != null ? formatApiErrorValue(j.error) : null;
+                  } catch {
+                      return null;
+                  }
+              })()
+            : null;
+    return bodyError || httpMsg || error?.message || null;
+}
+
+function isSessionVerificationError(message) {
+    return SESSION_VERIFICATION_RE.test(String(message ?? ''));
+}
+
+/** Internal-task copy: do not ask the officer to sign in again. */
+function displaySaveError(message) {
+    if (isSessionVerificationError(message)) {
+        return 'Hatukuweza kuhifadhi. Jaribu tena.';
+    }
+    return message;
+}
+
+function gpsFieldsForRequest(gps) {
+    const payload = sessionLocationPayload(gps) ?? gps;
+    const latitude = Number(payload?.latitude);
+    const longitude = Number(payload?.longitude);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return {};
+    }
+    const accuracy = Number(payload?.location_accuracy_m ?? payload?.accuracyM);
+    return {
+        latitude,
+        longitude,
+        location_accuracy_m: Number.isFinite(accuracy) ? accuracy : null,
+        location_source: 'gps_session',
+    };
+}
 
 function memberRepaymentAmountError(amountRaw, member, currencyLabel) {
     if (amountRaw == null || String(amountRaw).trim() === '') return '';
@@ -127,7 +193,7 @@ const GroupRepayment = () => {
         setMemberPage(1);
     }, [selectedCenterId]);
 
-    const handleGroupSelection = useCallback(async (groupId) => {
+    const handleGroupSelection = useCallback(async (groupId, restoreAmounts = null) => {
         setSelectedGroupId(groupId);
         setLoading(true);
 
@@ -213,7 +279,8 @@ const GroupRepayment = () => {
         
         const initialAmounts = {};
         membersWithDueInstallments.forEach((m) => {
-            initialAmounts[m.borrowerId] = '';
+            const kept = restoreAmounts?.[m.borrowerId];
+            initialAmounts[m.borrowerId] = kept != null && String(kept).trim() !== '' ? String(kept) : '';
         });
         setRepaymentAmounts(initialAmounts);
         setLoading(false);
@@ -332,19 +399,7 @@ const GroupRepayment = () => {
         }
         setIsSaving(true);
         const actualPaymentDate = formatTZ(selectedDate, 'yyyy-MM-dd', { timeZone: EAT_TIMEZONE });
-
-        let sessionGps;
-        try {
-            sessionGps = requireSessionLocationForRequest();
-        } catch (err) {
-            setIsSaving(false);
-            toast({
-                variant: 'destructive',
-                title: 'Huwezi kuendelea',
-                description: err instanceof SessionLocationRequiredError ? err.message : String(err?.message ?? err),
-            });
-            return;
-        }
+        const sessionGps = sessionLocationForRequest();
 
         const validationErrors = [];
         for (const member of groupMembers) {
@@ -376,67 +431,79 @@ const GroupRepayment = () => {
             return;
         }
 
-        let successCount = 0;
-        let errorCount = 0;
-        const failureLines = [];
+        const toSave = groupMembers
+            .map((member) => {
+                const amount = parseFloat(repaymentAmounts[member.borrowerId]);
+                if (isNaN(amount) || amount <= 0) return null;
+                return { member, amount, amountRaw: repaymentAmounts[member.borrowerId] };
+            })
+            .filter(Boolean);
 
-        const repaymentPromises = groupMembers.map(async (member) => {
-            const amount = parseFloat(repaymentAmounts[member.borrowerId]);
-            if (isNaN(amount) || amount <= 0) return;
-
+        const invokeRecord = async (member, amount) => {
             const { data, error } = await invokeEdgeFunction(
                 'record-repayment',
                 {
                     body: {
                         loan_id: member.loanId,
-                        amount: amount,
+                        amount,
                         officer_id: user.id,
                         actual_payment_date: actualPaymentDate,
-                        ...sessionGps,
+                        ...gpsFieldsForRequest(sessionGps),
                     },
                 },
                 session?.access_token,
             );
+            const description = parseRecordRepaymentError(data, error);
+            return { failed: Boolean(error || description), description };
+        };
 
-            const bodyError =
-                data && typeof data === 'object' && data !== null && 'error' in data && data.error != null
-                    ? formatApiErrorValue(data.error)
-                    : null;
-            const httpMsg =
-                error?.context && typeof error.context === 'object' && error.context.body
-                    ? (() => {
-                          try {
-                              const j = JSON.parse(String(error.context.body));
-                              return j?.error != null ? formatApiErrorValue(j.error) : null;
-                          } catch {
-                              return null;
-                          }
-                      })()
-                    : null;
-            const description = bodyError || httpMsg || error?.message || null;
+        let successCount = 0;
+        let errorCount = 0;
+        let failures = [];
+        try {
+            const results = await mapWithConcurrency(toSave, SAVE_CONCURRENCY, async (item) => {
+                const { member, amount } = item;
+                let { failed, description } = await invokeRecord(member, amount);
 
-            if (error || bodyError) {
-                console.error(`Failed to save repayment for ${member.name}:`, error || bodyError);
-                errorCount++;
-                if (description) failureLines.push(`${member.name}: ${description}`);
-            } else {
-                successCount++;
-            }
-        });
-        
-        await Promise.all(repaymentPromises);
+                if (failed && isSessionVerificationError(description)) {
+                    ({ failed, description } = await invokeRecord(member, amount));
+                }
 
-        const firstErrorMessage = failureLines[0] ?? null;
+                if (failed) {
+                    const shown = displaySaveError(description);
+                    console.error(`Failed to save repayment for ${member.name}:`, description);
+                    return { ok: false, member, amountRaw: item.amountRaw, description: shown };
+                }
+                return { ok: true, member };
+            });
+
+            successCount = results.filter((r) => r.ok).length;
+            failures = results.filter((r) => !r.ok);
+            errorCount = failures.length;
+        } catch (err) {
+            toast({
+                title: 'Some repayments failed',
+                description: formatApiErrorValue(err) || 'Could not save repayments. Try again.',
+                variant: 'destructive',
+            });
+            setIsSaving(false);
+            return;
+        }
+
+        const failureLines = failures
+            .map((r) => (r.description ? `${r.member.name}: ${r.description}` : null))
+            .filter(Boolean);
 
         if (successCount > 0) {
-             toast({ title: 'Success', description: `Recorded ${successCount} repayments for ${formatDate(selectedDate, 'PPP')}.` });
+            toast({ title: 'Success', description: `Recorded ${successCount} repayments for ${formatDate(selectedDate, 'PPP')}.` });
         }
         if (errorCount > 0) {
             toast({
                 title: 'Some repayments failed',
                 description:
-                    firstErrorMessage ||
-                    `${errorCount} repayment(s) could not be saved. Check loan status, amount, and date; ensure you are logged in.`,
+                    failureLines.length > 0
+                        ? failureLines.join('; ')
+                        : `${errorCount} repayment(s) could not be saved. Check loan status, amount, and date; ensure you are logged in.`,
                 variant: 'destructive',
             });
         }
@@ -448,8 +515,13 @@ const GroupRepayment = () => {
             });
         }
 
+        const restoreAmounts = {};
+        for (const f of failures) {
+            restoreAmounts[f.member.borrowerId] = f.amountRaw;
+        }
+
         setIsSaving(false);
-        handleGroupSelection(selectedGroupId); // Refresh data
+        await handleGroupSelection(selectedGroupId, errorCount > 0 ? restoreAmounts : null);
     };
     
     const selectedGroupName = useMemo(() => myGroups.find(g => g.id === selectedGroupId)?.name || '', [myGroups, selectedGroupId]);

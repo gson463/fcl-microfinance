@@ -155,12 +155,7 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const { data: callerEmailRow } = await supabaseAdmin
-      .from("users")
-      .select("email")
-      .eq("id", authUser.id)
-      .maybeSingle();
-    const callerExempt = isAuditExemptEmail(callerEmailRow?.email);
+    /** GPS is captured at login for audit; missing coords must not block recording a repayment. */
     const latRaw = body.latitude;
     const lngRaw = body.longitude;
     const accRaw = body.location_accuracy_m;
@@ -169,15 +164,6 @@ Deno.serve(async (req: Request) => {
       lngRaw != null &&
       Number.isFinite(Number(latRaw)) &&
       Number.isFinite(Number(lngRaw));
-    if (!callerExempt && !hasGps) {
-      return new Response(
-        JSON.stringify({ error: "Session verification required. Sign in again and accept to continue." }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
     const sessionLatitude = hasGps ? Number(latRaw) : null;
     const sessionLongitude = hasGps ? Number(lngRaw) : null;
     const sessionAccuracy =

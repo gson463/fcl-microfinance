@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase, invokeEdgeFunction } from '@/lib/customSupabaseClient';
-import { requireSessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
+import { sessionLocationForRequest, SessionLocationRequiredError } from '@/lib/auditLog';
 import { useAuth } from '@/contexts/SupabaseAuthContext';
 import { useHierarchyFilters } from '@/hooks/useHierarchyFilters';
 import { filterLoanByHierarchy } from '@/lib/hierarchyFilterUtils';
@@ -222,7 +222,7 @@ const ArrearsManagement = () => {
 
         setClearingLoanId(loan.id);
         try {
-            const gps = requireSessionLocationForRequest();
+            const gps = sessionLocationForRequest();
             const { error } = await invokeEdgeFunction(
                 'record-repayment',
                 {
@@ -231,7 +231,7 @@ const ArrearsManagement = () => {
                         amount: payAmount,
                         officer_id: user.id,
                         actual_payment_date: payStr,
-                        ...gps,
+                        ...(gps || {}),
                     },
                 },
                 session?.access_token,

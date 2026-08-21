@@ -26,7 +26,69 @@ export const SESSION_LOCATION_MESSAGES = {
 	NOT_READY: 'Ruhusa inahitajika ili kuendelea. Ingia tena na ukubali uelekezaji.',
 };
 
+const SESSION_GPS_STORAGE_KEY = 'fcl_session_gps';
+
 let sessionCache = null;
+
+function isValidLoc(loc) {
+	return (
+		loc != null &&
+		Number.isFinite(Number(loc.latitude)) &&
+		Number.isFinite(Number(loc.longitude))
+	);
+}
+
+function normalizeLoc(raw) {
+	if (!isValidLoc(raw)) return null;
+	const accuracyM = Number(raw.accuracyM ?? raw.location_accuracy_m);
+	return {
+		latitude: Number(raw.latitude),
+		longitude: Number(raw.longitude),
+		accuracyM: Number.isFinite(accuracyM) ? accuracyM : null,
+		capturedAt: typeof raw.capturedAt === 'string' ? raw.capturedAt : null,
+	};
+}
+
+function readStoredSessionLocation() {
+	try {
+		if (typeof sessionStorage === 'undefined') return null;
+		const raw = sessionStorage.getItem(SESSION_GPS_STORAGE_KEY);
+		if (!raw) return null;
+		return normalizeLoc(JSON.parse(raw));
+	} catch {
+		return null;
+	}
+}
+
+function persistSessionLocation(loc) {
+	const normalized = normalizeLoc(loc);
+	if (!normalized) return null;
+	sessionCache = normalized;
+	try {
+		if (typeof sessionStorage !== 'undefined') {
+			sessionStorage.setItem(SESSION_GPS_STORAGE_KEY, JSON.stringify(normalized));
+		}
+	} catch {
+		/* quota / private mode */
+	}
+	return normalized;
+}
+
+function hydrateSessionCache() {
+	if (isValidLoc(sessionCache)) {
+		sessionCache = normalizeLoc(sessionCache);
+		return sessionCache;
+	}
+	const stored = readStoredSessionLocation();
+	if (stored) {
+		sessionCache = stored;
+		return sessionCache;
+	}
+	sessionCache = null;
+	return null;
+}
+
+hydrateSessionCache();
 
 function mapGeolocationError(err) {
 	const code = err?.code;
@@ -71,7 +133,7 @@ function readPosition(position) {
 }
 
 /**
- * Capture device coordinates once (login). Stores in-memory session cache.
+ * Capture device coordinates once (login). Stores in-memory + sessionStorage cache.
  */
 export function captureSessionLocation() {
 	if (typeof window === 'undefined' || !navigator?.geolocation) {
@@ -92,8 +154,16 @@ export function captureSessionLocation() {
 		navigator.geolocation.getCurrentPosition(
 			(position) => {
 				try {
-					const loc = readPosition(position);
-					sessionCache = loc;
+					const loc = persistSessionLocation(readPosition(position));
+					if (!loc) {
+						reject(
+							new SessionLocationRequiredError(
+								'UNAVAILABLE',
+								SESSION_LOCATION_MESSAGES.UNAVAILABLE,
+							),
+						);
+						return;
+					}
 					resolve(loc);
 				} catch (e) {
 					reject(e);
@@ -106,27 +176,34 @@ export function captureSessionLocation() {
 }
 
 export function getSessionLocation() {
-	if (!sessionCache) {
+	if (!hydrateSessionCache()) {
 		throw new SessionLocationRequiredError('NOT_READY', SESSION_LOCATION_MESSAGES.NOT_READY);
 	}
 	return { ...sessionCache };
 }
 
 export function isSessionLocationReady() {
-	return sessionCache != null;
+	return hydrateSessionCache() != null;
 }
 
 export function clearSessionLocation() {
 	sessionCache = null;
+	try {
+		if (typeof sessionStorage !== 'undefined') {
+			sessionStorage.removeItem(SESSION_GPS_STORAGE_KEY);
+		}
+	} catch {
+		/* ignore */
+	}
 }
 
-/** For audit payloads / edge functions. */
+/** For audit payloads / edge functions. Always explicit finite numbers. */
 export function sessionLocationPayload(loc = null) {
-	const source = loc ?? sessionCache;
+	const source = normalizeLoc(loc) ?? hydrateSessionCache();
 	if (!source) return null;
 	return {
-		latitude: source.latitude,
-		longitude: source.longitude,
+		latitude: Number(source.latitude),
+		longitude: Number(source.longitude),
 		location_accuracy_m: source.accuracyM,
 		location_source: 'gps_session',
 	};
