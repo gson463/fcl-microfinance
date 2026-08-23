@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/customSupabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { logAudit } from '@/lib/auditLog';
-import { clearAdminImpersonationBackup } from '@/lib/adminImpersonation';
+import { clearAdminImpersonationBackup, isAdminImpersonating } from '@/lib/adminImpersonation';
 import {
 	clearSessionLocation,
 	isGpsExemptEmail,
@@ -88,7 +88,7 @@ export const AuthProvider = ({ children }) => {
 
   const requireSessionGpsOrSignOut = useCallback(async (authSession, reason) => {
     const email = authSession?.user?.email;
-    if (!authSession?.user || isGpsExemptEmail(email)) {
+    if (!authSession?.user || isGpsExemptEmail(email) || isAdminImpersonating()) {
       return true;
     }
     if (!isSessionLocationReady()) {
@@ -197,7 +197,9 @@ export const AuthProvider = ({ children }) => {
             return;
           }
           handleSession(newSession);
-          if (isGpsExemptEmail(newSession?.user?.email)) {
+          if (isAdminImpersonating()) {
+            pendingLoginAuditRef.current = false;
+          } else if (isGpsExemptEmail(newSession?.user?.email)) {
             try {
               await logAudit(
                 {

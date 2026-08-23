@@ -12,6 +12,11 @@ import {
 	SESSION_LOCATION_MESSAGES,
 } from '@/lib/geolocation';
 import {
+	clearAdminImpersonationBackup,
+	isAdminImpersonating,
+	readAdminImpersonationBackup,
+} from '@/lib/adminImpersonation';
+import {
 	DEFAULT_POLICY_CONFIG,
 	fetchPolicyConfig,
 	checkUserConsent,
@@ -34,7 +39,19 @@ const ConsentGate = ({ children }) => {
 	const verifyStarted = useRef(false);
 
 	const email = user?.email;
-	const exempt = isGpsExemptEmail(email);
+	const exempt = isGpsExemptEmail(email) || isAdminImpersonating();
+
+	const restoreAdminImpersonationSession = useCallback(async () => {
+		const backup = readAdminImpersonationBackup();
+		if (!backup?.access_token || !backup?.refresh_token) return false;
+		const { error } = await supabase.auth.setSession({
+			access_token: backup.access_token,
+			refresh_token: backup.refresh_token,
+		});
+		if (error) return false;
+		clearAdminImpersonationBackup();
+		return true;
+	}, []);
 
 	const runSessionVerify = useCallback(async () => {
 		if (verifyStarted.current) return;
@@ -51,17 +68,32 @@ const ConsentGate = ({ children }) => {
 				err instanceof SessionLocationRequiredError
 					? err.message
 					: SESSION_LOCATION_MESSAGES.UNAVAILABLE;
-			toast({
-				variant: 'destructive',
-				title: 'Huwezi kuendelea',
-				description,
-			});
-			await signOut();
-			navigate('/login', { replace: true });
+			if (isAdminImpersonating()) {
+				const restored = await restoreAdminImpersonationSession();
+				toast({
+					variant: 'destructive',
+					title: restored ? 'Impersonation ended' : 'Huwezi kuendelea',
+					description: restored
+						? 'Could not verify the impersonated session. Your admin session was restored.'
+						: description,
+				});
+				navigate(restored ? '/admin/users' : '/login', { replace: true });
+				if (!restored) {
+					await signOut();
+				}
+			} else {
+				toast({
+					variant: 'destructive',
+					title: 'Huwezi kuendelea',
+					description,
+				});
+				await signOut();
+				navigate('/login', { replace: true });
+			}
 		} finally {
 			verifyStarted.current = false;
 		}
-	}, [completeLoginAudit, navigate, signOut, toast]);
+	}, [completeLoginAudit, navigate, restoreAdminImpersonationSession, signOut, toast]);
 
 	useEffect(() => {
 		if (!user || exempt) {

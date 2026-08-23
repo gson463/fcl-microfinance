@@ -30,6 +30,11 @@ export function hasStoredAdminImpersonationBackup() {
 	}
 }
 
+/** True while super-admin is viewing the app as another user. */
+export function isAdminImpersonating() {
+	return hasStoredAdminImpersonationBackup();
+}
+
 export function readAdminImpersonationBackup() {
 	try {
 		const raw = sessionStorage.getItem(IMPERSONATION_ADMIN_BACKUP_KEY);
