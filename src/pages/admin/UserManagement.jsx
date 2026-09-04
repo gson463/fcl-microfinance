@@ -241,11 +241,23 @@ const UserManagement = () => {
         return;
       }
       notifyImpersonationChange();
+      const impersonatedRole = (data?.target_role || row.role || '').toString().trim().toLowerCase();
+      const impersonationDest =
+        impersonatedRole === 'manager'
+          ? '/manager/dashboard'
+          : impersonatedRole === 'officer'
+            ? '/officer/dashboard'
+            : impersonatedRole === 'admin'
+              ? '/admin/dashboard'
+              : '/';
       toast({
         title: `Viewing as ${row.full_name}`,
-        description: 'Use “End impersonation” at the top to return to admin.',
+        description:
+          impersonatedRole === 'manager' && !row.branch_id
+            ? 'Use “End impersonation” to return to admin. Assign a branch in Branch Management if this manager has no branch.'
+            : 'Use “End impersonation” at the top to return to admin.',
       });
-      navigate('/', { replace: true });
+      navigate(impersonationDest, { replace: true });
     } finally {
       setImpersonatingId(null);
     }

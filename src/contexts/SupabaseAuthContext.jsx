@@ -186,15 +186,17 @@ export const AuthProvider = ({ children }) => {
           console.log('Token refreshed successfully');
           handleSession(newSession);
         } else if (event === 'SIGNED_IN') {
-          const eligible = await validateSignedInUser(newSession?.user);
-          if (!eligible.ok) {
-            toast({
-              variant: 'destructive',
-              title: 'Sign in blocked',
-              description: eligible.message,
-            });
-            await clearAuthState();
-            return;
+          if (!isAdminImpersonating()) {
+            const eligible = await validateSignedInUser(newSession?.user);
+            if (!eligible.ok) {
+              toast({
+                variant: 'destructive',
+                title: 'Sign in blocked',
+                description: eligible.message,
+              });
+              await clearAuthState();
+              return;
+            }
           }
           handleSession(newSession);
           if (isAdminImpersonating()) {
