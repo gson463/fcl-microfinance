@@ -13,7 +13,8 @@
     "db:push:dry": "supabase db push --dry-run --yes",
     "seed:demo-attendance": "node scripts/seed-attendance-demo.mjs",
     "create-admin-user": "node scripts/create-admin-user.mjs",
-    "regenerate-loan-schedule": "node scripts/regenerate-single-loan-schedule.mjs"
+    "regenerate-loan-schedule": "node scripts/regenerate-single-loan-schedule.mjs",
+    "export:officer-wallet": "node scripts/export-officer-wallet-excel.mjs"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.3.1",
